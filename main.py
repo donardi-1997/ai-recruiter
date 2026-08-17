@@ -2,31 +2,64 @@ import json
 import os
 import uuid
 from typing import Any
+
 import boto3
+import requests
+
+from dotenv import load_dotenv
+
 from fastapi import (
     FastAPI,
     File,
     Form,
     HTTPException,
-    UploadFile
+    UploadFile,
+    Depends
 )
+
+from fastapi.security import (
+    HTTPBearer,
+    HTTPAuthorizationCredentials
+)
+
+from jose import jwt
+
 from pydantic import BaseModel, Field
+
 from langchain_aws import ChatBedrock
 from langchain_core.prompts import ChatPromptTemplate
 
-# ============================================================
-# COGNITO CONFIGURATION
-# ============================================================
 
-import os
-from dotenv import load_dotenv
+# ============================================================
+# ENVIRONMENT VARIABLES
+# ============================================================
 
 load_dotenv()
+
+
+# ============================================================
+# AWS CONFIGURATION
+# ============================================================
 
 AWS_REGION = os.getenv(
     "AWS_REGION",
     "us-east-2"
 )
+
+KNOWLEDGE_BASE_ID = "CP7BI7MQVB"
+
+DATA_SOURCE_ID = "9A6HM1WZQR"
+
+S3_BUCKET = "ai-cv-rag-adrian-2026"
+
+S3_PREFIX = "documents"
+
+NUMBER_OF_RESULTS = 50
+
+
+# ============================================================
+# COGNITO CONFIGURATION
+# ============================================================
 
 COGNITO_USER_POOL_ID = os.getenv(
     "COGNITO_USER_POOL_ID"
@@ -36,21 +69,162 @@ COGNITO_CLIENT_ID = os.getenv(
     "COGNITO_CLIENT_ID"
 )
 
-print("COGNITO USER POOL:", COGNITO_USER_POOL_ID)
-print("COGNITO CLIENT ID:", COGNITO_CLIENT_ID)
+COGNITO_ISSUER = (
+    f"https://cognito-idp.{AWS_REGION}.amazonaws.com/"
+    f"{COGNITO_USER_POOL_ID}"
+)
+
+COGNITO_JWKS_URL = (
+    f"{COGNITO_ISSUER}/.well-known/jwks.json"
+)
+
+
+print(
+    "COGNITO USER POOL:",
+    COGNITO_USER_POOL_ID
+)
+
+print(
+    "COGNITO CLIENT ID:",
+    COGNITO_CLIENT_ID
+)
+
+print(
+    "COGNITO ISSUER:",
+    COGNITO_ISSUER
+)
+
+
+# ============================================================
+# COGNITO AUTHENTICATION
+# ============================================================
+
+security = HTTPBearer()
+
+_cognito_jwks = None
+
+# ============================================================
+# GET COGNITO JWKS
+# ============================================================
+
+def get_cognito_jwks():
+
+    global _cognito_jwks
+
+    if _cognito_jwks is None:
+
+        response = requests.get(
+            COGNITO_JWKS_URL,
+            timeout=10
+        )
+
+        response.raise_for_status()
+
+        _cognito_jwks = response.json()
+
+    return _cognito_jwks
+
+
+# ============================================================
+# VALIDATE COGNITO JWT
+# ============================================================
+
+def get_current_user(
+    credentials: HTTPAuthorizationCredentials = Depends(
+        security
+    )
+):
+
+    token = credentials.credentials
+
+    try:
+
+        # ====================================================
+        # JWT HEADER
+        # ====================================================
+
+        header = jwt.get_unverified_header(
+            token
+        )
+
+        kid = header.get(
+            "kid"
+        )
+
+        if not kid:
+
+            raise HTTPException(
+                status_code=401,
+                detail="JWT sin kid."
+            )
+
+        # ====================================================
+        # COGNITO PUBLIC KEYS
+        # ====================================================
+
+        jwks = get_cognito_jwks()
+
+        key = next(
+            (
+                key
+                for key in jwks["keys"]
+                if key["kid"] == kid
+            ),
+            None
+        )
+
+        if not key:
+
+            raise HTTPException(
+                status_code=401,
+                detail="Clave JWT no encontrada."
+            )
+
+        # ====================================================
+        # DECODE + VALIDATE
+        # ====================================================
+
+        payload = jwt.decode(
+            token,
+            key,
+            algorithms=["RS256"],
+            issuer=COGNITO_ISSUER,
+            audience=COGNITO_CLIENT_ID
+        )
+
+        return payload
+
+    except HTTPException:
+
+        raise
+
+    except Exception as e:
+
+        print(
+            "JWT VALIDATION ERROR:",
+            str(e)
+        )
+
+        raise HTTPException(
+            status_code=401,
+            detail="Token inválido o expirado."
+        )
 
 # ============================================================
 # CONFIGURACIÓN
 # ============================================================
+
 AWS_REGION = "us-east-2"
 KNOWLEDGE_BASE_ID = "CP7BI7MQVB"
 DATA_SOURCE_ID = "9A6HM1WZQR"
 S3_BUCKET = "ai-cv-rag-adrian-2026"
 S3_PREFIX = "documents"
 NUMBER_OF_RESULTS = 50
+
 # ============================================================
 # DYNAMODB
 # ============================================================
+
 CANDIDATES_TABLE = "ai-recruiter-candidates"
 JOBS_TABLE = "ai-recruiter-jobs"
 EVALUATIONS_TABLE = "ai-recruiter-evaluations"
@@ -58,6 +232,7 @@ EVALUATIONS_TABLE = "ai-recruiter-evaluations"
 # ============================================================
 # FASTAPI
 # ============================================================
+
 app = FastAPI(
     title="AI Recruiter API",
     description=(
@@ -66,6 +241,24 @@ app = FastAPI(
     ),
     version="2.0.0"
 )
+
+# ============================================================
+# AUTH - CURRENT USER
+# ============================================================
+
+@app.get(
+    "/auth/me"
+)
+def get_current_user_info(
+    current_user: dict = Depends(
+        get_current_user
+    )
+):
+
+    return {
+        "authenticated": True,
+        "user": current_user
+    }
 
 # ============================================================
 # AWS CLIENTS
@@ -1279,7 +1472,8 @@ def health():
     response_model=JobResponse
 )
 def create_job(
-    request: CreateJobRequest
+    request: CreateJobRequest,
+    current_user: dict = Depends(get_current_user)
 ):
     try:
         job_id = str(
@@ -1315,7 +1509,9 @@ def create_job(
 @app.get(
     "/jobs"
 )
-def list_jobs():
+def list_jobs(
+    current_user: dict = Depends(get_current_user)
+):
     try:
         response = jobs_table.scan()
         return {
@@ -1341,7 +1537,8 @@ def list_jobs():
     response_model=JobResponse
 )
 def get_job(
-    job_id: str
+    job_id: str,
+    current_user: dict = Depends(get_current_user)
 ):
     try:
         job = get_job_record(
@@ -1371,7 +1568,8 @@ def get_job(
 )
 async def create_candidate(
     name: str = Form(...),
-    file: UploadFile = File(...)
+    file: UploadFile = File(...),
+    current_user: dict = Depends(get_current_user)
 ):
     if not name.strip():
         raise HTTPException(
@@ -1582,7 +1780,8 @@ async def create_candidate(
     "/candidates/{candidate_id}"
 )
 def get_candidate(
-    candidate_id: str
+    candidate_id: str,
+    current_user: dict = Depends(get_current_user)
 ):
     try:
         candidate = get_candidate_record(
@@ -1678,7 +1877,10 @@ def get_candidate(
 @app.get(
     "/candidates"
 )
-def list_candidates():
+def list_candidates(
+    current_user: dict = Depends(get_current_user)
+):
+
     try:
         response = candidates_table.scan()
         return {
@@ -1704,7 +1906,8 @@ def list_candidates():
 )
 def get_ingestion_status(
     candidate_id: str,
-    ingestion_job_id: str
+    ingestion_job_id: str,
+    current_user: dict = Depends(get_current_user)
 ):
     try:
         response = (
@@ -1771,7 +1974,8 @@ def get_ingestion_status(
 )
 def ask_candidate(
     candidate_id: str,
-    request: AskCandidateRequest
+    request: AskCandidateRequest,
+    current_user: dict = Depends(get_current_user)
 ):
     try:
         candidate = get_candidate_record(
@@ -1828,7 +2032,8 @@ def ask_candidate(
 )
 def evaluate_candidate_endpoint(
     candidate_id: str,
-    request: EvaluateCandidateRequest
+    request: EvaluateCandidateRequest,
+    current_user: dict = Depends(get_current_user)
 ):
     try:
         candidate = get_candidate_record(
@@ -1899,7 +2104,8 @@ def evaluate_candidate_endpoint(
 )
 def evaluate_candidate_job(
     candidate_id: str,
-    request: EvaluateJobRequest
+    request: EvaluateJobRequest,
+    current_user: dict = Depends(get_current_user)
 ):
     try:
         candidate = get_candidate_record(
@@ -2032,7 +2238,8 @@ def evaluate_candidate_job(
     "/jobs/{job_id}/evaluate"
 )
 def evaluate_job_against_all_candidates(
-    job_id: str
+    job_id: str,
+    current_user: dict = Depends(get_current_user)
 ):
     try:
 
@@ -2235,7 +2442,8 @@ def get_job_ranking(
     recommendation: str | None = None,
     limit: int | None = None,
     page: int = 1,
-    page_size: int = 10
+    page_size: int = 10,
+    current_user: dict = Depends(get_current_user)
 ):
     try:
 
@@ -2535,7 +2743,8 @@ def get_job_ranking(
 )
 def get_candidate_job_evaluation(
     job_id: str,
-    candidate_id: str
+    candidate_id: str,
+    current_user: dict = Depends(get_current_user)
 ):
     try:
 
@@ -2715,7 +2924,8 @@ def get_candidate_job_evaluation(
     response_model=JobSummaryResponse
 )
 def get_job_summary(
-    job_id: str
+    job_id: str,
+    current_user: dict = Depends(get_current_user)
 ):
     try:
 
@@ -2987,7 +3197,8 @@ def get_job_candidates(
     min_score: int = 0,
     recommendation: str | None = None,
     page: int = 1,
-    page_size: int = 10
+    page_size: int = 10,
+    current_user: dict = Depends(get_current_user)
 ):
     try:
 
@@ -3254,7 +3465,8 @@ def get_job_candidates(
 )
 def get_candidate_explanation(
     job_id: str,
-    candidate_id: str
+    candidate_id: str,
+    current_user: dict = Depends(get_current_user)
 ):
     try:
 
@@ -3514,7 +3726,8 @@ def get_candidate_explanation(
 )
 def compare_candidates(
     job_id: str,
-    candidate_ids: str
+    candidate_ids: str,
+    current_user: dict = Depends(get_current_user)
 ):
     try:
 
@@ -3709,7 +3922,8 @@ def compare_candidates(
 )
 def get_candidate_requirements(
     job_id: str,
-    candidate_id: str
+    candidate_id: str,
+    current_user: dict = Depends(get_current_user)
 ):
     try:
 
