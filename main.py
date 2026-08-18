@@ -4088,7 +4088,8 @@ def get_candidate_requirements(
     "/debug/retrieve/{candidate_id}"
 )
 def debug_retrieve(
-    candidate_id: str
+    candidate_id: str,
+    current_user: dict = Depends(get_current_user)
 ):
     try:
         results = retrieve_candidate(
@@ -4113,4 +4114,3 @@ def debug_retrieve(
             status_code=500,
             detail=str(e)
         )
-
