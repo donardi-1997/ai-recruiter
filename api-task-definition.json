@@ -1,59 +1,38 @@
 {
-  "family": "ai-recruiter-cluster-ai-recruiter-api",
-  "taskRoleArn": "arn:aws:iam::765761474007:role/ai-recruiter-ecs-task-role",
-  "executionRoleArn": "arn:aws:iam::765761474007:role/ai-recruiter-ecs-execution-role",
+  "family": "ai-recruiter-api",
   "networkMode": "awsvpc",
+  "requiresCompatibilities": [
+    "FARGATE"
+  ],
+  "cpu": "512",
+  "memory": "1024",
+  "executionRoleArn": "arn:aws:iam::765761474007:role/ai-recruiter-ecs-execution-role",
+  "taskRoleArn": "arn:aws:iam::765761474007:role/ai-recruiter-ecs-task-role",
   "containerDefinitions": [
     {
       "name": "Main",
-      "image": "765761474007.dkr.ecr.us-east-2.amazonaws.com/ai-recruiter:latest",
-      "cpu": 512,
-      "memoryReservation": 1024,
+      "image": "765761474007.dkr.ecr.us-east-2.amazonaws.com/ai-recruiter:f3cc04c82acdad0a10337e4c64c2884da1075d97",
+      "essential": true,
       "portMappings": [
         {
           "containerPort": 8000,
-          "hostPort": 8000,
-          "protocol": "tcp",
-          "name": "main-8000-tcp"
+          "protocol": "tcp"
         }
       ],
-      "essential": true,
       "environment": [
         {
           "name": "AWS_REGION",
           "value": "us-east-2"
         },
         {
-          "name": "COGNITO_USER_POOL_ID",
-          "value": "us-east-2_o3qMVixSA"
-        },
-        {
           "name": "COGNITO_CLIENT_ID",
           "value": "buusqp2p10vb2nh8ft40i8imc"
+        },
+        {
+          "name": "COGNITO_USER_POOL_ID",
+          "value": "us-east-2_o3qMVixSA"
         }
-      ],
-      "mountPoints": [],
-      "volumesFrom": [],
-      "secrets": [],
-      "logConfiguration": {
-        "logDriver": "awslogs",
-        "options": {
-          "awslogs-group": "/aws/ecs/ai-recruiter-cluster/ai-recruiter-api-c444",
-          "awslogs-region": "us-east-2",
-          "awslogs-stream-prefix": "ecs"
-        }
-      }
+      ]
     }
-  ],
-  "volumes": [],
-  "placementConstraints": [],
-  "requiresCompatibilities": [
-    "FARGATE"
-  ],
-  "cpu": "512",
-  "memory": "1024",
-  "runtimePlatform": {
-    "cpuArchitecture": "X86_64",
-    "operatingSystemFamily": "LINUX"
-  }
+  ]
 }
