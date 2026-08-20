@@ -28,7 +28,7 @@ COGNITO_CLIENT_ID = os.getenv(
 API_URL = os.getenv(
     "API_URL",
     "http://ai-recruiter-api-alb-184707625.us-east-2.elb.amazonaws.com"
-)
+).rstrip("/")
 
 # ============================================================
 # PAGE CONFIG
