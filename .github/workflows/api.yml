@@ -86,7 +86,7 @@ jobs:
         run: |
           aws ecs update-express-gateway-service \
             --service-arn "arn:aws:ecs:${AWS_REGION}:765761474007:service/${ECS_CLUSTER}/${ECS_SERVICE}" \
-            --primary-container "name=Main,image=$IMAGE_URI,containerPort=8000" \
+            --primary-container "image=$IMAGE_URI,containerPort=8000" \
             --health-check-path "/" \
             --region "$AWS_REGION"
 
