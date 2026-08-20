@@ -56,18 +56,23 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
-
-      - name: Show GitHub OIDC context
-        env:
-          GITHUB_REPOSITORY: ${{ github.repository }}
-          GITHUB_REF: ${{ github.ref }}
-          GITHUB_EVENT_NAME: ${{ github.event_name }}
-          GITHUB_ENVIRONMENT: production
+      - name: Debug GitHub OIDC token
         run: |
-          echo "repository=$GITHUB_REPOSITORY"
-          echo "ref=$GITHUB_REF"
-          echo "event=$GITHUB_EVENT_NAME"
-          echo "environment=$GITHUB_ENVIRONMENT"
+          echo "repository=${{ github.repository }}"
+          echo "ref=${{ github.ref }}"
+          echo "event=${{ github.event_name }}"
+          echo "environment=production"
+
+          RESPONSE=$(curl -sS \
+            -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+            "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=sts.amazonaws.com")
+
+          TOKEN=$(echo "$RESPONSE" | python -c "import sys,json; print(json.load(sys.stdin)['value'])")
+
+          PAYLOAD=$(echo "$TOKEN" | cut -d '.' -f2 | tr '_-' '/+' | base64 -d 2>/dev/null)
+
+          echo "OIDC claims:"
+          echo "$PAYLOAD" | python -m json.tool
 
       - name: Configure AWS credentials via OIDC
         uses: aws-actions/configure-aws-credentials@v5
