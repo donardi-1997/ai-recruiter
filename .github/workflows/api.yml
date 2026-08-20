@@ -60,6 +60,10 @@ jobs:
         with:
           role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
+      - name: Debug GitHub OIDC claims
+        uses: actions-oidc-debugger@main
+        with:
+          audience: sts.amazonaws.com
       - name: Login to Amazon ECR
         id: ecr-login
         uses: aws-actions/amazon-ecr-login@v2
