@@ -53,20 +53,32 @@ jobs:
     needs: validate
     runs-on: ubuntu-latest
     environment: production
+
     steps:
       - uses: actions/checkout@v4
+
+      - name: Show GitHub OIDC context
+        env:
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          GITHUB_REF: ${{ github.ref }}
+          GITHUB_EVENT_NAME: ${{ github.event_name }}
+          GITHUB_ENVIRONMENT: production
+        run: |
+          echo "repository=$GITHUB_REPOSITORY"
+          echo "ref=$GITHUB_REF"
+          echo "event=$GITHUB_EVENT_NAME"
+          echo "environment=$GITHUB_ENVIRONMENT"
+
       - name: Configure AWS credentials via OIDC
         uses: aws-actions/configure-aws-credentials@v5
         with:
           role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
-      - name: Debug GitHub OIDC claims
-        uses: actions-oidc-debugger@main
-        with:
-          audience: sts.amazonaws.com
+
       - name: Login to Amazon ECR
         id: ecr-login
         uses: aws-actions/amazon-ecr-login@v2
+
       - name: Build and push image
         id: image
         env:
@@ -77,6 +89,7 @@ jobs:
           docker build --tag "$IMAGE_URI" .
           docker push "$IMAGE_URI"
           echo "uri=$IMAGE_URI" >> "$GITHUB_OUTPUT"
+
       - name: Render task definition
         id: render
         uses: aws-actions/amazon-ecs-render-task-definition@v1
@@ -84,6 +97,7 @@ jobs:
           task-definition: api-task-definition.json
           container-name: ${{ env.ECS_CONTAINER }}
           image: ${{ steps.image.outputs.uri }}
+
       - name: Deploy ECS service
         uses: aws-actions/amazon-ecs-deploy-task-definition@v2
         with:
