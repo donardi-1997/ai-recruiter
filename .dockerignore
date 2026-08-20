@@ -1,12 +1,10 @@
+__pycache__
+*.pyc
 .env
 .git
 .gitignore
-__pycache__
-*.pyc
-*.pyo
 *.pdf
 *.docx
-test_cvs
-tests
+Dockerfile
+Dockerfile.*
 README.md
-app.py

@@ -81,6 +81,6 @@ urllib3==2.7.0
 uuid_utils==0.17.0
 uvicorn==0.52.3
 watchdog==6.0.0
-websockets==16.1.1
+websockets==16.0
 xxhash==4.0.0
 zstandard==0.25.0
