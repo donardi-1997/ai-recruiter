@@ -1,9 +1,7 @@
 {
   "family": "ai-recruiter-frontend",
   "networkMode": "awsvpc",
-  "requiresCompatibilities": [
-    "FARGATE"
-  ],
+  "requiresCompatibilities": ["FARGATE"],
   "cpu": "512",
   "memory": "1024",
   "executionRoleArn": "arn:aws:iam::765761474007:role/ai-recruiter-ecs-execution-role",
@@ -28,7 +26,7 @@
         },
         {
           "name": "API_URL",
-          "value": "https://ai-66ac48ebb04a46d2b480df8c53ea10e1.ecs.us-east-2.on.aws"
+          "value": "http://ai-recruiter-api-alb-184707625.us-east-2.elb.amazonaws.com"
         },
         {
           "name": "COGNITO_CLIENT_ID",
