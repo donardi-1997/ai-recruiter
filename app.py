@@ -1350,9 +1350,10 @@ if st.button(
                         "candidate_id"
                     )
 
-                    candidate_name = candidate.get(
-                        "name",
-                        "Unknown"
+                    candidate_name = (
+                        candidate.get("candidate_name")
+                        or candidate.get("name")
+                        or "Unknown"
                     )
 
                     status_text.write(
@@ -1601,7 +1602,7 @@ else:
         )
 
         candidate_name = candidate.get(
-            "name",
+            "candidate_name",
             "Unknown"
         )
 

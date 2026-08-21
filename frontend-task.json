@@ -1,0 +1,86 @@
+{
+    "taskDefinitionArn": "arn:aws:ecs:us-east-2:765761474007:task-definition/ai-recruiter-frontend:5",
+    "containerDefinitions": [
+        {
+            "name": "ai-recruiter-frontend",
+            "image": "765761474007.dkr.ecr.us-east-2.amazonaws.com/ai-recruiter-frontend:ff10dde8340a5a9849cae2c9bdcb9a3db5d4c033",
+            "cpu": 512,
+            "memory": 1024,
+            "portMappings": [
+                {
+                    "containerPort": 8501,
+                    "hostPort": 8501,
+                    "protocol": "tcp"
+                }
+            ],
+            "essential": true,
+            "environment": [
+                {
+                    "name": "COGNITO_CLIENT_ID",
+                    "value": "buusqp2p10vb2nh8ft40i8imc"
+                },
+                {
+                    "name": "AWS_REGION",
+                    "value": "us-east-2"
+                },
+                {
+                    "name": "API_URL",
+                    "value": "http://ai-recruiter-api-alb-184707625.us-east-2.elb.amazonaws.com"
+                }
+            ],
+            "mountPoints": [],
+            "volumesFrom": [],
+            "logConfiguration": {
+                "logDriver": "awslogs",
+                "options": {
+                    "awslogs-group": "/aws/ecs/ai-recruiter-cluster/ai-recruiter-frontend",
+                    "awslogs-region": "us-east-2",
+                    "awslogs-stream-prefix": "ecs"
+                }
+            },
+            "systemControls": []
+        }
+    ],
+    "family": "ai-recruiter-frontend",
+    "executionRoleArn": "arn:aws:iam::765761474007:role/ai-recruiter-ecs-execution-role",
+    "networkMode": "awsvpc",
+    "revision": 5,
+    "volumes": [],
+    "status": "ACTIVE",
+    "requiresAttributes": [
+        {
+            "name": "com.amazonaws.ecs.capability.logging-driver.awslogs"
+        },
+        {
+            "name": "ecs.capability.execution-role-awslogs"
+        },
+        {
+            "name": "com.amazonaws.ecs.capability.ecr-auth"
+        },
+        {
+            "name": "com.amazonaws.ecs.capability.docker-remote-api.1.19"
+        },
+        {
+            "name": "ecs.capability.execution-role-ecr-pull"
+        },
+        {
+            "name": "com.amazonaws.ecs.capability.docker-remote-api.1.18"
+        },
+        {
+            "name": "ecs.capability.task-eni"
+        }
+    ],
+    "placementConstraints": [],
+    "compatibilities": [
+        "EC2",
+        "FARGATE",
+        "MANAGED_INSTANCES"
+    ],
+    "requiresCompatibilities": [
+        "FARGATE"
+    ],
+    "cpu": "512",
+    "memory": "1024",
+    "registeredAt": "2026-08-20T18:46:59.898000-05:00",
+    "registeredBy": "arn:aws:sts::765761474007:assumed-role/ai-recruiter-github-actions-role/GitHubActions"
+}
