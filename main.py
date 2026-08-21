@@ -2,31 +2,64 @@ import json
 import os
 import uuid
 from typing import Any
+
 import boto3
+import requests
+
+from dotenv import load_dotenv
+
 from fastapi import (
     FastAPI,
     File,
     Form,
     HTTPException,
-    UploadFile
+    UploadFile,
+    Depends
 )
+
+from fastapi.security import (
+    HTTPBearer,
+    HTTPAuthorizationCredentials
+)
+
+from jose import jwt
+
 from pydantic import BaseModel, Field
+
 from langchain_aws import ChatBedrock
 from langchain_core.prompts import ChatPromptTemplate
 
-# ============================================================
-# COGNITO CONFIGURATION
-# ============================================================
 
-import os
-from dotenv import load_dotenv
+# ============================================================
+# ENVIRONMENT VARIABLES
+# ============================================================
 
 load_dotenv()
+
+
+# ============================================================
+# AWS CONFIGURATION
+# ============================================================
 
 AWS_REGION = os.getenv(
     "AWS_REGION",
     "us-east-2"
 )
+
+KNOWLEDGE_BASE_ID = "CP7BI7MQVB"
+
+DATA_SOURCE_ID = "9A6HM1WZQR"
+
+S3_BUCKET = "ai-cv-rag-adrian-2026"
+
+S3_PREFIX = "documents"
+
+NUMBER_OF_RESULTS = 50
+
+
+# ============================================================
+# COGNITO CONFIGURATION
+# ============================================================
 
 COGNITO_USER_POOL_ID = os.getenv(
     "COGNITO_USER_POOL_ID"
@@ -36,21 +69,162 @@ COGNITO_CLIENT_ID = os.getenv(
     "COGNITO_CLIENT_ID"
 )
 
-print("COGNITO USER POOL:", COGNITO_USER_POOL_ID)
-print("COGNITO CLIENT ID:", COGNITO_CLIENT_ID)
+COGNITO_ISSUER = (
+    f"https://cognito-idp.{AWS_REGION}.amazonaws.com/"
+    f"{COGNITO_USER_POOL_ID}"
+)
+
+COGNITO_JWKS_URL = (
+    f"{COGNITO_ISSUER}/.well-known/jwks.json"
+)
+
+
+print(
+    "COGNITO USER POOL:",
+    COGNITO_USER_POOL_ID
+)
+
+print(
+    "COGNITO CLIENT ID:",
+    COGNITO_CLIENT_ID
+)
+
+print(
+    "COGNITO ISSUER:",
+    COGNITO_ISSUER
+)
+
+
+# ============================================================
+# COGNITO AUTHENTICATION
+# ============================================================
+
+security = HTTPBearer()
+
+_cognito_jwks = None
+
+# ============================================================
+# GET COGNITO JWKS
+# ============================================================
+
+def get_cognito_jwks():
+
+    global _cognito_jwks
+
+    if _cognito_jwks is None:
+
+        response = requests.get(
+            COGNITO_JWKS_URL,
+            timeout=10
+        )
+
+        response.raise_for_status()
+
+        _cognito_jwks = response.json()
+
+    return _cognito_jwks
+
+
+# ============================================================
+# VALIDATE COGNITO JWT
+# ============================================================
+
+def get_current_user(
+    credentials: HTTPAuthorizationCredentials = Depends(
+        security
+    )
+):
+
+    token = credentials.credentials
+
+    try:
+
+        # ====================================================
+        # JWT HEADER
+        # ====================================================
+
+        header = jwt.get_unverified_header(
+            token
+        )
+
+        kid = header.get(
+            "kid"
+        )
+
+        if not kid:
+
+            raise HTTPException(
+                status_code=401,
+                detail="JWT sin kid."
+            )
+
+        # ====================================================
+        # COGNITO PUBLIC KEYS
+        # ====================================================
+
+        jwks = get_cognito_jwks()
+
+        key = next(
+            (
+                key
+                for key in jwks["keys"]
+                if key["kid"] == kid
+            ),
+            None
+        )
+
+        if not key:
+
+            raise HTTPException(
+                status_code=401,
+                detail="Clave JWT no encontrada."
+            )
+
+        # ====================================================
+        # DECODE + VALIDATE
+        # ====================================================
+
+        payload = jwt.decode(
+            token,
+            key,
+            algorithms=["RS256"],
+            issuer=COGNITO_ISSUER,
+            audience=COGNITO_CLIENT_ID
+        )
+
+        return payload
+
+    except HTTPException:
+
+        raise
+
+    except Exception as e:
+
+        print(
+            "JWT VALIDATION ERROR:",
+            str(e)
+        )
+
+        raise HTTPException(
+            status_code=401,
+            detail="Token inválido o expirado."
+        )
 
 # ============================================================
 # CONFIGURACIÓN
 # ============================================================
+
 AWS_REGION = "us-east-2"
 KNOWLEDGE_BASE_ID = "CP7BI7MQVB"
 DATA_SOURCE_ID = "9A6HM1WZQR"
 S3_BUCKET = "ai-cv-rag-adrian-2026"
 S3_PREFIX = "documents"
 NUMBER_OF_RESULTS = 50
+
 # ============================================================
 # DYNAMODB
 # ============================================================
+
 CANDIDATES_TABLE = "ai-recruiter-candidates"
 JOBS_TABLE = "ai-recruiter-jobs"
 EVALUATIONS_TABLE = "ai-recruiter-evaluations"
@@ -58,6 +232,7 @@ EVALUATIONS_TABLE = "ai-recruiter-evaluations"
 # ============================================================
 # FASTAPI
 # ============================================================
+
 app = FastAPI(
     title="AI Recruiter API",
     description=(
@@ -66,6 +241,24 @@ app = FastAPI(
     ),
     version="2.0.0"
 )
+
+# ============================================================
+# AUTH - CURRENT USER
+# ============================================================
+
+@app.get(
+    "/auth/me"
+)
+def get_current_user_info(
+    current_user: dict = Depends(
+        get_current_user
+    )
+):
+
+    return {
+        "authenticated": True,
+        "user": current_user
+    }
 
 # ============================================================
 # AWS CLIENTS
@@ -1038,7 +1231,6 @@ DESCRIPCIÓN DE LA VACANTE:
     print(evaluated)
     print("=" * 80)
 
-
     # ========================================================
     # GARANTIZAR TODOS LOS REQUISITOS
     # ========================================================
@@ -1058,8 +1250,8 @@ DESCRIPCIÓN DE LA VACANTE:
         )
 
         print(
-            ">>> BUSCANDO:",
-            key,
+            ">>> REQUISITO FINAL:",
+            normalized_requirement,
             "=>",
             existing
         )
@@ -1067,7 +1259,16 @@ DESCRIPCIÓN DE LA VACANTE:
         if existing:
 
             final_requirements.append(
-                existing
+                {
+                    "requirement": normalized_requirement,
+                    "status": existing.get(
+                        "status",
+                        "MISSING"
+                    ),
+                    "evidence": existing.get(
+                        "evidence"
+                    )
+                }
             )
 
         else:
@@ -1080,55 +1281,11 @@ DESCRIPCIÓN DE LA VACANTE:
                 }
             )
 
-    # ========================================================
-    # MISSING
-    # ========================================================
-
-    if status == "MISSING":
-        evidence = None
-
-    elif evidence:
-
-        words = evidence.split()
-
-        if len(words) > 30:
-            evidence = (
-                " ".join(words[:30])
-                + "..."
-            )
-
-
-    # ========================================================
-    # GARANTIZAR TODOS LOS REQUISITOS
-    # ========================================================
-    final_requirements = []
-
-    for requirement in requirements_from_job:
-
-        existing = evaluated.get(
-            requirement.lower()
-        )
-
-        if existing:
-
-            final_requirements.append(
-                existing
-            )
-
-        else:
-
-            final_requirements.append(
-                {
-                    "requirement": requirement,
-                    "status": "MISSING",
-                    "evidence": None
-                }
-            )
-
 
     # ========================================================
     # SCORE
     # ========================================================
+
     total = len(
         final_requirements
     )
@@ -1137,13 +1294,19 @@ DESCRIPCIÓN DE LA VACANTE:
 
     for requirement in final_requirements:
 
-        if requirement["status"] == "MATCH":
+        status = requirement.get(
+            "status",
+            "MISSING"
+        )
+
+        if status == "MATCH":
 
             points += 1
 
-        elif requirement["status"] == "PARTIAL":
+        elif status == "PARTIAL":
 
             points += 0.5
+
 
     if total > 0:
 
@@ -1161,38 +1324,58 @@ DESCRIPCIÓN DE LA VACANTE:
     # ========================================================
 
     if match_score >= 80:
+
         recommendation = "STRONG_MATCH"
+
     elif match_score >= 60:
+
         recommendation = "PARTIAL_MATCH"
+
     else:
+
         recommendation = "LOW_MATCH"
+
 
     # ========================================================
     # STRENGTHS
     # ========================================================
 
-    strengths = [
-        requirement["requirement"]
-        for requirement
-        in final_requirements
-        if requirement["status"] == "MATCH"
-    ]
+    strengths = []
+
+    for requirement in final_requirements:
+
+        if requirement.get(
+            "status"
+        ) == "MATCH":
+
+            strengths.append(
+                requirement.get(
+                    "requirement"
+                )
+            )
+
 
     # ========================================================
     # GAPS
     # ========================================================
-    gaps = [
-        requirement["requirement"]
-        for requirement
-        in final_requirements
-        if requirement["status"]
-        in {
+
+    gaps = []
+
+    for requirement in final_requirements:
+
+        if requirement.get(
+            "status"
+        ) in {
             "PARTIAL",
             "MISSING"
-        }
-    ]
+        }:
 
-
+            gaps.append(
+                requirement.get(
+                    "requirement"
+                )
+            )
+            
     # ========================================================
     # SUMMARY
     # ========================================================
@@ -1279,7 +1462,8 @@ def health():
     response_model=JobResponse
 )
 def create_job(
-    request: CreateJobRequest
+    request: CreateJobRequest,
+    current_user: dict = Depends(get_current_user)
 ):
     try:
         job_id = str(
@@ -1288,7 +1472,8 @@ def create_job(
         job = {
             "job_id": job_id,
             "title": request.title.strip(),
-            "description": request.description.strip()
+            "description": request.description.strip(),
+            "user_sub": current_user["sub"]
         }
         save_job_record(
             job
@@ -1315,14 +1500,27 @@ def create_job(
 @app.get(
     "/jobs"
 )
-def list_jobs():
+def list_jobs(
+    current_user: dict = Depends(get_current_user)
+):
     try:
         response = jobs_table.scan()
+
+        jobs = response.get(
+            "Items",
+            []
+        )
+
+        user_sub = current_user["sub"]
+
+        user_jobs = [
+            job
+            for job in jobs
+            if job.get("user_sub") == user_sub
+        ]
+
         return {
-            "jobs": response.get(
-                "Items",
-                []
-            )
+            "jobs": user_jobs
         }
     except Exception as e:
         print(
@@ -1341,7 +1539,8 @@ def list_jobs():
     response_model=JobResponse
 )
 def get_job(
-    job_id: str
+    job_id: str,
+    current_user: dict = Depends(get_current_user)
 ):
     try:
         job = get_job_record(
@@ -1371,7 +1570,8 @@ def get_job(
 )
 async def create_candidate(
     name: str = Form(...),
-    file: UploadFile = File(...)
+    file: UploadFile = File(...),
+    current_user: dict = Depends(get_current_user)
 ):
     if not name.strip():
         raise HTTPException(
@@ -1582,7 +1782,8 @@ async def create_candidate(
     "/candidates/{candidate_id}"
 )
 def get_candidate(
-    candidate_id: str
+    candidate_id: str,
+    current_user: dict = Depends(get_current_user)
 ):
     try:
         candidate = get_candidate_record(
@@ -1678,7 +1879,10 @@ def get_candidate(
 @app.get(
     "/candidates"
 )
-def list_candidates():
+def list_candidates(
+    current_user: dict = Depends(get_current_user)
+):
+
     try:
         response = candidates_table.scan()
         return {
@@ -1704,7 +1908,8 @@ def list_candidates():
 )
 def get_ingestion_status(
     candidate_id: str,
-    ingestion_job_id: str
+    ingestion_job_id: str,
+    current_user: dict = Depends(get_current_user)
 ):
     try:
         response = (
@@ -1771,7 +1976,8 @@ def get_ingestion_status(
 )
 def ask_candidate(
     candidate_id: str,
-    request: AskCandidateRequest
+    request: AskCandidateRequest,
+    current_user: dict = Depends(get_current_user)
 ):
     try:
         candidate = get_candidate_record(
@@ -1828,7 +2034,8 @@ def ask_candidate(
 )
 def evaluate_candidate_endpoint(
     candidate_id: str,
-    request: EvaluateCandidateRequest
+    request: EvaluateCandidateRequest,
+    current_user: dict = Depends(get_current_user)
 ):
     try:
         candidate = get_candidate_record(
@@ -1899,7 +2106,8 @@ def evaluate_candidate_endpoint(
 )
 def evaluate_candidate_job(
     candidate_id: str,
-    request: EvaluateJobRequest
+    request: EvaluateJobRequest,
+    current_user: dict = Depends(get_current_user)
 ):
     try:
         candidate = get_candidate_record(
@@ -2026,203 +2234,6 @@ def evaluate_candidate_job(
         )
 
 # ============================================================
-# EVALUATE ALL CANDIDATES AGAINST JOB
-# ============================================================
-@app.post(
-    "/jobs/{job_id}/evaluate"
-)
-def evaluate_job_against_all_candidates(
-    job_id: str
-):
-    try:
-
-        # ====================================================
-        # OBTENER JOB
-        # ====================================================
-        job = get_job_record(
-            job_id
-        )
-
-        if not job:
-            raise HTTPException(
-                status_code=404,
-                detail="Vacante no encontrada."
-            )
-
-        print("=" * 60)
-        print(
-            f">>> EVALUANDO JOB: {job_id}"
-        )
-        print(
-            f">>> JOB TITLE: {job['title']}"
-        )
-        print("=" * 60)
-
-        # ====================================================
-        # OBTENER CANDIDATOS
-        # ====================================================
-        response = candidates_table.scan()
-
-        candidates = response.get(
-            "Items",
-            []
-        )
-
-        print(
-            f">>> CANDIDATOS ENCONTRADOS: {len(candidates)}"
-        )
-
-        # ====================================================
-        # EVALUAR CADA CANDIDATO
-        # ====================================================
-        evaluations = []
-
-        for candidate in candidates:
-
-            candidate_id = candidate.get(
-                "candidate_id"
-            )
-
-            if not candidate_id:
-                continue
-
-            print("=" * 60)
-            print(
-                f">>> EVALUANDO CANDIDATO: {candidate_id}"
-            )
-            print("=" * 60)
-
-            # ================================================
-            # RETRIEVE CV
-            # ================================================
-            results = retrieve_candidate(
-                candidate_id=candidate_id,
-                question=job["description"]
-            )
-
-            # ================================================
-            # EVALUATE
-            # ================================================
-            evaluation = evaluate_candidate(
-                candidate_id=candidate_id,
-                job_description=job["description"],
-                results=results
-            )
-
-            # ================================================
-            # SAVE
-            # ================================================
-            evaluation_record = {
-                "job_id": job_id,
-                "candidate_id": candidate_id,
-
-                "match_score": int(
-                    evaluation.get(
-                        "match_score",
-                        0
-                    )
-                ),
-
-                "recommendation": evaluation.get(
-                    "recommendation",
-                    "LOW_MATCH"
-                ),
-
-                "requirements": json.dumps(
-                    evaluation.get(
-                        "requirements",
-                        []
-                    ),
-                    ensure_ascii=False
-                ),
-
-                "strengths": json.dumps(
-                    evaluation.get(
-                        "strengths",
-                        []
-                    ),
-                    ensure_ascii=False
-                ),
-
-                "gaps": json.dumps(
-                    evaluation.get(
-                        "gaps",
-                        []
-                    ),
-                    ensure_ascii=False
-                ),
-
-                "summary": evaluation.get(
-                    "summary",
-                    ""
-                )
-            }
-
-            save_evaluation_record(
-                evaluation_record
-            )
-
-            # ================================================
-            # RESPONSE ITEM
-            # ================================================
-            evaluations.append(
-                {
-                    "candidate_id": candidate_id,
-                    "match_score": evaluation.get(
-                        "match_score",
-                        0
-                    ),
-                    "recommendation": evaluation.get(
-                        "recommendation",
-                        "LOW_MATCH"
-                    ),
-                    "strengths": evaluation.get(
-                        "strengths",
-                        []
-                    ),
-                    "gaps": evaluation.get(
-                        "gaps",
-                        []
-                    )
-                }
-            )
-
-        # ====================================================
-        # ORDENAR RESULTADOS
-        # ====================================================
-        evaluations.sort(
-            key=lambda item:
-            item["match_score"],
-            reverse=True
-        )
-
-        # ====================================================
-        # RESPONSE
-        # ====================================================
-        return {
-            "job_id": job_id,
-            "job_title": job["title"],
-            "evaluated_candidates": len(
-                evaluations
-            ),
-            "candidates": evaluations
-        }
-
-    except HTTPException:
-        raise
-
-    except Exception as e:
-
-        print(
-            f"ERROR BULK JOB EVALUATION: {str(e)}"
-        )
-
-        raise HTTPException(
-            status_code=500,
-            detail=str(e)
-        )
-    
-# ============================================================
 # JOB RANKING
 # ============================================================
 @app.get(
@@ -2235,7 +2246,8 @@ def get_job_ranking(
     recommendation: str | None = None,
     limit: int | None = None,
     page: int = 1,
-    page_size: int = 10
+    page_size: int = 10,
+    current_user: dict = Depends(get_current_user)
 ):
     try:
 
@@ -2535,7 +2547,8 @@ def get_job_ranking(
 )
 def get_candidate_job_evaluation(
     job_id: str,
-    candidate_id: str
+    candidate_id: str,
+    current_user: dict = Depends(get_current_user)
 ):
     try:
 
@@ -2715,7 +2728,8 @@ def get_candidate_job_evaluation(
     response_model=JobSummaryResponse
 )
 def get_job_summary(
-    job_id: str
+    job_id: str,
+    current_user: dict = Depends(get_current_user)
 ):
     try:
 
@@ -2906,15 +2920,16 @@ def get_job_summary(
         # ====================================================
         # TOTAL CANDIDATOS
         # ====================================================
-        candidates_response = (
-            candidates_table.scan()
-        )
+
+        # Las evaluaciones están asociadas directamente
+        # a la vacante mediante job_id.
+        #
+        # Por eso el total de candidatos de esta vacante
+        # debe calcularse desde evaluations_table y no
+        # desde candidates_table.
 
         total_candidates = len(
-            candidates_response.get(
-                "Items",
-                []
-            )
+            evaluations
         )
 
         # ====================================================
@@ -2987,7 +3002,8 @@ def get_job_candidates(
     min_score: int = 0,
     recommendation: str | None = None,
     page: int = 1,
-    page_size: int = 10
+    page_size: int = 10,
+    current_user: dict = Depends(get_current_user)
 ):
     try:
 
@@ -3254,7 +3270,8 @@ def get_job_candidates(
 )
 def get_candidate_explanation(
     job_id: str,
-    candidate_id: str
+    candidate_id: str,
+    current_user: dict = Depends(get_current_user)
 ):
     try:
 
@@ -3514,7 +3531,8 @@ def get_candidate_explanation(
 )
 def compare_candidates(
     job_id: str,
-    candidate_ids: str
+    candidate_ids: str,
+    current_user: dict = Depends(get_current_user)
 ):
     try:
 
@@ -3709,7 +3727,8 @@ def compare_candidates(
 )
 def get_candidate_requirements(
     job_id: str,
-    candidate_id: str
+    candidate_id: str,
+    current_user: dict = Depends(get_current_user)
 ):
     try:
 
@@ -3874,7 +3893,8 @@ def get_candidate_requirements(
     "/debug/retrieve/{candidate_id}"
 )
 def debug_retrieve(
-    candidate_id: str
+    candidate_id: str,
+    current_user: dict = Depends(get_current_user)
 ):
     try:
         results = retrieve_candidate(
@@ -3899,4 +3919,4 @@ def debug_retrieve(
             status_code=500,
             detail=str(e)
         )
-
+# CI/CD trigger test

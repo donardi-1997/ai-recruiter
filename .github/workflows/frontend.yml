@@ -1,0 +1,89 @@
+name: Frontend CI/CD
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "app.py"
+      - "Dockerfile.frontend"
+      - "frontend-task-definition.json"
+      - "requirements.txt"
+      - ".github/workflows/frontend.yml"
+  push:
+    branches: [main]
+    paths:
+      - "app.py"
+      - "Dockerfile.frontend"
+      - "frontend-task-definition.json"
+      - "requirements.txt"
+      - ".github/workflows/frontend.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: production-frontend
+  cancel-in-progress: false
+
+env:
+  AWS_REGION: ${{ vars.AWS_REGION }}
+  ECR_REPOSITORY: ai-recruiter-frontend
+  ECS_CLUSTER: ai-recruiter-cluster
+  ECS_SERVICE: ai-recruiter-frontend
+  ECS_CONTAINER: ai-recruiter-frontend
+
+jobs:
+  validate:
+    name: Validate frontend
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate Python syntax
+        run: python -m py_compile app.py
+      - name: Validate task definition JSON
+        run: python -m json.tool frontend-task-definition.json > /dev/null
+      - name: Build frontend image
+        run: docker build --file Dockerfile.frontend --tag frontend-ci:${{ github.sha }} .
+
+  deploy:
+    name: Deploy frontend
+    if: github.event_name != 'pull_request'
+    needs: validate
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure AWS credentials via OIDC
+        uses: aws-actions/configure-aws-credentials@v5
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+      - name: Login to Amazon ECR
+        id: ecr-login
+        uses: aws-actions/amazon-ecr-login@v2
+      - name: Build and push image
+        id: image
+        env:
+          ECR_REGISTRY: ${{ steps.ecr-login.outputs.registry }}
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          IMAGE_URI="$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG"
+          docker build --file Dockerfile.frontend --tag "$IMAGE_URI" .
+          docker push "$IMAGE_URI"
+          echo "uri=$IMAGE_URI" >> "$GITHUB_OUTPUT"
+      - name: Render task definition
+        id: render
+        uses: aws-actions/amazon-ecs-render-task-definition@v1
+        with:
+          task-definition: frontend-task-definition.json
+          container-name: ${{ env.ECS_CONTAINER }}
+          image: ${{ steps.image.outputs.uri }}
+      - name: Deploy ECS service
+        uses: aws-actions/amazon-ecs-deploy-task-definition@v2
+        with:
+          task-definition: ${{ steps.render.outputs.task-definition }}
+          service: ${{ env.ECS_SERVICE }}
+          cluster: ${{ env.ECS_CLUSTER }}
+          wait-for-service-stability: true
