@@ -4,7 +4,13 @@ import uuid
 from typing import Any
 
 import boto3
+from boto3.dynamodb.conditions import Key, Attr
 import requests
+
+from auth import (
+    create_user,
+    login_user
+)
 
 from dotenv import load_dotenv
 
@@ -21,6 +27,8 @@ from fastapi.security import (
     HTTPBearer,
     HTTPAuthorizationCredentials
 )
+
+from fastapi.middleware.cors import CORSMiddleware
 
 from jose import jwt
 
@@ -252,6 +260,52 @@ app = FastAPI(
     version="2.0.0"
 )
 
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[
+        "http://localhost:5173",
+        "http://127.0.0.1:5173"
+    ],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# ============================================================
+# AUTH - REGISTER USER (COGNITO)
+# ============================================================
+
+@app.post(
+    "/auth/register"
+)
+def register_user(
+    email: str,
+    password: str
+):
+
+    return create_user(
+        email,
+        password
+    )
+
+
+# ============================================================
+# AUTH - LOGIN USER (COGNITO)
+# ============================================================
+
+@app.post(
+    "/auth/login"
+)
+def login(
+    email: str,
+    password: str
+):
+
+    return login_user(
+        email,
+        password
+    )
+
 # ============================================================
 # AUTH - CURRENT USER
 # ============================================================
@@ -384,10 +438,20 @@ class CandidateRankingItem(BaseModel):
     rank: int
     candidate_id: str
     candidate_name: str
-    match_score: int
+
+    match_score: int | None = None
+
     recommendation: str
-    strengths: list[str]
-    gaps: list[str]
+
+    status: str
+
+    strengths: list[str] = Field(
+        default_factory=list
+    )
+
+    gaps: list[str] = Field(
+        default_factory=list
+    )
 
 class JobRankingResponse(BaseModel):
     job_id: str
@@ -585,6 +649,16 @@ def get_job_record(
         "Item"
     )
 
+def validate_job_owner(
+    job: dict,
+    current_user: dict
+):
+    if job.get("owner_id") != current_user["sub"]:
+        raise HTTPException(
+            status_code=403,
+            detail="No tienes permiso para acceder a esta vacante."
+        )
+
 def save_candidate_record(
     candidate: dict
 ):
@@ -606,6 +680,17 @@ def save_evaluation_record(
         Item=evaluation
     )
 
+def parse_json_field(value):
+
+    if isinstance(value, str):
+
+        try:
+            return json.loads(value)
+
+        except:
+            return value
+
+    return value
 # ============================================================
 # BUILD SOURCES
 # ============================================================
@@ -1449,6 +1534,10 @@ DESCRIPCIÓN DE LA VACANTE:
     }
 
 # ============================================================
+# ENDPOINTS
+# ============================================================
+
+# ============================================================
 # HEALTH
 # ============================================================
 @app.get("/")
@@ -1483,7 +1572,7 @@ def create_job(
             "job_id": job_id,
             "title": request.title.strip(),
             "description": request.description.strip(),
-            "user_sub": current_user["sub"]
+            "owner_id": current_user["sub"]
         }
         save_job_record(
             job
@@ -1521,12 +1610,12 @@ def list_jobs(
             []
         )
 
-        user_sub = current_user["sub"]
+        owner_id = current_user["sub"]
 
         user_jobs = [
             job
             for job in jobs
-            if job.get("user_sub") == user_sub
+            if job.get("owner_id") == owner_id
         ]
 
         return {
@@ -1536,37 +1625,6 @@ def list_jobs(
         print(
             f"ERROR LIST JOBS: {str(e)}"
         )
-        raise HTTPException(
-            status_code=500,
-            detail=str(e)
-        )
-
-# ============================================================
-# GET JOB
-# ============================================================
-@app.get(
-    "/jobs/{job_id}",
-    response_model=JobResponse
-)
-def get_job(
-    job_id: str,
-    current_user: dict = Depends(get_current_user)
-):
-    try:
-        job = get_job_record(
-            job_id
-        )
-        if not job:
-            raise HTTPException(
-                status_code=404,
-                detail="Vacante no encontrada."
-            )
-        return JobResponse(
-            **job
-        )
-    except HTTPException:
-        raise
-    except Exception as e:
         raise HTTPException(
             status_code=500,
             detail=str(e)
@@ -1736,6 +1794,7 @@ async def create_candidate(
     # ========================================================
     candidate_record = {
         "candidate_id": candidate_id,
+        "owner_id": current_user["sub"],
         "name": name.strip(),
         "filename": filename,
         "s3_location": (
@@ -1786,7 +1845,115 @@ async def create_candidate(
     }
 
 # ============================================================
-# GET CANDIDATE
+# DOWNLOAD CANDIDATE CV
+# ============================================================
+
+@app.get(
+    "/candidates/{candidate_id}/download"
+)
+def download_candidate_cv(
+    candidate_id: str,
+    current_user: dict = Depends(get_current_user)
+):
+    try:
+
+        candidate = get_candidate_record(
+            candidate_id
+        )
+
+        if not candidate:
+            raise HTTPException(
+                status_code=404,
+                detail="Candidato no encontrado."
+            )
+
+        # ================================================
+        # VALIDAR PROPIETARIO
+        # ================================================
+
+        if candidate.get(
+            "owner_id"
+        ) != current_user["sub"]:
+
+            raise HTTPException(
+                status_code=403,
+                detail="No tienes permiso para acceder a este CV."
+            )
+
+        # ================================================
+        # OBTENER S3 KEY
+        # ================================================
+
+        s3_location = candidate.get(
+            "s3_location"
+        )
+
+        if not s3_location:
+            raise HTTPException(
+                status_code=404,
+                detail="El CV no tiene ubicación en S3."
+            )
+
+        prefix = f"s3://{S3_BUCKET}/"
+
+        if s3_location.startswith(prefix):
+            s3_key = s3_location[len(prefix):]
+        else:
+            s3_key = s3_location
+
+        # ================================================
+        # GENERAR URL TEMPORAL
+        # ================================================
+
+        download_filename = candidate.get("filename")
+
+        if candidate.get("name"):
+            clean_name = (
+                candidate["name"]
+                .strip()
+                .replace(" ", "_")
+            )
+
+            download_filename = f"{clean_name}_CV.pdf"
+
+        if not download_filename:
+            download_filename = "CV.pdf"
+
+
+        download_url = s3.generate_presigned_url(
+            ClientMethod="get_object",
+            Params={
+                "Bucket": S3_BUCKET,
+                "Key": s3_key,
+                "ResponseContentType": "application/pdf",
+                "ResponseContentDisposition": (
+                    f'attachment; filename="{download_filename}"'
+                ),
+            },
+            ExpiresIn=300
+        )
+
+        return {
+            "download_url": download_url
+        }
+
+    except HTTPException:
+        raise
+
+    except Exception as e:
+
+        print(
+            "ERROR DOWNLOAD CANDIDATE CV:",
+            str(e)
+        )
+
+        raise HTTPException(
+            status_code=500,
+            detail="No fue posible generar la descarga del CV."
+        )
+
+# ============================================================
+# GET CANDIDATE BY ID
 # ============================================================
 @app.get(
     "/candidates/{candidate_id}"
@@ -1803,6 +1970,11 @@ def get_candidate(
             raise HTTPException(
                 status_code=404,
                 detail="Candidato no encontrado."
+            )
+        if candidate.get("owner_id") != current_user["sub"]:
+            raise HTTPException(
+                status_code=403,
+                detail="No tienes permiso para acceder a este candidato."
             )
         ingestion_job_id = candidate.get(
             "ingestion_job_id"
@@ -1883,6 +2055,36 @@ def get_candidate(
             detail=str(e)
         )
 
+
+# ============================================================
+# GET JOB BY ID
+# ============================================================
+
+@app.get(
+    "/jobs/{job_id}"
+)
+def get_job(
+    job_id: str,
+    current_user: dict = Depends(get_current_user)
+):
+
+    job = get_job_record(
+        job_id
+    )
+
+    if not job:
+        raise HTTPException(
+            status_code=404,
+            detail="Vacante no encontrada."
+        )
+
+    validate_job_owner(
+        job,
+        current_user
+    )
+
+    return job
+
 # ============================================================
 # LIST CANDIDATES
 # ============================================================
@@ -1895,12 +2097,24 @@ def list_candidates(
 
     try:
         response = candidates_table.scan()
+        
+        candidates = response.get(
+            "Items",
+            []
+        )
+
+        owner_id = current_user["sub"]
+
+        user_candidates = [
+            candidate
+            for candidate in candidates
+            if candidate.get("owner_id") == owner_id
+        ]
+
         return {
-            "candidates": response.get(
-                "Items",
-                []
-            )
+            "candidates": user_candidates
         }
+
     except Exception as e:
         print(
             f"ERROR LIST CANDIDATES: {str(e)}"
@@ -1910,6 +2124,201 @@ def list_candidates(
             detail=str(e)
         )
 
+# ============================================================
+# DELETE CANDIDATE
+# ============================================================
+
+@app.delete(
+    "/candidates/{candidate_id}"
+)
+def delete_candidate(
+    candidate_id: str,
+    current_user: dict = Depends(get_current_user)
+):
+
+    try:
+
+        candidate = get_candidate_record(
+            candidate_id
+        )
+
+        if not candidate:
+            raise HTTPException(
+                status_code=404,
+                detail="Candidato no encontrado."
+            )
+
+
+        if candidate.get(
+            "owner_id"
+        ) != current_user["sub"]:
+
+            raise HTTPException(
+                status_code=403,
+                detail="No tienes permiso sobre este candidato."
+            )
+
+
+        # eliminar evaluaciones relacionadas
+        evaluations = evaluations_table.query(
+            IndexName="candidate-index",
+            KeyConditionExpression=
+                Key("candidate_id").eq(candidate_id)
+        )
+
+
+        for evaluation in evaluations.get(
+            "Items",
+            []
+        ):
+
+            evaluations_table.delete_item(
+                Key={
+                    "job_id":
+                        evaluation["job_id"],
+                    "candidate_id":
+                        evaluation["candidate_id"]
+                }
+            )
+
+
+        # eliminar registro candidato
+
+        candidates_table.delete_item(
+            Key={
+                "candidate_id":
+                    candidate_id
+            }
+        )
+
+
+        # eliminar PDF S3
+
+        if candidate.get(
+            "s3_location"
+        ):
+
+            bucket = candidate["s3_location"].split("/")[2]
+
+            key = "/".join(
+                candidate["s3_location"].split("/")[3:]
+            )
+
+            s3.delete_object(
+                Bucket=bucket,
+                Key=key
+            )
+
+
+        return {
+            "message":
+                "Candidato eliminado correctamente.",
+            "candidate_id":
+                candidate_id
+        }
+
+
+    except HTTPException:
+        raise
+
+
+    except Exception as e:
+
+        print(
+            f"ERROR DELETE CANDIDATE: {str(e)}"
+        )
+
+        raise HTTPException(
+            status_code=500,
+            detail=str(e)
+        )
+
+# ============================================================
+# DELETE JOB
+# ============================================================
+
+@app.delete(
+    "/jobs/{job_id}"
+)
+def delete_job(
+    job_id: str,
+    current_user: dict = Depends(get_current_user)
+):
+
+    try:
+
+        job = get_job_record(
+            job_id
+        )
+
+
+        if not job:
+            raise HTTPException(
+                status_code=404,
+                detail="Vacante no encontrada."
+            )
+
+
+        validate_job_owner(
+            job,
+            current_user
+        )
+
+
+        # borrar evaluaciones asociadas
+
+        evaluations =  evaluations_table.scan(
+            FilterExpression=
+                Attr("job_id").eq(job_id)
+        )
+
+
+        for evaluation in evaluations.get(
+            "Items",
+            []
+        ):
+
+            evaluations_table.delete_item(
+                Key={
+                    "job_id": job_id,
+                    "candidate_id": evaluation["candidate_id"]
+                }
+            )
+
+
+        # borrar vacante
+
+        jobs_table.delete_item(
+            Key={
+                "job_id":
+                    job_id
+            }
+        )
+
+
+        return {
+            "message":
+                "Vacante eliminada correctamente.",
+            "job_id":
+                job_id
+        }
+
+
+
+    except HTTPException:
+        raise
+
+
+    except Exception as e:
+
+        print(
+            f"ERROR DELETE JOB: {str(e)}"
+        )
+
+        raise HTTPException(
+            status_code=500,
+            detail=str(e)
+        )
 # ============================================================
 # INGESTION STATUS
 # ============================================================
@@ -1997,6 +2406,11 @@ def ask_candidate(
             raise HTTPException(
                 status_code=404,
                 detail="Candidato no encontrado."
+            )
+        if candidate.get("owner_id") != current_user["sub"]:
+            raise HTTPException(
+                status_code=403,
+                detail="No tienes permiso para consultar este candidato."
             )
         results = retrieve_candidate(
             candidate_id=candidate_id,
@@ -2138,6 +2552,15 @@ def evaluate_candidate_job(
                     "Vacante no encontrada."
                 )
             )
+        if candidate.get("owner_id") != current_user["sub"]:
+            raise HTTPException(
+                status_code=403,
+                detail="No tienes permiso sobre este candidato."
+            )
+        validate_job_owner(
+            job,
+            current_user
+        )   
         results = retrieve_candidate(
             candidate_id=candidate_id,
             question=job["description"]
@@ -2152,7 +2575,23 @@ def evaluate_candidate_job(
         # ====================================================
         evaluation_record = {
             "job_id": request.job_id,
+            "job_title": job.get(
+                "title",
+                ""
+            ),
+
+            "job_description": job.get(
+                "description",
+                ""
+            ),
+
             "candidate_id": candidate_id,
+            "candidate_name": candidate.get(
+                "name",
+                ""
+            ),
+
+            "owner_id": job["owner_id"],
 
             "status": "COMPLETED",
 
@@ -2244,8 +2683,191 @@ def evaluate_candidate_job(
         )
 
 # ============================================================
+# GET EVALUATIONS BY JOB
+# ============================================================
+@app.get(
+    "/jobs/{job_id}/evaluations"
+)
+def get_job_evaluations(
+    job_id: str,
+    current_user: dict = Depends(get_current_user)
+):
+    try:
+
+        job = get_job_record(
+            job_id
+        )
+
+        if not job:
+            raise HTTPException(
+                status_code=404,
+                detail="Vacante no encontrada."
+            )
+
+
+        validate_job_owner(
+            job,
+            current_user
+        )
+
+
+        response = evaluations_table.query(
+            KeyConditionExpression=
+                Key("job_id").eq(job_id)
+        )
+
+
+        evaluations = response.get(
+            "Items",
+            []
+        )
+
+        for item in evaluations:
+
+            item["requirements"] = parse_json_field(
+                item.get("requirements", [])
+            )
+
+            item["strengths"] = parse_json_field(
+                item.get("strengths", [])
+            )
+
+            item["gaps"] = parse_json_field(
+                item.get("gaps", [])
+            )
+
+
+        evaluations.sort(
+            key=lambda x: int(
+                x.get(
+                    "match_score",
+                    0
+                )
+            ),
+            reverse=True
+        )
+
+
+        return {
+            "job_id": job_id,
+            "job_title": job.get(
+                "title",
+                ""
+            ),
+            "total": len(
+                evaluations
+            ),
+            "evaluations": evaluations
+        }
+
+
+    except HTTPException:
+        raise
+
+
+    except Exception as e:
+
+        print(
+            f"ERROR GET JOB EVALUATIONS: {str(e)}"
+        )
+
+        raise HTTPException(
+            status_code=500,
+            detail=str(e)
+        )
+
+# ============================================================
+# GET EVALUATIONS BY CANDIDATE
+# ============================================================
+@app.get(
+    "/candidates/{candidate_id}/evaluations"
+)
+def get_candidate_evaluations(
+    candidate_id: str,
+    current_user: dict = Depends(get_current_user)
+):
+    try:
+
+        candidate = get_candidate_record(
+            candidate_id
+        )
+
+
+        if not candidate:
+            raise HTTPException(
+                status_code=404,
+                detail="Candidato no encontrado."
+            )
+
+
+        if candidate.get(
+            "owner_id"
+        ) != current_user["sub"]:
+
+            raise HTTPException(
+                status_code=403,
+                detail="No tienes permiso sobre este candidato."
+            )
+
+
+        response = evaluations_table.query(
+            IndexName="candidate-index",
+            KeyConditionExpression=
+                Key("candidate_id").eq(candidate_id)
+        )
+
+
+        evaluations = response.get(
+            "Items",
+            []
+        )
+
+        for item in evaluations:
+
+            item["requirements"] = parse_json_field(
+                item.get("requirements", [])
+            )
+
+            item["strengths"] = parse_json_field(
+                item.get("strengths", [])
+            )
+
+            item["gaps"] = parse_json_field(
+                item.get("gaps", [])
+            )
+
+        return {
+            "candidate_id": candidate_id,
+            "candidate_name": candidate.get(
+                "name",
+                ""
+            ),
+            "total": len(
+                evaluations
+            ),
+            "evaluations": evaluations
+        }
+
+
+    except HTTPException:
+        raise
+
+
+    except Exception as e:
+
+        print(
+            f"ERROR GET CANDIDATE EVALUATIONS: {str(e)}"
+        )
+
+        raise HTTPException(
+            status_code=500,
+            detail=str(e)
+        )
+
+# ============================================================
 # JOB RANKING
 # ============================================================
+
 @app.get(
     "/jobs/{job_id}/ranking",
     response_model=JobRankingResponse
@@ -2253,6 +2875,7 @@ def evaluate_candidate_job(
 def get_job_ranking(
     job_id: str,
     min_score: int = 0,
+    max_score: int = 100,
     recommendation: str | None = None,
     limit: int | None = None,
     page: int = 1,
@@ -2261,12 +2884,29 @@ def get_job_ranking(
 ):
     try:
 
-        
+        # ====================================================
+        # VALIDACIONES
+        # ====================================================
 
         if min_score < 0 or min_score > 100:
             raise HTTPException(
                 status_code=400,
                 detail="min_score debe estar entre 0 y 100."
+            )
+
+        if max_score < 0 or max_score > 100:
+            raise HTTPException(
+                status_code=400,
+                detail="max_score debe estar entre 0 y 100."
+            )
+
+        if min_score > max_score:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "min_score no puede ser mayor "
+                    "que max_score."
+                )
             )
 
         if limit is not None and limit <= 0:
@@ -2287,61 +2927,199 @@ def get_job_ranking(
                 detail="page_size debe estar entre 1 y 100."
             )
 
-        if recommendation:
+        # ====================================================
+        # NORMALIZAR RECOMMENDATION
+        # ====================================================
 
-            allowed_recommendations = {
-                "STRONG_MATCH",
-                "PARTIAL_MATCH",
-                "LOW_MATCH"
-            }
+        if recommendation:
 
             recommendation = recommendation.upper()
 
+            allowed_recommendations = {
+                "STRONG_MATCH",
+                "GOOD_MATCH",
+                "PARTIAL_MATCH",
+                "LOW_MATCH",
+                "PENDING"
+            }
+
             if recommendation not in allowed_recommendations:
+
                 raise HTTPException(
                     status_code=400,
                     detail=(
                         "recommendation debe ser "
-                        "STRONG_MATCH, PARTIAL_MATCH "
-                        "o LOW_MATCH."
+                        "STRONG_MATCH, GOOD_MATCH, "
+                        "PARTIAL_MATCH, LOW_MATCH "
+                        "o PENDING."
                     )
                 )
 
         # ====================================================
-        # OBTENER JOB
+        # OBTENER VACANTE
         # ====================================================
+
         job = get_job_record(
             job_id
         )
 
         if not job:
+
             raise HTTPException(
                 status_code=404,
                 detail="Vacante no encontrada."
             )
 
         # ====================================================
-        # OBTENER EVALUACIONES
+        # VALIDAR PROPIETARIO
         # ====================================================
-        response = evaluations_table.query(
-            KeyConditionExpression=(
-                boto3.dynamodb.conditions.Key(
-                    "job_id"
-                ).eq(job_id)
+
+        validate_job_owner(
+            job,
+            current_user
+        )
+
+        owner_id = current_user["sub"]
+
+        # ====================================================
+        # OBTENER TODOS LOS CANDIDATOS DEL USUARIO
+        #
+        # candidates_table:
+        #   PK = candidate_id
+        #
+        # Por eso NO usamos:
+        #
+        # candidates_table.query(
+        #     Key("owner_id").eq(...)
+        # )
+        #
+        # Usamos scan + FilterExpression.
+        # ====================================================
+
+        all_candidates = []
+
+        candidates_response = candidates_table.scan(
+            FilterExpression=(
+                boto3.dynamodb.conditions.Attr(
+                    "owner_id"
+                ).eq(
+                    owner_id
+                )
             )
         )
 
-        items = response.get(
-            "Items",
-            []
+        all_candidates.extend(
+            candidates_response.get(
+                "Items",
+                []
+            )
         )
 
-        candidates = []
+        # ====================================================
+        # PAGINACIÓN CORRECTA DEL SCAN
+        # ====================================================
+
+        while candidates_response.get(
+            "LastEvaluatedKey"
+        ):
+
+            candidates_response = candidates_table.scan(
+                FilterExpression=(
+                    boto3.dynamodb.conditions.Attr(
+                        "owner_id"
+                    ).eq(
+                        owner_id
+                    )
+                ),
+                ExclusiveStartKey=(
+                    candidates_response[
+                        "LastEvaluatedKey"
+                    ]
+                )
+            )
+
+            all_candidates.extend(
+                candidates_response.get(
+                    "Items",
+                    []
+                )
+            )
+
+        print(
+            f"RANKING - candidatos encontrados: "
+            f"{len(all_candidates)}"
+        )
 
         # ====================================================
-        # CONSTRUIR RANKING
+        # OBTENER EVALUACIONES DE LA VACANTE
+        #
+        # evaluations_table:
+        #   PK = job_id
+        #
+        # Por eso Query por job_id es correcto.
         # ====================================================
-        for evaluation in items:
+
+        evaluations = []
+
+        evaluations_response = evaluations_table.query(
+            KeyConditionExpression=(
+                boto3.dynamodb.conditions.Key(
+                    "job_id"
+                ).eq(
+                    job_id
+                )
+            )
+        )
+
+        evaluations.extend(
+            evaluations_response.get(
+                "Items",
+                []
+            )
+        )
+
+        # ====================================================
+        # PAGINACIÓN DE EVALUACIONES
+        # ====================================================
+
+        while evaluations_response.get(
+            "LastEvaluatedKey"
+        ):
+
+            evaluations_response = evaluations_table.query(
+                KeyConditionExpression=(
+                    boto3.dynamodb.conditions.Key(
+                        "job_id"
+                    ).eq(
+                        job_id
+                    )
+                ),
+                ExclusiveStartKey=(
+                    evaluations_response[
+                        "LastEvaluatedKey"
+                    ]
+                )
+            )
+
+            evaluations.extend(
+                evaluations_response.get(
+                    "Items",
+                    []
+                )
+            )
+
+        print(
+            f"RANKING - evaluaciones encontradas: "
+            f"{len(evaluations)}"
+        )
+
+        # ====================================================
+        # INDEXAR EVALUACIONES POR CANDIDATO
+        # ====================================================
+
+        evaluations_by_candidate = {}
+
+        for evaluation in evaluations:
 
             candidate_id = evaluation.get(
                 "candidate_id"
@@ -2350,107 +3128,234 @@ def get_job_ranking(
             if not candidate_id:
                 continue
 
-            # ================================================
-            # OBTENER CANDIDATO
-            # ================================================
-            candidate = get_candidate_record(
+            evaluations_by_candidate[
+                candidate_id
+            ] = evaluation
+
+        print(
+            f"RANKING - candidatos evaluados: "
+            f"{len(evaluations_by_candidate)}"
+        )
+
+        # ====================================================
+        # CONSTRUIR RANKING
+        # ====================================================
+
+        candidates = []
+
+        for candidate in all_candidates:
+
+            candidate_id = candidate.get(
+                "candidate_id"
+            )
+
+            if not candidate_id:
+                continue
+
+            # =================================================
+            # BUSCAR EVALUACIÓN
+            # =================================================
+
+            evaluation = evaluations_by_candidate.get(
                 candidate_id
             )
 
-            if not candidate:
+            # =================================================
+            # CANDIDATO SIN EVALUACIÓN
+            # =================================================
+
+            if not evaluation:
+
+                if recommendation == "PENDING":
+
+                    candidates.append(
+                        {
+                            "candidate_id": candidate_id,
+
+                            "candidate_name": candidate.get(
+                                "name",
+                                "Unknown"
+                            ),
+
+                            "match_score": 0,
+
+                            "recommendation": "PENDING",
+
+                            "strengths": [],
+
+                            "gaps": []
+                        }
+                    )
+
                 continue
 
-            # ================================================
-            # PARSEAR STRENGTHS
-            # ================================================
-            strengths_raw = evaluation.get(
-                "strengths",
-                "[]"
-            )
+            # =================================================
+            # SCORE
+            # =================================================
 
             try:
 
-                strengths = json.loads(
-                    strengths_raw
+                match_score = int(
+                    evaluation.get(
+                        "match_score",
+                        0
+                    )
                 )
 
             except Exception:
 
-                strengths = []
+                match_score = 0
+
+            # Mantener score entre 0 y 100.
+
+            match_score = max(
+                0,
+                min(
+                    100,
+                    match_score
+                )
+            )
+
+            # =================================================
+            # RECOMMENDATION
+            # =================================================
+
+            evaluation_recommendation = (
+                evaluation.get(
+                    "recommendation",
+                    "LOW_MATCH"
+                )
+            )
+
+            if not evaluation_recommendation:
+
+                evaluation_recommendation = (
+                    "LOW_MATCH"
+                )
+
+            evaluation_recommendation = str(
+                evaluation_recommendation
+            ).upper()
+
+            # =================================================
+            # FILTRO MIN SCORE
+            # =================================================
+
+            if match_score < min_score:
+                continue
+
+            # =================================================
+            # FILTRO MAX SCORE
+            # =================================================
+
+            if match_score > max_score:
+                continue
+
+            # =================================================
+            # FILTRO RECOMMENDATION
+            # =================================================
+
+            if (
+                recommendation
+                and recommendation != "PENDING"
+                and evaluation_recommendation
+                != recommendation
+            ):
+                continue
+
+            # =================================================
+            # STRENGTHS
+            # =================================================
+
+            strengths_raw = evaluation.get(
+                "strengths",
+                []
+            )
+
+            if isinstance(
+                strengths_raw,
+                str
+            ):
+
+                try:
+
+                    strengths = json.loads(
+                        strengths_raw
+                    )
+
+                except Exception:
+
+                    strengths = []
+
+            else:
+
+                strengths = strengths_raw
 
             if not isinstance(
                 strengths,
                 list
             ):
+
                 strengths = []
 
-            # ================================================
-            # PARSEAR GAPS
-            # ================================================
+            # =================================================
+            # GAPS
+            # =================================================
+
             gaps_raw = evaluation.get(
                 "gaps",
-                "[]"
+                []
             )
 
-            try:
+            if isinstance(
+                gaps_raw,
+                str
+            ):
 
-                gaps = json.loads(
-                    gaps_raw
-                )
+                try:
 
-            except Exception:
+                    gaps = json.loads(
+                        gaps_raw
+                    )
 
-                gaps = []
+                except Exception:
+
+                    gaps = []
+
+            else:
+
+                gaps = gaps_raw
 
             if not isinstance(
                 gaps,
                 list
             ):
+
                 gaps = []
 
-            # ================================================
-            # DATOS DE LA EVALUACIÓN
-            # ================================================
-            match_score = int(
-                evaluation.get(
-                    "match_score",
-                    0
-                )
-            )
-
-            evaluation_recommendation = evaluation.get(
-                "recommendation",
-                "LOW_MATCH"
-            )
-
-            # ================================================
-            # FILTRO POR SCORE
-            # ================================================
-            if match_score < min_score:
-                continue
-
-            # ================================================
-            # FILTRO POR RECOMMENDATION
-            # ================================================
-            if (
-                recommendation
-                and evaluation_recommendation != recommendation
-            ):
-                continue
-
-            # ================================================
+            # =================================================
             # AGREGAR CANDIDATO
-            # ================================================
+            # =================================================
+
             candidates.append(
                 {
                     "candidate_id": candidate_id,
+
                     "candidate_name": candidate.get(
                         "name",
-                        "Unknown"
+                        evaluation.get(
+                            "candidate_name",
+                            "Unknown"
+                        )
                     ),
+
                     "match_score": match_score,
-                    "recommendation": evaluation_recommendation,
+
+                    "recommendation":
+                        evaluation_recommendation,
+
                     "strengths": strengths,
+
                     "gaps": gaps
                 }
             )
@@ -2458,14 +3363,28 @@ def get_job_ranking(
         # ====================================================
         # ORDENAR
         # ====================================================
+
         candidates.sort(
-            key=lambda candidate:
-            candidate["match_score"],
+            key=lambda candidate: (
+                candidate["match_score"],
+                candidate["candidate_name"].lower()
+            ),
             reverse=True
         )
 
+        # ====================================================
+        # LIMIT
+        # ====================================================
+
         if limit is not None:
-            candidates = candidates[:limit]
+
+            candidates = candidates[
+                :limit
+            ]
+
+        # ====================================================
+        # TOTAL
+        # ====================================================
 
         total = len(
             candidates
@@ -2474,13 +3393,21 @@ def get_job_ranking(
         total_pages = (
             (total + page_size - 1)
             // page_size
+            if total > 0
+            else 0
         )
+
+        # ====================================================
+        # PAGINACIÓN DEL RESULTADO
+        # ====================================================
 
         start = (
             page - 1
         ) * page_size
 
-        end = start + page_size
+        end = (
+            start + page_size
+        )
 
         paginated_candidates = candidates[
             start:end
@@ -2489,32 +3416,43 @@ def get_job_ranking(
         # ====================================================
         # ASIGNAR RANK
         # ====================================================
+
         ranked_candidates = []
 
         for index, candidate in enumerate(
             paginated_candidates,
             start=start + 1
         ):
-            candidate["rank"] = index
 
             ranked_candidates.append(
                 CandidateRankingItem(
                     rank=index,
+
                     candidate_id=candidate[
                         "candidate_id"
                     ],
+
                     candidate_name=candidate[
                         "candidate_name"
                     ],
+
                     match_score=candidate[
                         "match_score"
                     ],
+
                     recommendation=candidate[
                         "recommendation"
                     ],
+
+                    status=candidate.get(
+                        "status",
+                        "COMPLETED"
+                    ),
+
                     strengths=candidate[
                         "strengths"
                     ],
+
                     gaps=candidate[
                         "gaps"
                     ]
@@ -2522,16 +3460,38 @@ def get_job_ranking(
             )
 
         # ====================================================
+        # LOG FINAL
+        # ====================================================
+
+        print(
+            f"RANKING COMPLETADO - "
+            f"job={job_id} "
+            f"total={total} "
+            f"page={page} "
+            f"page_size={page_size}"
+        )
+
+        # ====================================================
         # RESPONSE
         # ====================================================
+
         return JobRankingResponse(
             job_id=job_id,
-            job_title=job["title"],
+
+            job_title=job.get(
+                "title",
+                ""
+            ),
+
             page=page,
+
             page_size=page_size,
+
             total=total,
+
             total_pages=total_pages,
-            candidates=paginated_candidates
+
+            candidates=ranked_candidates
         )
 
     except HTTPException:
@@ -2574,6 +3534,11 @@ def get_candidate_job_evaluation(
                 status_code=404,
                 detail="Vacante no encontrada."
             )
+
+        validate_job_owner(
+            job,
+            current_user
+        )
 
         # ====================================================
         # OBTENER CANDIDATO
@@ -2755,6 +3720,11 @@ def get_job_summary(
                 status_code=404,
                 detail="Vacante no encontrada."
             )
+
+        validate_job_owner(
+            job,
+            current_user
+        )
 
         # ====================================================
         # OBTENER EVALUACIONES
@@ -3030,6 +4000,11 @@ def get_job_candidates(
                 detail="Vacante no encontrada."
             )
 
+        validate_job_owner(
+            job,
+            current_user
+        )
+
         # ====================================================
         # VALIDAR PAGINACIÓN
         # ====================================================
@@ -3298,6 +4273,11 @@ def get_candidate_explanation(
                 detail="Vacante no encontrada."
             )
 
+        validate_job_owner(
+            job,
+            current_user
+        )
+
         # ====================================================
         # VALIDAR CANDIDATO
         # ====================================================
@@ -3532,9 +4512,11 @@ def get_candidate_explanation(
             detail=str(e)
         )
 
+
 # ============================================================
 # COMPARE CANDIDATES
 # ============================================================
+
 @app.get(
     "/jobs/{job_id}/compare",
     response_model=CandidateComparisonResponse
@@ -3549,6 +4531,7 @@ def compare_candidates(
         # ====================================================
         # BUSCAR VACANTE
         # ====================================================
+
         job = get_job_record(
             job_id
         )
@@ -3559,9 +4542,15 @@ def compare_candidates(
                 detail="Vacante no encontrada."
             )
 
+        validate_job_owner(
+            job,
+            current_user
+        )
+
         # ====================================================
         # CONVERTIR IDS
         # ====================================================
+
         ids = [
             candidate_id.strip()
             for candidate_id in candidate_ids.split(",")
@@ -3571,45 +4560,120 @@ def compare_candidates(
         if not ids:
             raise HTTPException(
                 status_code=400,
-                detail="Debe proporcionar al menos un candidate_id."
+                detail=(
+                    "Debe proporcionar al menos un candidate_id."
+                )
             )
+
+        # ====================================================
+        # VALIDAR CANTIDAD
+        # ====================================================
 
         if len(ids) > 5:
             raise HTTPException(
                 status_code=400,
-                detail="Máximo 5 candidatos por comparación."
+                detail=(
+                    "Máximo 5 candidatos por comparación."
+                )
             )
 
         # ====================================================
-        # OBTENER EVALUACIONES
+        # OBTENER CANDIDATOS
+        #
+        # IMPORTANTE:
+        # candidates_table tiene candidate_id como
+        # partition key, por lo que NO podemos hacer:
+        #
+        # query(Key("owner_id").eq(...))
+        #
+        # Usamos scan para filtrar por owner_id.
         # ====================================================
-        response = evaluations_table.query(
-            KeyConditionExpression=(
-                boto3.dynamodb.conditions.Key(
-                    "job_id"
-                ).eq(job_id)
+
+        candidates_response = candidates_table.scan(
+            FilterExpression=(
+                boto3.dynamodb.conditions.Attr(
+                    "owner_id"
+                ).eq(
+                    current_user["sub"]
+                )
             )
         )
 
-        evaluations = response.get(
+        all_candidates = candidates_response.get(
             "Items",
             []
         )
 
         # ====================================================
-        # INDEXAR EVALUACIONES
+        # INDEXAR CANDIDATOS POR ID
         # ====================================================
-        evaluations_by_candidate = {
-            evaluation["candidate_id"]: evaluation
-            for evaluation in evaluations
+
+        candidates_by_id = {
+            candidate.get("candidate_id"): candidate
+            for candidate in all_candidates
+            if candidate.get("candidate_id")
         }
 
-        candidates = []
+        # ====================================================
+        # OBTENER EVALUACIONES DE ESTA VACANTE
+        # ====================================================
+
+        evaluations_response = evaluations_table.query(
+            KeyConditionExpression=(
+                boto3.dynamodb.conditions.Key(
+                    "job_id"
+                ).eq(
+                    job_id
+                )
+            )
+        )
+
+        evaluations = evaluations_response.get(
+            "Items",
+            []
+        )
+
+        # ====================================================
+        # MAPEAR EVALUACIONES POR CANDIDATO
+        # ====================================================
+
+        evaluations_by_candidate = {}
+
+        for evaluation in evaluations:
+
+            candidate_id = evaluation.get(
+                "candidate_id"
+            )
+
+            if not candidate_id:
+                continue
+
+            evaluations_by_candidate[
+                candidate_id
+            ] = evaluation
 
         # ====================================================
         # CONSTRUIR COMPARACIÓN
         # ====================================================
+
+        candidates = []
+
         for candidate_id in ids:
+
+            # =================================================
+            # VERIFICAR CANDIDATO
+            # =================================================
+
+            candidate = candidates_by_id.get(
+                candidate_id
+            )
+
+            if not candidate:
+                continue
+
+            # =================================================
+            # VERIFICAR EVALUACIÓN
+            # =================================================
 
             evaluation = evaluations_by_candidate.get(
                 candidate_id
@@ -3618,46 +4682,101 @@ def compare_candidates(
             if not evaluation:
                 continue
 
-            candidate = get_candidate_record(
-                candidate_id
-            )
-
-            if not candidate:
-                continue
+            # =================================================
+            # PARSEAR STRENGTHS
+            # =================================================
 
             strengths_raw = evaluation.get(
                 "strengths",
-                "[]"
+                []
             )
+
+            if isinstance(
+                strengths_raw,
+                str
+            ):
+                try:
+                    strengths = json.loads(
+                        strengths_raw
+                    )
+                except Exception:
+                    strengths = []
+            else:
+                strengths = strengths_raw
+
+            if not isinstance(
+                strengths,
+                list
+            ):
+                strengths = []
+
+            # =================================================
+            # PARSEAR GAPS
+            # =================================================
 
             gaps_raw = evaluation.get(
                 "gaps",
-                "[]"
+                []
             )
 
-            try:
-                strengths = (
-                    json.loads(strengths_raw)
-                    if isinstance(
-                        strengths_raw,
-                        str
+            if isinstance(
+                gaps_raw,
+                str
+            ):
+                try:
+                    gaps = json.loads(
+                        gaps_raw
                     )
-                    else strengths_raw
-                )
-            except Exception:
-                strengths = []
+                except Exception:
+                    gaps = []
+            else:
+                gaps = gaps_raw
+
+            if not isinstance(
+                gaps,
+                list
+            ):
+                gaps = []
+
+            # =================================================
+            # SCORE
+            # =================================================
 
             try:
-                gaps = (
-                    json.loads(gaps_raw)
-                    if isinstance(
-                        gaps_raw,
-                        str
+
+                match_score = int(
+                    evaluation.get(
+                        "match_score",
+                        0
                     )
-                    else gaps_raw
                 )
-            except Exception:
-                gaps = []
+
+            except (
+                TypeError,
+                ValueError
+            ):
+
+                match_score = 0
+
+            # =================================================
+            # RECOMMENDATION
+            # =================================================
+
+            recommendation = evaluation.get(
+                "recommendation",
+                "LOW_MATCH"
+            )
+
+            if not recommendation:
+                recommendation = "LOW_MATCH"
+
+            recommendation = str(
+                recommendation
+            ).upper()
+
+            # =================================================
+            # AGREGAR
+            # =================================================
 
             candidates.append(
                 CandidateComparisonItem(
@@ -3668,17 +4787,9 @@ def compare_candidates(
                         "Unknown"
                     ),
 
-                    match_score=int(
-                        evaluation.get(
-                            "match_score",
-                            0
-                        )
-                    ),
+                    match_score=match_score,
 
-                    recommendation=evaluation.get(
-                        "recommendation",
-                        "LOW_MATCH"
-                    ),
+                    recommendation=recommendation,
 
                     strengths=strengths,
 
@@ -3687,40 +4798,83 @@ def compare_candidates(
             )
 
         # ====================================================
-        # ORDENAR
+        # VALIDAR RESULTADOS
         # ====================================================
+
+        if not candidates:
+
+            raise HTTPException(
+                status_code=404,
+                detail=(
+                    "No se encontraron evaluaciones "
+                    "para los candidatos indicados."
+                )
+            )
+
+        # ====================================================
+        # ORDENAR POR SCORE
+        # ====================================================
+
         candidates.sort(
-            key=lambda candidate:
-            candidate.match_score,
+            key=lambda candidate: (
+                candidate.match_score
+            ),
             reverse=True
         )
 
         # ====================================================
+        # ASIGNAR RANK
+        # ====================================================
+
+        for index, candidate in enumerate(
+            candidates,
+            start=1
+        ):
+
+            # CandidateComparisonItem probablemente
+            # no tiene rank, por eso no modificamos
+            # el modelo aquí.
+            pass
+
+        # ====================================================
         # GANADOR
         # ====================================================
-        winner = (
-            candidates[0]
-            if candidates
-            else None
-        )
+
+        winner = candidates[0]
 
         # ====================================================
         # RESPONSE
         # ====================================================
+
         return CandidateComparisonResponse(
             job_id=job_id,
-            job_title=job["title"],
+
+            job_title=job.get(
+                "title",
+                ""
+            ),
+
             candidates=candidates,
+
             winner=winner
         )
+
+    # ========================================================
+    # HTTP ERRORS
+    # ========================================================
 
     except HTTPException:
         raise
 
+    # ========================================================
+    # UNEXPECTED ERRORS
+    # ========================================================
+
     except Exception as e:
 
         print(
-            f"ERROR COMPARING CANDIDATES: {str(e)}"
+            "ERROR COMPARING CANDIDATES: "
+            f"{str(e)}"
         )
 
         raise HTTPException(
@@ -3754,6 +4908,11 @@ def get_candidate_requirements(
                 status_code=404,
                 detail="Vacante no encontrada."
             )
+
+        validate_job_owner(
+            job,
+            current_user
+        )
 
         # ====================================================
         # BUSCAR CANDIDATO

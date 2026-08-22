@@ -530,8 +530,10 @@ with st.sidebar:
         "👤 Usuario"
     )
 
+    user = st.session_state.get("user") or {}
+
     st.write(
-        st.session_state.user.get(
+        user.get(
             "username",
             "Usuario"
         )
