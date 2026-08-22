@@ -1,7 +1,9 @@
 {
   "family": "ai-recruiter-frontend",
   "networkMode": "awsvpc",
-  "requiresCompatibilities": ["FARGATE"],
+  "requiresCompatibilities": [
+    "FARGATE"
+  ],
   "cpu": "512",
   "memory": "1024",
   "executionRoleArn": "arn:aws:iam::765761474007:role/ai-recruiter-ecs-execution-role",
@@ -14,8 +16,8 @@
       "memory": 1024,
       "portMappings": [
         {
-          "containerPort": 8501,
-          "hostPort": 8501,
+          "containerPort": 80,
+          "hostPort": 80,
           "protocol": "tcp"
         }
       ],
