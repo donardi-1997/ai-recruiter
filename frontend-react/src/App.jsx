@@ -9,6 +9,7 @@ import Ranking from "./pages/Ranking";
 import CandidateDetail from "./pages/CandidateDetail";
 
 import Layout from "./components/Layout";
+import Register from "./auth/Register";
 
 // ============================================================
 // PROTECTED ROUTE
@@ -37,6 +38,7 @@ function App() {
         {/* ================================================== */}
 
         <Route path="/login" element={<Login />} />
+        <Route path="/register" element={<Register />} />
 
         {/* ================================================== */}
         {/* PROTECTED */}
