@@ -332,23 +332,24 @@ app.add_middleware(
 class LoginRequest(BaseModel):
     email: str
     password: str
-
 # ============================================================
 # AUTH - REGISTER USER (COGNITO)
 # ============================================================
 
-@app.post("/api/auth/register"
-)
-def register_user(
-    email: str,
+class RegisterRequest(BaseModel):
+    email: str
     password: str
+
+
+@app.post("/api/auth/register")
+def register_user(
+    data: RegisterRequest
 ):
 
     return create_user(
-        email,
-        password
+        data.email,
+        data.password
     )
-
 
 # ============================================================
 # AUTH - LOGIN USER (COGNITO)
