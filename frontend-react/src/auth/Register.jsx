@@ -85,53 +85,6 @@ function Register() {
           </div>
 
           {/* ==================================================
-              AVISO IMPORTANTE
-          ================================================== */}
-
-          <div
-            style={{
-              marginTop: "24px",
-              padding: "22px",
-              borderRadius: "12px",
-              border: "2px solid #2563eb",
-              background: "#eff6ff",
-              textAlign: "center",
-            }}
-          >
-            <div
-              style={{
-                fontSize: "30px",
-                marginBottom: "10px",
-              }}
-            >
-              📧
-            </div>
-
-            <strong
-              style={{
-                display: "block",
-                fontSize: "18px",
-                marginBottom: "8px",
-                color: "#1e40af",
-              }}
-            >
-              Revisa tu correo electrónico
-            </strong>
-
-            <span
-              style={{
-                display: "block",
-                fontSize: "14px",
-                lineHeight: "1.5",
-                color: "#334155",
-              }}
-            >
-              Te enviamos un correo para confirmar tu cuenta. Debes confirmar tu
-              correo antes de iniciar sesión.
-            </span>
-          </div>
-
-          {/* ==================================================
               LOGIN BUTTON
           ================================================== */}
 
