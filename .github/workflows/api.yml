@@ -95,20 +95,18 @@ jobs:
 
         env:
           ECR_REGISTRY: ${{ steps.ecr-login.outputs.registry }}
-
           IMAGE_TAG: ${{ github.sha }}
+          VITE_API_URL: ${{ env.VITE_API_URL }}
 
         run: |
-
           IMAGE_URI="$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG"
 
-
           docker build \
-          --tag "$IMAGE_URI" .
-
+            --file Dockerfile.frontend \
+            --build-arg VITE_API_URL="$VITE_API_URL" \
+            --tag "$IMAGE_URI" .
 
           docker push "$IMAGE_URI"
-
 
           echo "uri=$IMAGE_URI" >> "$GITHUB_OUTPUT"
 
