@@ -333,8 +333,7 @@ app.add_middleware(
 # AUTH - REGISTER USER (COGNITO)
 # ============================================================
 
-@app.post(
-    "/auth/register"
+@app.post("/api/auth/register"
 )
 def register_user(
     email: str,
@@ -351,8 +350,7 @@ def register_user(
 # AUTH - LOGIN USER (COGNITO)
 # ============================================================
 
-@app.post(
-    "/auth/login"
+@app.post("/api/auth/login"
 )
 def login(
     email: str,
@@ -379,8 +377,7 @@ def login(
 # AUTH - CURRENT USER
 # ============================================================
 
-@app.get(
-    "/auth/me"
+@app.get("/api/auth/me"
 )
 def get_current_user_info(
     current_user: dict = Depends(
@@ -1609,14 +1606,14 @@ DESCRIPCIÓN DE LA VACANTE:
 # ============================================================
 # HEALTH
 # ============================================================
-@app.get("/")
+@app.get("/api/")
 def root():
     return {
         "service": "AI Recruiter API",
         "status": "ok"
     }
 
-@app.get("/health")
+@app.get("/api/health")
 def health():
     return {
         "status": "healthy"
@@ -1625,8 +1622,7 @@ def health():
 # ============================================================
 # CREATE JOB
 # ============================================================
-@app.post(
-    "/jobs",
+@app.post("/api/jobs",
     response_model=JobResponse
 )
 def create_job(
@@ -1665,8 +1661,7 @@ def create_job(
 # ============================================================
 # LIST JOBS
 # ============================================================
-@app.get(
-    "/jobs"
+@app.get("/api/jobs"
 )
 def list_jobs(
     current_user: dict = Depends(get_current_user)
@@ -1702,8 +1697,7 @@ def list_jobs(
 # ============================================================
 # CREATE CANDIDATE / UPLOAD CV
 # ============================================================
-@app.post(
-    "/candidates"
+@app.post("/api/candidates"
 )
 async def create_candidate(
     name: str = Form(...),
@@ -1917,8 +1911,7 @@ async def create_candidate(
 # DOWNLOAD CANDIDATE CV
 # ============================================================
 
-@app.get(
-    "/candidates/{candidate_id}/download"
+@app.get("/api/candidates/{candidate_id}/download"
 )
 def download_candidate_cv(
     candidate_id: str,
@@ -2024,8 +2017,7 @@ def download_candidate_cv(
 # ============================================================
 # GET CANDIDATE BY ID
 # ============================================================
-@app.get(
-    "/candidates/{candidate_id}"
+@app.get("/api/candidates/{candidate_id}"
 )
 def get_candidate(
     candidate_id: str,
@@ -2129,8 +2121,7 @@ def get_candidate(
 # GET JOB BY ID
 # ============================================================
 
-@app.get(
-    "/jobs/{job_id}"
+@app.get("/api/jobs/{job_id}"
 )
 def get_job(
     job_id: str,
@@ -2157,8 +2148,7 @@ def get_job(
 # ============================================================
 # LIST CANDIDATES
 # ============================================================
-@app.get(
-    "/candidates"
+@app.get("/api/candidates"
 )
 def list_candidates(
     current_user: dict = Depends(get_current_user)
@@ -2197,8 +2187,7 @@ def list_candidates(
 # DELETE CANDIDATE
 # ============================================================
 
-@app.delete(
-    "/candidates/{candidate_id}"
+@app.delete("/api/candidates/{candidate_id}"
 )
 def delete_candidate(
     candidate_id: str,
@@ -2306,8 +2295,7 @@ def delete_candidate(
 # DELETE JOB
 # ============================================================
 
-@app.delete(
-    "/jobs/{job_id}"
+@app.delete("/api/jobs/{job_id}"
 )
 def delete_job(
     job_id: str,
@@ -2391,8 +2379,7 @@ def delete_job(
 # ============================================================
 # INGESTION STATUS
 # ============================================================
-@app.get(
-    "/candidates/{candidate_id}/ingestion/{ingestion_job_id}"
+@app.get("/api/candidates/{candidate_id}/ingestion/{ingestion_job_id}"
 )
 def get_ingestion_status(
     candidate_id: str,
@@ -2458,8 +2445,7 @@ def get_ingestion_status(
 # ============================================================
 # ASK CANDIDATE
 # ============================================================
-@app.post(
-    "/candidates/{candidate_id}/ask",
+@app.post("/api/candidates/{candidate_id}/ask",
     response_model=AskCandidateResponse
 )
 def ask_candidate(
@@ -2521,8 +2507,7 @@ def ask_candidate(
 # ============================================================
 # EVALUATE CANDIDATE DIRECT
 # ============================================================
-@app.post(
-    "/candidates/{candidate_id}/evaluate",
+@app.post("/api/candidates/{candidate_id}/evaluate",
     response_model=CandidateEvaluation
 )
 def evaluate_candidate_endpoint(
@@ -2593,8 +2578,7 @@ def evaluate_candidate_endpoint(
 # ============================================================
 # EVALUATE CANDIDATE AGAINST JOB
 # ============================================================
-@app.post(
-    "/candidates/{candidate_id}/evaluate-job",
+@app.post("/api/candidates/{candidate_id}/evaluate-job",
     response_model=CandidateEvaluation
 )
 def evaluate_candidate_job(
@@ -2754,8 +2738,7 @@ def evaluate_candidate_job(
 # ============================================================
 # GET EVALUATIONS BY JOB
 # ============================================================
-@app.get(
-    "/jobs/{job_id}/evaluations"
+@app.get("/api/jobs/{job_id}/evaluations"
 )
 def get_job_evaluations(
     job_id: str,
@@ -2848,8 +2831,7 @@ def get_job_evaluations(
 # ============================================================
 # GET EVALUATIONS BY CANDIDATE
 # ============================================================
-@app.get(
-    "/candidates/{candidate_id}/evaluations"
+@app.get("/api/candidates/{candidate_id}/evaluations"
 )
 def get_candidate_evaluations(
     candidate_id: str,
@@ -2937,8 +2919,7 @@ def get_candidate_evaluations(
 # JOB RANKING
 # ============================================================
 
-@app.get(
-    "/jobs/{job_id}/ranking",
+@app.get("/api/jobs/{job_id}/ranking",
     response_model=JobRankingResponse
 )
 def get_job_ranking(
@@ -3580,8 +3561,7 @@ def get_job_ranking(
 # ============================================================
 # CANDIDATE JOB EVALUATION DETAIL
 # ============================================================
-@app.get(
-    "/jobs/{job_id}/candidates/{candidate_id}",
+@app.get("/api/jobs/{job_id}/candidates/{candidate_id}",
     response_model=CandidateJobEvaluationResponse
 )
 def get_candidate_job_evaluation(
@@ -3767,8 +3747,7 @@ def get_candidate_job_evaluation(
 # ============================================================
 # JOB SUMMARY
 # ============================================================
-@app.get(
-    "/jobs/{job_id}/summary",
+@app.get("/api/jobs/{job_id}/summary",
     response_model=JobSummaryResponse
 )
 def get_job_summary(
@@ -4043,8 +4022,7 @@ def get_job_summary(
 # ============================================================
 # JOB CANDIDATES
 # ============================================================
-@app.get(
-    "/jobs/{job_id}/candidates"
+@app.get("/api/jobs/{job_id}/candidates"
 )
 def get_job_candidates(
     job_id: str,
@@ -4319,8 +4297,7 @@ def get_job_candidates(
 # ============================================================
 # CANDIDATE EVALUATION EXPLANATION
 # ============================================================
-@app.get(
-    "/jobs/{job_id}/candidates/{candidate_id}/explanation"
+@app.get("/api/jobs/{job_id}/candidates/{candidate_id}/explanation"
 )
 def get_candidate_explanation(
     job_id: str,
@@ -4586,8 +4563,7 @@ def get_candidate_explanation(
 # COMPARE CANDIDATES
 # ============================================================
 
-@app.get(
-    "/jobs/{job_id}/compare",
+@app.get("/api/jobs/{job_id}/compare",
     response_model=CandidateComparisonResponse
 )
 def compare_candidates(
@@ -4954,8 +4930,7 @@ def compare_candidates(
 # ============================================================
 # CANDIDATE REQUIREMENTS
 # ============================================================
-@app.get(
-    "/jobs/{job_id}/candidates/{candidate_id}/requirements",
+@app.get("/api/jobs/{job_id}/candidates/{candidate_id}/requirements",
     response_model=CandidateRequirementsResponse
 )
 def get_candidate_requirements(
@@ -5127,8 +5102,7 @@ def get_candidate_requirements(
 # ============================================================
 # DEBUG RETRIEVE
 # ============================================================
-@app.get(
-    "/debug/retrieve/{candidate_id}"
+@app.get("/api/debug/retrieve/{candidate_id}"
 )
 def debug_retrieve(
     candidate_id: str,
@@ -5163,8 +5137,7 @@ def debug_retrieve(
 # AUTH CONFIRMATION
 # ============================================================
 
-@app.post(
-    "/auth/confirm"
+@app.post("/api/auth/confirm"
 )
 def confirm_registration(
     email: str,
