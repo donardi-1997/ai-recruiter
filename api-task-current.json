@@ -1,0 +1,72 @@
+{
+    "taskDefinitionArn": "arn:aws:ecs:us-east-2:765761474007:task-definition/ai-recruiter-api:5",
+    "containerDefinitions": [
+        {
+            "name": "Main",
+            "image": "765761474007.dkr.ecr.us-east-2.amazonaws.com/ai-recruiter:login-fix",
+            "cpu": 0,
+            "portMappings": [
+                {
+                    "containerPort": 8000,
+                    "hostPort": 8000,
+                    "protocol": "tcp"
+                }
+            ],
+            "essential": true,
+            "environment": [
+                {
+                    "name": "COGNITO_CLIENT_ID",
+                    "value": "buusqp2p10vb2nh8ft40i8imc"
+                },
+                {
+                    "name": "COGNITO_USER_POOL_ID",
+                    "value": "us-east-2_o3qMVixSA"
+                },
+                {
+                    "name": "AWS_REGION",
+                    "value": "us-east-2"
+                }
+            ],
+            "mountPoints": [],
+            "volumesFrom": [],
+            "systemControls": []
+        }
+    ],
+    "family": "ai-recruiter-api",
+    "taskRoleArn": "arn:aws:iam::765761474007:role/ai-recruiter-ecs-task-role",
+    "executionRoleArn": "arn:aws:iam::765761474007:role/ai-recruiter-ecs-execution-role",
+    "networkMode": "awsvpc",
+    "revision": 5,
+    "volumes": [],
+    "status": "ACTIVE",
+    "requiresAttributes": [
+        {
+            "name": "com.amazonaws.ecs.capability.ecr-auth"
+        },
+        {
+            "name": "com.amazonaws.ecs.capability.task-iam-role"
+        },
+        {
+            "name": "ecs.capability.execution-role-ecr-pull"
+        },
+        {
+            "name": "com.amazonaws.ecs.capability.docker-remote-api.1.18"
+        },
+        {
+            "name": "ecs.capability.task-eni"
+        }
+    ],
+    "placementConstraints": [],
+    "compatibilities": [
+        "EC2",
+        "MANAGED_INSTANCES",
+        "FARGATE"
+    ],
+    "requiresCompatibilities": [
+        "FARGATE"
+    ],
+    "cpu": "512",
+    "memory": "1024",
+    "registeredAt": "2026-08-23T09:54:16.535000-05:00",
+    "registeredBy": "arn:aws:sts::765761474007:assumed-role/ai-recruiter-github-actions-role/GitHubActions"
+}

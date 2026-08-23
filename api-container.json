@@ -1,0 +1,32 @@
+[
+    {
+        "name": "Main",
+        "image": "765761474007.dkr.ecr.us-east-2.amazonaws.com/ai-recruiter:login-fix",
+        "cpu": 0,
+        "portMappings": [
+            {
+                "containerPort": 8000,
+                "hostPort": 8000,
+                "protocol": "tcp"
+            }
+        ],
+        "essential": true,
+        "environment": [
+            {
+                "name": "COGNITO_CLIENT_ID",
+                "value": "buusqp2p10vb2nh8ft40i8imc"
+            },
+            {
+                "name": "COGNITO_USER_POOL_ID",
+                "value": "us-east-2_o3qMVixSA"
+            },
+            {
+                "name": "AWS_REGION",
+                "value": "us-east-2"
+            }
+        ],
+        "mountPoints": [],
+        "volumesFrom": [],
+        "systemControls": []
+    }
+]

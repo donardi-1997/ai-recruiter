@@ -37,6 +37,7 @@ from pydantic import BaseModel, Field
 from langchain_aws import ChatBedrock
 from langchain_core.prompts import ChatPromptTemplate
 
+from auth import LoginRequest, login_user
 
 # ============================================================
 # ENVIRONMENT VARIABLES

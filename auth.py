@@ -5,7 +5,27 @@ from dotenv import load_dotenv
 from botocore.exceptions import ClientError
 from pydantic import BaseModel
 
+
 load_dotenv()
+
+
+# ============================================================
+# MODELS
+# ============================================================
+
+class LoginRequest(BaseModel):
+    email: str
+    password: str
+
+
+class SignupRequest(BaseModel):
+    email: str
+    password: str
+
+
+class ConfirmRequest(BaseModel):
+    email: str
+    confirmation_code: str
 
 
 # ============================================================
@@ -33,7 +53,7 @@ print(
 
 
 # ============================================================
-# CREATE USER - COGNITO SIGN UP
+# CREATE USER
 # ============================================================
 
 def create_user(
@@ -83,8 +103,10 @@ def create_user(
                 e.response["Error"]["Message"]
         }
 
+
+
 # ============================================================
-# LOGIN USER - COGNITO AUTHENTICATION
+# LOGIN USER
 # ============================================================
 
 def login_user(
@@ -105,46 +127,52 @@ def login_user(
             }
         )
 
+
         auth = response.get(
             "AuthenticationResult",
             {}
         )
 
+
         return {
-            "access_token": auth.get(
-                "AccessToken"
-            ),
 
-            "id_token": auth.get(
-                "IdToken"
-            ),
+            "access_token":
+                auth.get(
+                    "AccessToken"
+                ),
 
-            "refresh_token": auth.get(
-                "RefreshToken"
-            ),
+            "id_token":
+                auth.get(
+                    "IdToken"
+                ),
 
-            "expires_in": auth.get(
-                "ExpiresIn"
-            )
+            "refresh_token":
+                auth.get(
+                    "RefreshToken"
+                ),
+
+            "expires_in":
+                auth.get(
+                    "ExpiresIn"
+                )
         }
 
+
     except ClientError as e:
+
 
         error_code = e.response["Error"].get(
             "Code",
             ""
         )
 
-        error_message = e.response["Error"].get(
-            "Message",
-            ""
-        )
 
         print(
             "COGNITO LOGIN ERROR:",
             error_code,
-            error_message
+            e.response["Error"].get("Message")
         )
+
 
         if error_code in [
             "NotAuthorizedException",
@@ -152,18 +180,29 @@ def login_user(
         ]:
 
             return {
-                "error": "Correo o contraseña incorrectos."
+                "error":
+                    "Correo o contraseña incorrectos."
             }
+
 
         if error_code == "UserNotConfirmedException":
 
             return {
-                "error": "Tu cuenta todavía no ha sido confirmada."
+                "error":
+                    "Tu cuenta todavía no ha sido confirmada."
             }
 
+
         return {
-            "error": "No fue posible iniciar sesión."
+            "error":
+                "No fue posible iniciar sesión."
         }
+
+
+
+# ============================================================
+# CONFIRM USER
+# ============================================================
 
 def confirm_user(
     email: str,
@@ -172,18 +211,22 @@ def confirm_user(
 
     try:
 
-        response = cognito_client.confirm_sign_up(
+        cognito_client.confirm_sign_up(
+
             ClientId=COGNITO_CLIENT_ID,
 
             Username=email,
 
             ConfirmationCode=confirmation_code
+
         )
+
 
         return {
             "message":
                 "Cuenta confirmada correctamente."
         }
+
 
     except ClientError as e:
 
