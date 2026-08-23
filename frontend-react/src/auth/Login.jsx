@@ -18,11 +18,9 @@ function Login() {
     setLoading(true);
 
     try {
-      const response = await api.post("/auth/login", null, {
-        params: {
-          email,
-          password,
-        },
+      const response = await api.post("/auth/login", {
+        email,
+        password,
       });
 
       localStorage.setItem("access_token", response.data.access_token);
@@ -36,9 +34,9 @@ function Login() {
       console.error(err);
 
       setError(
-        typeof err.response?.data?.detail === "string"
-          ? err.response.data.detail
-          : "Correo o contraseña incorrectos.",
+        Array.isArray(err.response?.data?.detail)
+          ? err.response.data.detail.map((e) => e.msg).join(", ")
+          : err.response?.data?.detail || "Correo o contraseña incorrectos.",
       );
     } finally {
       setLoading(false);
