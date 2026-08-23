@@ -329,6 +329,10 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+class LoginRequest(BaseModel):
+    email: str
+    password: str
+
 # ============================================================
 # AUTH - REGISTER USER (COGNITO)
 # ============================================================
@@ -350,25 +354,21 @@ def register_user(
 # AUTH - LOGIN USER (COGNITO)
 # ============================================================
 
-@app.post("/api/auth/login"
-)
+@app.post("/api/auth/login")
 def login(
-    email: str,
-    password: str
+    data: LoginRequest
 ):
 
     result = login_user(
-        email,
-        password
+        data.email,
+        data.password
     )
 
     if result.get("error"):
 
-        error_message = result["error"]
-
         raise HTTPException(
             status_code=401,
-            detail=error_message
+            detail=result["error"]
         )
 
     return result
@@ -433,6 +433,8 @@ llm = ChatBedrock(
 # ============================================================
 # REQUEST / RESPONSE MODELS
 # ============================================================
+
+
 class AskCandidateRequest(BaseModel):
     question: str = Field(
         ...,
@@ -589,6 +591,8 @@ class CandidateRequirementsResponse(BaseModel):
     match_score: int
     recommendation: str
     requirements: list[CandidateRequirementItem]
+
+
 # ============================================================
 # JSON CLEANER
 # ============================================================

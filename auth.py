@@ -3,7 +3,7 @@ import os
 
 from dotenv import load_dotenv
 from botocore.exceptions import ClientError
-
+from pydantic import BaseModel
 
 load_dotenv()
 
