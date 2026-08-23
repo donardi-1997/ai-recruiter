@@ -31,7 +31,7 @@ env:
   AWS_REGION: ${{ vars.AWS_REGION }}
   ECR_REPOSITORY: ai-recruiter
   ECS_CLUSTER: ai-recruiter-cluster
-  ECS_SERVICE: ai-recruiter-api-new
+  ECS_SERVICE: ai-recruiter-api-v2
   ECS_CONTAINER: Main
 
 jobs:
