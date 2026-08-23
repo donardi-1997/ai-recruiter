@@ -105,12 +105,10 @@ def login_user(
             }
         )
 
-
         auth = response.get(
             "AuthenticationResult",
             {}
         )
-
 
         return {
             "access_token": auth.get(
@@ -130,10 +128,39 @@ def login_user(
             )
         }
 
-
     except ClientError as e:
 
+        error_code = e.response["Error"].get(
+            "Code",
+            ""
+        )
+
+        error_message = e.response["Error"].get(
+            "Message",
+            ""
+        )
+
+        print(
+            "COGNITO LOGIN ERROR:",
+            error_code,
+            error_message
+        )
+
+        if error_code in [
+            "NotAuthorizedException",
+            "UserNotFoundException"
+        ]:
+
+            return {
+                "error": "Correo o contraseña incorrectos."
+            }
+
+        if error_code == "UserNotConfirmedException":
+
+            return {
+                "error": "Tu cuenta todavía no ha sido confirmada."
+            }
+
         return {
-            "error":
-                e.response["Error"]["Message"]
+            "error": "No fue posible iniciar sesión."
         }

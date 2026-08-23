@@ -301,10 +301,21 @@ def login(
     password: str
 ):
 
-    return login_user(
+    result = login_user(
         email,
         password
     )
+
+    if result.get("error"):
+
+        error_message = result["error"]
+
+        raise HTTPException(
+            status_code=401,
+            detail=error_message
+        )
+
+    return result
 
 # ============================================================
 # AUTH - CURRENT USER
