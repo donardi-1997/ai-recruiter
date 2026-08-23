@@ -10,7 +10,9 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY main.py .
-# .env is provided by App Runner environment variables
+COPY auth.py .
+
+# .env is provided by ECS environment variables
 
 EXPOSE 8000
 

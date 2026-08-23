@@ -264,7 +264,8 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=[
         "http://localhost:5173",
-        "http://127.0.0.1:5173"
+        "http://127.0.0.1:5173",
+        "http://ai-recruiter-frontend-alb-1871900514.us-east-2.elb.amazonaws.com",
     ],
     allow_credentials=True,
     allow_methods=["*"],
