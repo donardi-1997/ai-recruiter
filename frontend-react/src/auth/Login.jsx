@@ -18,11 +18,9 @@ function Login() {
     setLoading(true);
 
     try {
-      const response = await api.post("/auth/login", null, {
-        params: {
-          email,
-          password,
-        },
+      const response = await api.post("/auth/login", {
+        email,
+        password,
       });
 
       localStorage.setItem("access_token", response.data.access_token);
