@@ -3,7 +3,7 @@
     "containerDefinitions": [
         {
             "name": "ai-recruiter-frontend",
-            "image": "d814f8eda6a656d6875155700eb5b36b4f4a1f7c",
+            "image": "765761474007.dkr.ecr.us-east-2.amazonaws.com/ai-recruiter-frontend:latest",
             "cpu": 512,
             "memory": 1024,
             "portMappings": [
