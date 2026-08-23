@@ -40,10 +40,10 @@ function Register() {
 
       // ======================================================
       // CUENTA CREADA
-      // NO IR AUTOMÁTICAMENTE AL LOGIN
+      // IR AUTOMÁTICAMENTE AL LOGIN
       // ======================================================
 
-      navigate("/register?created=true", {
+      navigate("/login", {
         replace: true,
       });
     } catch (err) {
