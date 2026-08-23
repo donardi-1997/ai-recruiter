@@ -1,31 +1,28 @@
 import { useState } from "react";
-import { useNavigate, Link } from "react-router-dom";
+import { useNavigate, Link, useSearchParams } from "react-router-dom";
 import api from "../api/client";
 
 function Register() {
   const navigate = useNavigate();
+
+  const [searchParams] = useSearchParams();
+
+  const accountCreated = searchParams.get("created") === "true";
 
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
 
   const [error, setError] = useState("");
-  const [success, setSuccess] = useState("");
   const [loading, setLoading] = useState(false);
 
   async function handleSubmit(e) {
     e.preventDefault();
 
     setError("");
-    setSuccess("");
 
     if (password !== confirmPassword) {
       setError("Las contraseñas no coinciden.");
-      return;
-    }
-
-    if (password.length < 8) {
-      setError("La contraseña debe tener al menos 8 caracteres.");
       return;
     }
 
@@ -39,16 +36,18 @@ function Register() {
         },
       });
 
-      setSuccess(
-        response.data?.message ||
-          "Cuenta creada correctamente. Revisa tu correo para confirmar la cuenta.",
-      );
+      console.log("REGISTER RESPONSE:", response.data);
 
-      setTimeout(() => {
-        navigate("/login");
-      }, 2500);
+      // ======================================================
+      // CUENTA CREADA
+      // NO IR AUTOMÁTICAMENTE AL LOGIN
+      // ======================================================
+
+      navigate("/register?created=true", {
+        replace: true,
+      });
     } catch (err) {
-      console.error(err);
+      console.error("REGISTER ERROR:", err);
 
       setError(
         err.response?.data?.detail ||
@@ -60,22 +59,130 @@ function Register() {
     }
   }
 
+  // ==========================================================
+  // CUENTA CREADA
+  // ==========================================================
+
+  if (accountCreated) {
+    return (
+      <div className="login-page">
+        <div className="login-card">
+          <div className="login-logo">AI</div>
+
+          <div className="login-header">
+            <div
+              style={{
+                fontSize: "64px",
+                marginBottom: "10px",
+              }}
+            >
+              ✓
+            </div>
+
+            <h1>¡Cuenta creada!</h1>
+
+            <p>Tu cuenta de AI Recruiter fue creada correctamente.</p>
+          </div>
+
+          {/* ==================================================
+              AVISO IMPORTANTE
+          ================================================== */}
+
+          <div
+            style={{
+              marginTop: "24px",
+              padding: "22px",
+              borderRadius: "12px",
+              border: "2px solid #2563eb",
+              background: "#eff6ff",
+              textAlign: "center",
+            }}
+          >
+            <div
+              style={{
+                fontSize: "30px",
+                marginBottom: "10px",
+              }}
+            >
+              📧
+            </div>
+
+            <strong
+              style={{
+                display: "block",
+                fontSize: "18px",
+                marginBottom: "8px",
+                color: "#1e40af",
+              }}
+            >
+              Revisa tu correo electrónico
+            </strong>
+
+            <span
+              style={{
+                display: "block",
+                fontSize: "14px",
+                lineHeight: "1.5",
+                color: "#334155",
+              }}
+            >
+              Te enviamos un correo para confirmar tu cuenta. Debes confirmar tu
+              correo antes de iniciar sesión.
+            </span>
+          </div>
+
+          {/* ==================================================
+              LOGIN BUTTON
+          ================================================== */}
+
+          <button
+            type="button"
+            className="login-button"
+            style={{
+              marginTop: "24px",
+            }}
+            onClick={() => navigate("/login")}
+          >
+            Iniciar sesión
+          </button>
+
+          <div
+            className="login-register"
+            style={{
+              marginTop: "18px",
+            }}
+          >
+            <span>¿Quieres usar otro correo?</span>
+
+            <Link to="/register">Crear otra cuenta</Link>
+          </div>
+
+          <div className="login-footer">
+            <span>AI Recruiter · Talent Intelligence</span>
+
+            <div className="login-author">
+              Built & designed by <strong>Adrián Felipe Guerra</strong>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // ==========================================================
+  // REGISTER FORM
+  // ==========================================================
+
   return (
     <div className="login-page">
       <div className="login-card">
-        {/* LOGO */}
-
         <div className="login-logo">AI</div>
 
-        {/* HEADER */}
-
         <div className="login-header">
-          <h1>Create account</h1>
+          <h1>Crear cuenta</h1>
 
-          <p>Crea tu cuenta en AI Recruiter</p>
+          <p>Regístrate en AI Recruiter</p>
         </div>
-
-        {/* FORM */}
 
         <form onSubmit={handleSubmit}>
           <div className="form-group">
@@ -119,22 +226,16 @@ function Register() {
 
           {error && <div className="login-error">{error}</div>}
 
-          {success && <div className="login-success">{success}</div>}
-
           <button type="submit" className="login-button" disabled={loading}>
             {loading ? "Creando cuenta..." : "Crear cuenta"}
           </button>
         </form>
-
-        {/* LOGIN */}
 
         <div className="login-register">
           <span>¿Ya tienes una cuenta?</span>
 
           <Link to="/login">Iniciar sesión</Link>
         </div>
-
-        {/* FOOTER */}
 
         <div className="login-footer">
           <span>AI Recruiter · Talent Intelligence</span>

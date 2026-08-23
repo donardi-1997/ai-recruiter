@@ -164,3 +164,30 @@ def login_user(
         return {
             "error": "No fue posible iniciar sesión."
         }
+
+def confirm_user(
+    email: str,
+    confirmation_code: str
+):
+
+    try:
+
+        response = cognito_client.confirm_sign_up(
+            ClientId=COGNITO_CLIENT_ID,
+
+            Username=email,
+
+            ConfirmationCode=confirmation_code
+        )
+
+        return {
+            "message":
+                "Cuenta confirmada correctamente."
+        }
+
+    except ClientError as e:
+
+        return {
+            "error":
+                e.response["Error"]["Message"]
+        }

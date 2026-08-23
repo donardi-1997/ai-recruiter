@@ -5101,3 +5101,29 @@ def debug_retrieve(
             detail=str(e)
         )
 # CI/CD trigger test
+
+# ============================================================
+# AUTH CONFIRMATION
+# ============================================================
+
+@app.post(
+    "/auth/confirm"
+)
+def confirm_registration(
+    email: str,
+    confirmation_code: str
+):
+
+    result = confirm_user(
+        email,
+        confirmation_code
+    )
+
+    if result.get("error"):
+
+        raise HTTPException(
+            status_code=400,
+            detail=result["error"]
+        )
+
+    return result
