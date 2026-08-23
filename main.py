@@ -137,6 +137,10 @@ def get_cognito_jwks():
 # VALIDATE COGNITO JWT
 # ============================================================
 
+# ============================================================
+# VALIDATE COGNITO ACCESS TOKEN
+# ============================================================
+
 def get_current_user(
     credentials: HTTPAuthorizationCredentials = Depends(
         security
@@ -189,7 +193,7 @@ def get_current_user(
             )
 
         # ====================================================
-        # DECODE + VALIDATE
+        # DECODE + SIGNATURE + ISSUER + EXPIRATION
         # ====================================================
 
         payload = jwt.decode(
@@ -197,7 +201,60 @@ def get_current_user(
             key,
             algorithms=["RS256"],
             issuer=COGNITO_ISSUER,
-            audience=COGNITO_CLIENT_ID
+            options={
+                "verify_aud": False
+            }
+        )
+
+        # ====================================================
+        # VALIDATE TOKEN TYPE
+        # ====================================================
+
+        token_use = payload.get(
+            "token_use"
+        )
+
+        if token_use != "access":
+
+            raise HTTPException(
+                status_code=401,
+                detail="Se requiere un Cognito Access Token."
+            )
+
+        # ====================================================
+        # VALIDATE CLIENT ID
+        # ====================================================
+
+        token_client_id = payload.get(
+            "client_id"
+        )
+
+        if token_client_id != COGNITO_CLIENT_ID:
+
+            raise HTTPException(
+                status_code=401,
+                detail="El token no pertenece a esta aplicación."
+            )
+
+        # ====================================================
+        # VALIDATE SUBJECT
+        # ====================================================
+
+        if not payload.get("sub"):
+
+            raise HTTPException(
+                status_code=401,
+                detail="JWT sin identificador de usuario."
+            )
+
+        print(
+            "JWT VALIDATED:",
+            {
+                "sub": payload.get("sub"),
+                "username": payload.get("username"),
+                "token_use": payload.get("token_use"),
+                "client_id": payload.get("client_id")
+            }
         )
 
         return payload
