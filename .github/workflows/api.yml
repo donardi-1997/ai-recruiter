@@ -80,32 +80,38 @@ jobs:
 
           echo "uri=$IMAGE_URI" >> "$GITHUB_OUTPUT"
 
-      - name: Update ECS Express Gateway Service
+      - name: Render ECS Task Definition
+        id: task-def
         env:
           IMAGE_URI: ${{ steps.image.outputs.uri }}
         run: |
-          aws ecs update-express-gateway-service \
-            --service-arn "arn:aws:ecs:${AWS_REGION}:765761474007:service/${ECS_CLUSTER}/${ECS_SERVICE}" \
-            --primary-container "image=$IMAGE_URI,containerPort=8000" \
-            --health-check-path "/" \
+          jq \
+          --arg IMAGE "$IMAGE_URI" \
+          '.containerDefinitions[0].image=$IMAGE' \
+          api-task-definition.json > api-task-definition-rendered.json
+
+      - name: Register ECS Task Definition
+        id: register-task
+        run: |
+          TASK_DEFINITION=$(aws ecs register-task-definition \
+            --cli-input-json file://api-task-definition-rendered.json \
+            --region "$AWS_REGION" \
+            --query "taskDefinition.taskDefinitionArn" \
+            --output text)
+
+          echo "task_definition=$TASK_DEFINITION" >> "$GITHUB_OUTPUT"
+
+      - name: Update ECS Service
+        run: |
+          aws ecs update-service \
+            --cluster "$ECS_CLUSTER" \
+            --service "$ECS_SERVICE" \
+            --task-definition "${{ steps.register-task.outputs.task_definition }}" \
             --region "$AWS_REGION"
 
-      - name: Wait for deployment
+      - name: Wait for ECS deployment
         run: |
-          echo "Waiting for ECS Express Gateway deployment..."
-
-          for i in {1..30}; do
-            STATUS=$(aws ecs describe-express-gateway-service \
-              --service-arn "arn:aws:ecs:${AWS_REGION}:765761474007:service/${ECS_CLUSTER}/${ECS_SERVICE}" \
-              --region "$AWS_REGION" \
-              --query "service.status.statusCode" \
-              --output text)
-
-            echo "Service status: $STATUS"
-
-            if [ "$STATUS" = "ACTIVE" ]; then
-              break
-            fi
-
-            sleep 10
-          done
+          aws ecs wait services-stable \
+            --cluster "$ECS_CLUSTER" \
+            --services "$ECS_SERVICE" \
+            --region "$AWS_REGION"
