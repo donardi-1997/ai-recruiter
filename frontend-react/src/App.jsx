@@ -1,4 +1,5 @@
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
+import { useEffect, useState } from "react";
 
 import Login from "./auth/Login";
 
@@ -11,14 +12,49 @@ import CandidateDetail from "./pages/CandidateDetail";
 import Layout from "./components/Layout";
 import Register from "./auth/Register";
 
+import api from "./api/client";
+
 // ============================================================
 // PROTECTED ROUTE
 // ============================================================
 
 function ProtectedRoute({ children }) {
-  const token = localStorage.getItem("access_token");
+  const [checking, setChecking] = useState(true);
+  const [valid, setValid] = useState(false);
 
-  if (!token) {
+  useEffect(() => {
+    async function checkAuth() {
+      const token = localStorage.getItem("access_token");
+
+      if (!token) {
+        setValid(false);
+        setChecking(false);
+        return;
+      }
+
+      try {
+        await api.get("/auth/me");
+
+        setValid(true);
+      } catch (error) {
+        localStorage.removeItem("access_token");
+        localStorage.removeItem("id_token");
+        localStorage.removeItem("refresh_token");
+
+        setValid(false);
+      } finally {
+        setChecking(false);
+      }
+    }
+
+    checkAuth();
+  }, []);
+
+  if (checking) {
+    return <div>Cargando sesión...</div>;
+  }
+
+  if (!valid) {
     return <Navigate to="/login" replace />;
   }
 
