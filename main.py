@@ -321,9 +321,16 @@ app = FastAPI(
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
+        # Desarrollo local
         "http://localhost:5173",
+        "http://localhost:5174",
+        "http://localhost:5175",
         "http://127.0.0.1:5173",
-        "http://ai-recruiter-frontend-alb-1871900514.us-east-2.elb.amazonaws.com",
+        "http://127.0.0.1:5174",
+        "http://127.0.0.1:5175",
+
+        # Producción
+        "https://ai.adrianguerra.net",
     ],
     allow_credentials=True,
     allow_methods=["*"],

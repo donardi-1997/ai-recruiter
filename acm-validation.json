@@ -1,0 +1,18 @@
+{
+  "Comment": "ACM validation api.ai.adrianguerra.net",
+  "Changes": [
+    {
+      "Action": "UPSERT",
+      "ResourceRecordSet": {
+        "Name": "_295c5c724099cee2a89aa70719e3685f.api.ai.adrianguerra.net",
+        "Type": "CNAME",
+        "TTL": 300,
+        "ResourceRecords": [
+          {
+            "Value": "_d148c42fa6065de13a619901cb79e5af.jkddzztszm.acm-validations.aws"
+          }
+        ]
+      }
+    }
+  ]
+}
