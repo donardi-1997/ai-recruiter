@@ -4,15 +4,11 @@ on:
     branches: [main]
     paths:
       - "frontend-react/**"
-      - "Dockerfile.frontend"
-      - "frontend-task-definition.json"
       - ".github/workflows/frontend.yml"
   push:
     branches: [main]
     paths:
       - "frontend-react/**"
-      - "Dockerfile.frontend"
-      - "frontend-task-definition.json"
       - ".github/workflows/frontend.yml"
   workflow_dispatch:
 permissions:
@@ -23,12 +19,8 @@ concurrency:
   cancel-in-progress: false
 env:
   AWS_REGION: us-east-2
-  ECR_REPOSITORY: ai-recruiter-frontend
-  ECS_CLUSTER: ai-recruiter-cluster
-  ECS_SERVICE: ai-recruiter-frontend
-  ECS_CONTAINER: ai-recruiter-frontend
-  # Nuevo flujo:
-  # Frontend ALB -> /api/* -> API ECS
+  S3_BUCKET: ai-recruiter-frontend-765761474007
+  CLOUDFRONT_DISTRIBUTION_ID: E2D9QVT3763I47
   VITE_API_URL: /api
 jobs:
   validate:
@@ -51,15 +43,6 @@ jobs:
         env:
           VITE_API_URL: ${{ env.VITE_API_URL }}
         run: npm run build
-      - name: Validate task definition JSON
-        run: |
-          python -m json.tool frontend-task-definition.json > /dev/null
-      - name: Build frontend Docker image
-        run: |
-          docker build \
-            --file Dockerfile.frontend \
-            --build-arg VITE_API_URL="$VITE_API_URL" \
-            --tag frontend-ci:${{ github.sha }} .
   deploy:
     name: Deploy frontend
     if: github.event_name != 'pull_request'
@@ -69,47 +52,37 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: frontend-react/package-lock.json
+      - name: Build production frontend
+        working-directory: frontend-react
+        env:
+          VITE_API_URL: ${{ env.VITE_API_URL }}
+        run: |
+          npm ci
+          npm run build
       - name: Configure AWS credentials via OIDC
         uses: aws-actions/configure-aws-credentials@v5
         with:
           role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
-      - name: Login to Amazon ECR
-        id: ecr-login
-        uses: aws-actions/amazon-ecr-login@v2
-      - name: Build and push image
-        id: image
-        env:
-          ECR_REGISTRY: ${{ steps.ecr-login.outputs.registry }}
-          IMAGE_TAG: ${{ github.sha }}
+      - name: Publish versioned assets
         run: |
-          IMAGE_URI="$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG"
-          docker build \
-            --file Dockerfile.frontend \
-            --build-arg VITE_API_URL="$VITE_API_URL" \
-            --tag "$IMAGE_URI" .
-          docker push "$IMAGE_URI"
-          echo "uri=$IMAGE_URI" >> "$GITHUB_OUTPUT"
-      - name: Render ECS task definition
-        id: render
-        uses: aws-actions/amazon-ecs-render-task-definition@v1
-        with:
-          task-definition: frontend-task-definition.json
-          container-name: ${{ env.ECS_CONTAINER }}
-          image: ${{ steps.image.outputs.uri }}
-      - name: Deploy ECS service
-        uses: aws-actions/amazon-ecs-deploy-task-definition@v2
-        with:
-          task-definition: ${{ steps.render.outputs.task-definition }}
-          service: ${{ env.ECS_SERVICE }}
-          cluster: ${{ env.ECS_CLUSTER }}
-          wait-for-service-stability: true
-      - name: Verify deployment
+          aws s3 sync frontend-react/dist/ "s3://$S3_BUCKET" \
+            --delete \
+            --exclude "index.html" \
+            --cache-control "public,max-age=31536000,immutable"
+      - name: Publish application shell
         run: |
-
-          aws ecs describe-services \
-          --cluster "$ECS_CLUSTER" \
-          --services "$ECS_SERVICE" \
-          --region "$AWS_REGION" \
-          --query "services[0].deployments[*].{Status:status,Running:runningCount,Task:taskDefinition}" \
-          --output table
+          aws s3 cp frontend-react/dist/index.html "s3://$S3_BUCKET/index.html" \
+            --cache-control "no-cache,no-store,must-revalidate" \
+            --content-type "text/html"
+      - name: Refresh CloudFront
+        run: |
+          aws cloudfront create-invalidation \
+            --distribution-id "$CLOUDFRONT_DISTRIBUTION_ID" \
+            --paths "/*"

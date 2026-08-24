@@ -11,10 +11,7 @@
         "ecr:PutImage",
         "ecr:UploadLayerPart"
       ],
-      "Resource": [
-        "arn:aws:ecr:us-east-2:765761474007:repository/ai-recruiter",
-        "arn:aws:ecr:us-east-2:765761474007:repository/ai-recruiter-frontend"
-      ]
+      "Resource": "arn:aws:ecr:us-east-2:765761474007:repository/ai-recruiter"
     },
     {
       "Sid": "GetEcrAuthorizationToken",
@@ -48,6 +45,31 @@
           "iam:PassedToService": "ecs-tasks.amazonaws.com"
         }
       }
+    },
+    {
+      "Sid": "ListFrontendBucket",
+      "Effect": "Allow",
+      "Action": [
+        "s3:ListBucket",
+        "s3:GetBucketLocation"
+      ],
+      "Resource": "arn:aws:s3:::ai-recruiter-frontend-765761474007"
+    },
+    {
+      "Sid": "PublishFrontendObjects",
+      "Effect": "Allow",
+      "Action": [
+        "s3:PutObject",
+        "s3:GetObject",
+        "s3:DeleteObject"
+      ],
+      "Resource": "arn:aws:s3:::ai-recruiter-frontend-765761474007/*"
+    },
+    {
+      "Sid": "InvalidateFrontendDistribution",
+      "Effect": "Allow",
+      "Action": "cloudfront:CreateInvalidation",
+      "Resource": "arn:aws:cloudfront::765761474007:distribution/E2D9QVT3763I47"
     }
   ]
 }
