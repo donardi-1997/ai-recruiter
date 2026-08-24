@@ -2,10 +2,26 @@ import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import api from "../api/client";
 
+function getGreeting(date = new Date()) {
+  const hour = date.getHours();
+
+  if (hour >= 5 && hour < 12) return "Buenos días";
+  if (hour >= 12 && hour < 19) return "Buenas tardes";
+  return "Buenas noches";
+}
+
 function Dashboard() {
   const [jobs, setJobs] = useState([]);
   const [candidates, setCandidates] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [greeting, setGreeting] = useState(() => getGreeting());
+
+  useEffect(() => {
+    const updateGreeting = () => setGreeting(getGreeting());
+    const intervalId = window.setInterval(updateGreeting, 60_000);
+
+    return () => window.clearInterval(intervalId);
+  }, []);
 
   useEffect(() => {
     async function load() {
@@ -38,7 +54,7 @@ function Dashboard() {
       <header className="page-header dashboard-header">
         <div>
           <span className="eyebrow">Vista general</span>
-          <h1>Buenos días, equipo.</h1>
+          <h1>{greeting}, equipo.</h1>
           <p>Así avanza tu proceso de selección hoy.</p>
         </div>
         <Link className="btn btn-primary" to="/candidates">Agregar candidato <span aria-hidden="true">＋</span></Link>
