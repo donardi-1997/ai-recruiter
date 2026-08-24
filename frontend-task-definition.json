@@ -27,10 +27,6 @@
           "value": "us-east-2"
         },
         {
-          "name": "API_URL",
-          "value": "http://ai-recruiter-api-alb-184707625.us-east-2.elb.amazonaws.com"
-        },
-        {
           "name": "COGNITO_CLIENT_ID",
           "value": "buusqp2p10vb2nh8ft40i8imc"
         },

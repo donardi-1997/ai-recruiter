@@ -8,7 +8,7 @@ $ErrorActionPreference = "Stop"
 # CONFIGURATION
 # ============================================================
 
-$API_URL = "https://ai-8f0170f12e9845ed8ebfacfae7be2a5d.ecs.us-east-2.on.aws"
+$API_URL = "https://ai.adrianguerra.net/api"
 
 $CV_FOLDER = Join-Path $PSScriptRoot "test-cvs"
 

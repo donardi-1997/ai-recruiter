@@ -68,12 +68,10 @@ jobs:
         env:
           ECR_REGISTRY: ${{ steps.ecr-login.outputs.registry }}
           IMAGE_TAG: ${{ github.sha }}
-          VITE_API_URL: ${{ env.VITE_API_URL }}
         run: |
           IMAGE_URI="$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG"
           docker build \
-            --file Dockerfile.frontend \
-            --build-arg VITE_API_URL="$VITE_API_URL" \
+            --file Dockerfile \
             --tag "$IMAGE_URI" .
           docker push "$IMAGE_URI"
           echo "uri=$IMAGE_URI" >> "$GITHUB_OUTPUT"
@@ -98,7 +96,7 @@ jobs:
           api-task-definition.json \
           > api-task-definition-rendered.json
       - name: Register ECS task definition
-        id: task-definition
+        id: register_task
         run: |
           TASK_DEFINITION=$(aws ecs register-task-definition \
             --cli-input-json file://api-task-definition-rendered.json \
@@ -112,7 +110,7 @@ jobs:
           aws ecs update-service \
           --cluster "$ECS_CLUSTER" \
           --service "$ECS_SERVICE" \
-          --task-definition "${{ steps.register-task.outputs.task_definition }}" \
+          --task-definition "${{ steps.register_task.outputs.task_definition }}" \
           --region "$AWS_REGION"
       - name: Wait ECS stable
         run: |

@@ -57,8 +57,9 @@ jobs:
       - name: Build frontend Docker image
         run: |
           docker build \
-          --file Dockerfile.frontend \
-          --tag frontend-ci:${{ github.sha }} .
+            --file Dockerfile.frontend \
+            --build-arg VITE_API_URL="$VITE_API_URL" \
+            --tag frontend-ci:${{ github.sha }} .
   deploy:
     name: Deploy frontend
     if: github.event_name != 'pull_request'
@@ -84,6 +85,8 @@ jobs:
         run: |
           IMAGE_URI="$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG"
           docker build \
+            --file Dockerfile.frontend \
+            --build-arg VITE_API_URL="$VITE_API_URL" \
             --tag "$IMAGE_URI" .
           docker push "$IMAGE_URI"
           echo "uri=$IMAGE_URI" >> "$GITHUB_OUTPUT"
