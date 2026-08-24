@@ -1,7 +1,36 @@
+import { useEffect, useState } from "react";
 import { NavLink, useNavigate } from "react-router-dom";
+
+const navItems = [
+  { to: "/dashboard", label: "Resumen", icon: "⌁" },
+  { to: "/jobs", label: "Vacantes", icon: "▤" },
+  { to: "/candidates", label: "Candidatos", icon: "◎" },
+  { to: "/ranking", label: "Ranking IA", icon: "↗" },
+];
+
+function Brand() {
+  return (
+    <NavLink to="/dashboard" className="navbar-brand" aria-label="AI Recruiter, inicio">
+      <span className="navbar-logo" aria-hidden="true">AI</span>
+      <span className="navbar-brand-text">
+        <strong>AI Recruiter</strong>
+        <span>Talent intelligence</span>
+      </span>
+    </NavLink>
+  );
+}
 
 function Navbar() {
   const navigate = useNavigate();
+  const [open, setOpen] = useState(false);
+
+  useEffect(() => {
+    function closeOnEscape(event) {
+      if (event.key === "Escape") setOpen(false);
+    }
+    window.addEventListener("keydown", closeOnEscape);
+    return () => window.removeEventListener("keydown", closeOnEscape);
+  }, []);
 
   function logout() {
     localStorage.removeItem("access_token");
@@ -11,73 +40,63 @@ function Navbar() {
     navigate("/login");
   }
 
-  const navItems = [
-    {
-      to: "/dashboard",
-      label: "Dashboard",
-      icon: "▦",
-    },
-    {
-      to: "/jobs",
-      label: "Vacantes",
-      icon: "▤",
-    },
-    {
-      to: "/candidates",
-      label: "Candidatos",
-      icon: "♙",
-    },
-    {
-      to: "/ranking",
-      label: "Ranking",
-      icon: "↗",
-    },
-  ];
-
   return (
-    <header className="navbar">
-      <div className="navbar-inner">
+    <>
+      <header className="mobile-header">
+        <Brand />
+        <button
+          className="menu-toggle"
+          type="button"
+          aria-expanded={open}
+          aria-controls="primary-navigation"
+          aria-label={open ? "Cerrar menú" : "Abrir menú"}
+          onClick={() => setOpen((value) => !value)}
+        >
+          <span />
+          <span />
+        </button>
+      </header>
 
-        <NavLink to="/dashboard" className="navbar-brand">
-          <div className="navbar-logo">
-            AI
+      {open && <button className="nav-backdrop" aria-label="Cerrar menú" onClick={() => setOpen(false)} />}
+
+      <aside className={`navbar ${open ? "is-open" : ""}`}>
+        <div className="navbar-inner">
+          <Brand />
+
+          <div className="nav-context">
+            <span className="nav-context-label">Workspace</span>
+            <strong>Selección de talento</strong>
           </div>
 
-          <div className="navbar-brand-text">
-            <strong>AI Recruiter</strong>
-            <span>Talent Intelligence</span>
-          </div>
-        </NavLink>
-
-        <nav className="navbar-links">
+          <nav id="primary-navigation" className="navbar-links" aria-label="Navegación principal">
           {navItems.map((item) => (
             <NavLink
               key={item.to}
               to={item.to}
-              className={({ isActive }) =>
-                `navbar-link ${isActive ? "active" : ""}`
-              }
+              onClick={() => setOpen(false)}
+              className={({ isActive }) => `navbar-link ${isActive ? "active" : ""}`}
             >
-              <span className="navbar-icon">
-                {item.icon}
-              </span>
-
+              <span className="navbar-icon" aria-hidden="true">{item.icon}</span>
               <span>{item.label}</span>
             </NavLink>
           ))}
-        </nav>
+          </nav>
 
-        <button
-          className="navbar-logout"
-          onClick={logout}
-          title="Cerrar sesión"
-        >
-          <span>↪</span>
-          <span>Cerrar sesión</span>
-        </button>
+          <div className="nav-insight">
+            <span className="nav-insight-dot" aria-hidden="true" />
+            <div>
+              <strong>IA operativa</strong>
+              <span>Evaluación con Amazon Bedrock</span>
+            </div>
+          </div>
 
-      </div>
-    </header>
+          <button className="navbar-logout" onClick={logout}>
+            <span aria-hidden="true">↪</span>
+            <span>Cerrar sesión</span>
+          </button>
+        </div>
+      </aside>
+    </>
   );
 }
 

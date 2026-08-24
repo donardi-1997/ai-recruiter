@@ -50,6 +50,8 @@ function Ranking() {
   }
 
   useEffect(() => {
+    // The initial request synchronizes this view with the API.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     loadJobs();
   }, []);
 
@@ -268,19 +270,19 @@ function Ranking() {
 
   return (
     <div
+      className="page ranking-page"
       style={{
         padding: "40px",
       }}
     >
-      <h1>Ranking de candidatos</h1>
-
-      <p>Priorización automática usando Inteligencia Artificial</p>
+      <header className="page-header"><span className="eyebrow">Decisiones asistidas por IA</span><h1>Ranking de candidatos</h1><p>Prioriza el talento con mayor afinidad para cada vacante.</p></header>
 
       {/* ========================================================
           CONTROLES
       ======================================================== */}
 
       <div
+        className="ranking-filters panel"
         style={{
           marginTop: "30px",
           padding: "20px",
@@ -290,6 +292,7 @@ function Ranking() {
         }}
       >
         <div
+          className="ranking-filter-grid"
           style={{
             display: "flex",
             gap: "15px",
@@ -414,6 +417,7 @@ function Ranking() {
           {/* BUTTON */}
 
           <button
+            className="btn btn-primary"
             onClick={loadRanking}
             disabled={loading}
             style={{
@@ -432,6 +436,7 @@ function Ranking() {
 
       {ranking.length > 0 && (
         <div
+          className="summary-grid"
           style={{
             display: "flex",
             gap: "20px",
@@ -459,12 +464,14 @@ function Ranking() {
       ======================================================== */}
 
       <div
+        className="ranking-results"
         style={{
           marginTop: "30px",
         }}
       >
         {!loading && selectedJob && ranking.length === 0 && (
           <div
+            className="empty-state"
             style={{
               padding: "25px",
               border: "1px solid #ddd",
@@ -478,6 +485,7 @@ function Ranking() {
         {ranking.map((candidate, index) => (
           <div
             key={candidate.candidate_id}
+            className="ranking-card"
             style={{
               border: "1px solid #ddd",
 
@@ -503,6 +511,7 @@ function Ranking() {
             {/* SCORE BAR */}
 
             <div
+              className="ranking-score-bar"
               style={{
                 height: "12px",
                 background: "#eee",
@@ -511,6 +520,7 @@ function Ranking() {
               }}
             >
               <div
+                className="ranking-score-fill"
                 style={{
                   width: `${candidate.match_score}%`,
                   height: "100%",
@@ -522,6 +532,7 @@ function Ranking() {
             {/* RECOMMENDATION */}
 
             <div
+              className="ranking-columns"
               style={{
                 display: "inline-block",
 
@@ -587,6 +598,7 @@ function Ranking() {
             </div>
 
             <button
+              className="btn btn-secondary"
               onClick={() => openAnalysis(candidate)}
               style={{
                 marginTop: "20px",
@@ -606,6 +618,7 @@ function Ranking() {
 
       {selectedCandidate && (
         <div
+          className="modal-overlay"
           onClick={closeModal}
           style={{
             position: "fixed",
@@ -622,6 +635,7 @@ function Ranking() {
           }}
         >
           <div
+            className="modal ranking-modal"
             onClick={(e) => e.stopPropagation()}
             style={{
               background: "white",
@@ -688,6 +702,7 @@ function Ranking() {
             {requirements.map((req, i) => (
               <div
                 key={i}
+                className="requirement"
                 style={{
                   border: "1px solid #ddd",
                   padding: "12px",
@@ -736,6 +751,7 @@ function Ranking() {
             )}
 
             <button
+              className="btn btn-close"
               onClick={closeModal}
               style={{
                 marginTop: "20px",
@@ -755,6 +771,7 @@ function Ranking() {
 function SummaryCard({ title, value }) {
   return (
     <div
+      className="summary-card"
       style={{
         display: "flex",
         flexDirection: "column",

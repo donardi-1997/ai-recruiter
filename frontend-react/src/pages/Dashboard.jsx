@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-
+import { Link } from "react-router-dom";
 import api from "../api/client";
 
 function Dashboard() {
@@ -10,88 +10,88 @@ function Dashboard() {
   useEffect(() => {
     async function load() {
       try {
-        const jobsResponse = await api.get("/jobs");
-        const candidatesResponse = await api.get("/candidates");
-
+        const [jobsResponse, candidatesResponse] = await Promise.all([
+          api.get("/jobs"),
+          api.get("/candidates"),
+        ]);
         const jobsData = jobsResponse.data;
         const candidatesData = candidatesResponse.data;
-
         setJobs(Array.isArray(jobsData) ? jobsData : jobsData.jobs || []);
-
-        setCandidates(
-          Array.isArray(candidatesData)
-            ? candidatesData
-            : candidatesData.candidates || [],
-        );
+        setCandidates(Array.isArray(candidatesData) ? candidatesData : candidatesData.candidates || []);
       } catch (error) {
-        console.error("ERROR LOADING DASHBOARD:", error);
+        console.error("No fue posible cargar el resumen", error);
       } finally {
         setLoading(false);
       }
     }
-
     load();
   }, []);
 
   if (loading) {
-    return <h2>Cargando dashboard...</h2>;
+    return <div className="page"><div className="page-loading"><span /> Preparando tu workspace…</div></div>;
   }
 
+  const coverage = jobs.length ? Math.min(100, Math.round((candidates.length / jobs.length) * 20)) : 0;
+
   return (
-    <div className="page">
-      <div className="page-header">
-        <h1>AI Recruiter Dashboard</h1>
+    <div className="page dashboard-page">
+      <header className="page-header dashboard-header">
+        <div>
+          <span className="eyebrow">Vista general</span>
+          <h1>Buenos días, equipo.</h1>
+          <p>Así avanza tu proceso de selección hoy.</p>
+        </div>
+        <Link className="btn btn-primary" to="/candidates">Agregar candidato <span aria-hidden="true">＋</span></Link>
+      </header>
 
-        <p>Gestión inteligente de talento con IA</p>
-      </div>
+      <section className="metrics-grid" aria-label="Indicadores principales">
+        <MetricCard icon="▤" label="Vacantes activas" value={jobs.length} detail="Procesos en seguimiento" tone="blue" />
+        <MetricCard icon="◎" label="Talento disponible" value={candidates.length} detail="Perfiles centralizados" tone="cyan" />
+        <MetricCard icon="↗" label="Cobertura estimada" value={`${coverage}%`} detail="Candidatos por vacante" tone="violet" />
+      </section>
 
-      <div
-        style={{
-          display: "grid",
-          gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))",
-          gap: "20px",
-          marginTop: "30px",
-        }}
-      >
-        <Card title="Vacantes" value={jobs.length} />
-
-        <Card title="Candidatos" value={candidates.length} />
-
-        <Card title="Evaluaciones IA" value="0" />
-      </div>
-
-      <h2
-        style={{
-          marginTop: "40px",
-          marginBottom: "20px",
-          textAlign: "center",
-        }}
-      >
-        Últimas vacantes
-      </h2>
-
-      {jobs.length === 0 ? (
-        <p className="muted">No hay vacantes registradas.</p>
-      ) : (
-        jobs.map((job) => (
-          <div key={job.job_id} className="card">
-            <h3>{job.title}</h3>
-
-            <p className="muted">{job.description}</p>
+      <div className="dashboard-grid">
+        <section className="panel recent-jobs-panel">
+          <div className="panel-heading">
+            <div><span className="eyebrow">Pipeline</span><h2>Vacantes recientes</h2></div>
+            <Link to="/jobs">Ver todas <span aria-hidden="true">→</span></Link>
           </div>
-        ))
-      )}
+
+          {jobs.length === 0 ? (
+            <div className="empty-state compact"><span aria-hidden="true">▤</span><strong>Aún no hay vacantes</strong><p>Crea la primera para comenzar a evaluar talento.</p><Link className="btn btn-secondary" to="/jobs">Crear vacante</Link></div>
+          ) : (
+            <div className="job-list">
+              {jobs.slice(0, 4).map((job, index) => (
+                <article className="job-row" key={job.job_id}>
+                  <span className="job-index">{String(index + 1).padStart(2, "0")}</span>
+                  <div><h3>{job.title}</h3><p>{job.description}</p></div>
+                  <span className="status-pill"><i /> Activa</span>
+                </article>
+              ))}
+            </div>
+          )}
+        </section>
+
+        <aside className="panel intelligence-panel">
+          <div className="intelligence-orb"><span>AI</span></div>
+          <span className="eyebrow eyebrow-dark">Talent intelligence</span>
+          <h2>Del currículum a la evidencia.</h2>
+          <p>Compara cada perfil con los requisitos de la vacante y obtén fortalezas, brechas y una recomendación clara.</p>
+          <Link className="text-link-light" to="/ranking">Explorar ranking <span aria-hidden="true">↗</span></Link>
+        </aside>
+      </div>
     </div>
   );
 }
 
-function Card({ title, value }) {
+function MetricCard({ icon, label, value, detail, tone }) {
   return (
-    <div className="card">
-      <h3>{title}</h3>
-
-      <h1>{value}</h1>
-    </div>
+    <article className={`metric-card metric-${tone}`}>
+      <div className="metric-top"><span className="metric-icon" aria-hidden="true">{icon}</span><span className="metric-trend">En vivo</span></div>
+      <strong className="metric-value">{value}</strong>
+      <span className="metric-label">{label}</span>
+      <small>{detail}</small>
+    </article>
   );
 }
 

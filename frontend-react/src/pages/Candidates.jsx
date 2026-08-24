@@ -9,8 +9,6 @@ function Candidates() {
 
   const [selectedJob, setSelectedJob] = useState({});
 
-  const [evaluations, setEvaluations] = useState({});
-
   const [loading, setLoading] = useState(false);
 
   const [selectedEvaluation, setSelectedEvaluation] = useState(null);
@@ -86,6 +84,8 @@ function Candidates() {
   }
 
   useEffect(() => {
+    // The initial request synchronizes this view with the API.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     loadData();
   }, []);
 
@@ -109,11 +109,6 @@ function Candidates() {
       );
 
       console.log("EVALUATION RESPONSE:", response.data);
-
-      setEvaluations((prev) => ({
-        ...prev,
-        [candidateId]: response.data,
-      }));
 
       setSelectedEvaluation({
         candidateId,
@@ -140,7 +135,7 @@ function Candidates() {
         throw new Error("No se recibió URL de descarga");
       }
 
-      window.location.href = downloadUrl;
+      window.location.assign(downloadUrl);
     } catch (error) {
       console.error("DOWNLOAD ERROR:", error.response?.data || error);
 
@@ -179,14 +174,6 @@ function Candidates() {
         return updated;
       });
 
-      // Limpiar evaluación
-      setEvaluations((prev) => {
-        const updated = { ...prev };
-
-        delete updated[candidate.candidate_id];
-
-        return updated;
-      });
     } catch (error) {
       console.error("DELETE CANDIDATE ERROR:", error.response?.data || error);
 
@@ -276,7 +263,7 @@ function Candidates() {
         </button>
       </div>
 
-      <h2 style={{ marginBottom: "20px" }}>Candidatos registrados</h2>
+      <div className="section-heading candidate-section-heading"><div><h2>Candidatos registrados</h2><p>{candidates.length} {candidates.length === 1 ? "perfil disponible" : "perfiles disponibles"}</p></div></div>
 
       {candidates.length === 0 ? (
         <div className="card">
@@ -284,8 +271,9 @@ function Candidates() {
         </div>
       ) : (
         candidates.map((candidate) => (
-          <div className="card" key={candidate.candidate_id}>
+          <div className="card candidate-card" key={candidate.candidate_id}>
             <div
+              className="candidate-header"
               style={{
                 display: "flex",
                 justifyContent: "space-between",
@@ -309,6 +297,7 @@ function Candidates() {
               </div>
 
               <div
+                className="candidate-actions"
                 style={{
                   display: "flex",
                   gap: "10px",
@@ -332,6 +321,7 @@ function Candidates() {
             </div>
 
             <div
+              className="candidate-file"
               style={{
                 marginTop: "20px",
                 padding: "14px 16px",
@@ -341,6 +331,7 @@ function Candidates() {
               }}
             >
               <span
+                className="candidate-file-label"
                 style={{
                   fontSize: "13px",
                   color: "var(--text-muted)",

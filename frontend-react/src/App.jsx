@@ -36,7 +36,7 @@ function ProtectedRoute({ children }) {
         await api.get("/auth/me");
 
         setValid(true);
-      } catch (error) {
+      } catch {
         localStorage.removeItem("access_token");
         localStorage.removeItem("id_token");
         localStorage.removeItem("refresh_token");
@@ -51,7 +51,7 @@ function ProtectedRoute({ children }) {
   }, []);
 
   if (checking) {
-    return <div>Cargando sesión...</div>;
+    return <div className="session-loading"><span aria-hidden="true" />Validando acceso seguro…</div>;
   }
 
   if (!valid) {

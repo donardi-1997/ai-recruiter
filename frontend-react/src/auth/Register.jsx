@@ -1,204 +1,97 @@
 import { useState } from "react";
-import { useNavigate, Link, useSearchParams } from "react-router-dom";
+import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import api from "../api/client";
 
 function Register() {
   const navigate = useNavigate();
-
   const [searchParams] = useSearchParams();
-
   const accountCreated = searchParams.get("created") === "true";
-
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
-
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
 
-  async function handleSubmit(e) {
-    e.preventDefault();
-
+  async function handleSubmit(event) {
+    event.preventDefault();
     setError("");
-
     if (password !== confirmPassword) {
       setError("Las contraseñas no coinciden.");
       return;
     }
-
     setLoading(true);
-
     try {
-      const response = await api.post("/auth/register", null, {
-        params: {
-          email,
-          password,
-        },
-      });
-
-      console.log("REGISTER RESPONSE:", response.data);
-
-      // ======================================================
-      // CUENTA CREADA
-      // IR AUTOMÁTICAMENTE AL LOGIN
-      // ======================================================
-
-      navigate("/login", {
-        replace: true,
-      });
+      await api.post("/auth/register", null, { params: { email, password } });
+      navigate("/login", { replace: true });
     } catch (err) {
-      console.error("REGISTER ERROR:", err);
-
-      setError(
-        err.response?.data?.detail ||
-          err.response?.data?.error ||
-          "No fue posible crear la cuenta.",
-      );
+      setError(err.response?.data?.detail || err.response?.data?.error || "No fue posible crear la cuenta.");
     } finally {
       setLoading(false);
     }
   }
 
-  // ==========================================================
-  // CUENTA CREADA
-  // ==========================================================
-
   if (accountCreated) {
     return (
-      <div className="login-page">
-        <div className="login-card">
-          <div className="login-logo">AI</div>
-
-          <div className="login-header">
-            <div
-              style={{
-                fontSize: "64px",
-                marginBottom: "10px",
-              }}
-            >
-              ✓
-            </div>
-
-            <h1>¡Cuenta creada!</h1>
-
-            <p>Tu cuenta de AI Recruiter fue creada correctamente.</p>
+      <main className="auth-page auth-page-simple">
+        <section className="auth-panel">
+          <div className="auth-card auth-success-card">
+            <span className="success-mark" aria-hidden="true">✓</span>
+            <span className="eyebrow">Registro completo</span>
+            <h1>Tu cuenta está lista</h1>
+            <p>Ya puedes acceder a AI Recruiter y comenzar a organizar tu proceso de selección.</p>
+            <button type="button" className="login-button" onClick={() => navigate("/login")}>Iniciar sesión <span>→</span></button>
           </div>
-
-          {/* ==================================================
-              LOGIN BUTTON
-          ================================================== */}
-
-          <button
-            type="button"
-            className="login-button"
-            style={{
-              marginTop: "24px",
-            }}
-            onClick={() => navigate("/login")}
-          >
-            Iniciar sesión
-          </button>
-
-          <div
-            className="login-register"
-            style={{
-              marginTop: "18px",
-            }}
-          >
-            <span>¿Quieres usar otro correo?</span>
-
-            <Link to="/register">Crear otra cuenta</Link>
-          </div>
-
-          <div className="login-footer">
-            <span>AI Recruiter · Talent Intelligence</span>
-
-            <div className="login-author">
-              Built & designed by <strong>Adrián Felipe Guerra</strong>
-            </div>
-          </div>
-        </div>
-      </div>
+        </section>
+      </main>
     );
   }
 
-  // ==========================================================
-  // REGISTER FORM
-  // ==========================================================
-
   return (
-    <div className="login-page">
-      <div className="login-card">
-        <div className="login-logo">AI</div>
-
-        <div className="login-header">
-          <h1>Crear cuenta</h1>
-
-          <p>Regístrate en AI Recruiter</p>
+    <main className="auth-page auth-register-page">
+      <section className="auth-story auth-register-story">
+        <div className="auth-brand">
+          <span className="auth-logo" aria-hidden="true">AI</span>
+          <span><strong>AI Recruiter</strong><small>Talent intelligence</small></span>
         </div>
-
-        <form onSubmit={handleSubmit}>
-          <div className="form-group">
-            <label>Email</label>
-
-            <input
-              type="email"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              placeholder="tu@email.com"
-              autoComplete="email"
-              required
-            />
-          </div>
-
-          <div className="form-group">
-            <label>Contraseña</label>
-
-            <input
-              type="password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              placeholder="••••••••"
-              autoComplete="new-password"
-              required
-            />
-          </div>
-
-          <div className="form-group">
-            <label>Confirmar contraseña</label>
-
-            <input
-              type="password"
-              value={confirmPassword}
-              onChange={(e) => setConfirmPassword(e.target.value)}
-              placeholder="••••••••"
-              autoComplete="new-password"
-              required
-            />
-          </div>
-
-          {error && <div className="login-error">{error}</div>}
-
-          <button type="submit" className="login-button" disabled={loading}>
-            {loading ? "Creando cuenta..." : "Crear cuenta"}
-          </button>
-        </form>
-
-        <div className="login-register">
-          <span>¿Ya tienes una cuenta?</span>
-
-          <Link to="/login">Iniciar sesión</Link>
+        <div className="auth-story-content">
+          <span className="eyebrow eyebrow-dark"><i /> Empieza en minutos</span>
+          <h1>Una forma más inteligente de <em>encontrar talento.</em></h1>
+          <ul className="auth-benefits">
+            <li><span>01</span><div><strong>Evaluación consistente</strong><small>Compara perfiles con criterios claros.</small></div></li>
+            <li><span>02</span><div><strong>Ranking accionable</strong><small>Prioriza a los candidatos con mejor ajuste.</small></div></li>
+            <li><span>03</span><div><strong>Infraestructura segura</strong><small>Construido sobre servicios administrados de AWS.</small></div></li>
+          </ul>
         </div>
+        <p className="auth-story-footer">AI Recruiter · Talent intelligence</p>
+      </section>
 
-        <div className="login-footer">
-          <span>AI Recruiter · Talent Intelligence</span>
-
-          <div className="login-author">
-            Built & designed by <strong>Adrián Felipe Guerra</strong>
+      <section className="auth-panel">
+        <div className="auth-card">
+          <div className="auth-heading">
+            <span className="eyebrow">Nuevo workspace</span>
+            <h2>Crea tu cuenta</h2>
+            <p>Configura tu acceso para comenzar.</p>
           </div>
+          <form onSubmit={handleSubmit}>
+            <div className="form-group">
+              <label htmlFor="register-email">Correo electrónico</label>
+              <input id="register-email" type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="nombre@empresa.com" autoComplete="email" required />
+            </div>
+            <div className="form-group">
+              <label htmlFor="register-password">Contraseña</label>
+              <input id="register-password" type="password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="Mínimo 8 caracteres" autoComplete="new-password" required />
+            </div>
+            <div className="form-group">
+              <label htmlFor="confirm-password">Confirmar contraseña</label>
+              <input id="confirm-password" type="password" value={confirmPassword} onChange={(e) => setConfirmPassword(e.target.value)} placeholder="Repite tu contraseña" autoComplete="new-password" required />
+            </div>
+            {error && <div className="login-error" role="alert">{error}</div>}
+            <button type="submit" className="login-button" disabled={loading}>{loading ? "Creando cuenta…" : "Crear cuenta"}<span aria-hidden="true">→</span></button>
+          </form>
+          <p className="login-register">¿Ya tienes una cuenta? <Link to="/login">Iniciar sesión</Link></p>
         </div>
-      </div>
-    </div>
+      </section>
+    </main>
   );
 }
 
