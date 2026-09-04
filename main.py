@@ -1801,7 +1801,11 @@ def _service_error_message(error: Exception) -> str:
     return aws_error.get("Message", "No fue posible completar el registro del candidato.")
 
 
-async def _prepare_bulk_candidate(file: UploadFile, current_user: dict) -> dict:
+async def _prepare_bulk_candidate(
+    file: UploadFile,
+    current_user: dict,
+    start_ingestion: bool = True,
+) -> dict:
     original_filename = os.path.basename(file.filename or "")
     if not original_filename.lower().endswith(".pdf"):
         raise ValueError("El CV debe estar en formato PDF.")
@@ -1834,16 +1838,18 @@ async def _prepare_bulk_candidate(file: UploadFile, current_user: dict) -> dict:
             Body=json.dumps(metadata, ensure_ascii=False).encode("utf-8"),
             ContentType="application/json",
         )
-        ingestion = bedrock_agent.start_ingestion_job(
-            knowledgeBaseId=KNOWLEDGE_BASE_ID, dataSourceId=DATA_SOURCE_ID
-        ).get("ingestionJob", {})
+        ingestion = {}
+        if start_ingestion:
+            ingestion = bedrock_agent.start_ingestion_job(
+                knowledgeBaseId=KNOWLEDGE_BASE_ID, dataSourceId=DATA_SOURCE_ID
+            ).get("ingestionJob", {})
         record = {
             "candidate_id": candidate_id, "owner_id": current_user["sub"], "user_sub": current_user["sub"],
             "name": name, **profile, "filename": filename, "original_filename": original_filename,
             "s3_location": f"s3://{S3_BUCKET}/{s3_key}",
             "metadata_location": f"s3://{S3_BUCKET}/{metadata_key}",
             "ingestion_job_id": ingestion.get("ingestionJobId"),
-            "ingestion_status": ingestion.get("status"), "indexed": False,
+            "ingestion_status": ingestion.get("status") or "PENDING", "indexed": False,
         }
         save_candidate_record(record)
         return record
@@ -1871,7 +1877,7 @@ async def create_candidates_bulk(
         original_filename = os.path.basename(file.filename or "")
         print("BULK_FILE_PROCESSING", {"filename": original_filename})
         try:
-            candidates.append(await _prepare_bulk_candidate(file, current_user))
+            candidates.append(await _prepare_bulk_candidate(file, current_user, start_ingestion=False))
             print("BULK_FILE_SUCCESS", {"filename": original_filename})
         except (ValueError, RuntimeError) as error:
             errors.append({"original_filename": original_filename, "error": str(error)})
@@ -1879,6 +1885,25 @@ async def create_candidates_bulk(
         except Exception:
             errors.append({"original_filename": original_filename, "error": "Error inesperado al procesar el archivo."})
             print("BULK_FILE_FAILED", {"filename": original_filename, "error": "unexpected_error"})
+    ingestion_error = None
+    if candidates:
+        try:
+            ingestion = bedrock_agent.start_ingestion_job(
+                knowledgeBaseId=KNOWLEDGE_BASE_ID,
+                dataSourceId=DATA_SOURCE_ID,
+            ).get("ingestionJob", {})
+            ingestion_job_id = ingestion.get("ingestionJobId")
+            ingestion_status = ingestion.get("status") or "STARTING"
+            for candidate in candidates:
+                candidate["ingestion_job_id"] = ingestion_job_id
+                candidate["ingestion_status"] = ingestion_status
+                save_candidate_record(candidate)
+        except Exception as error:
+            ingestion_error = _service_error_message(error)
+            for candidate in candidates:
+                candidate["ingestion_status"] = "ERROR"
+                candidate["ingestion_error"] = ingestion_error
+                save_candidate_record(candidate)
     result = {
         "processed": len(files),
         "successful": len(candidates),
@@ -1888,6 +1913,8 @@ async def create_candidates_bulk(
         "candidates": candidates,
         "errors": errors,
     }
+    if ingestion_error:
+        result["ingestion_error"] = ingestion_error
     print("BULK_UPLOAD_COMPLETED", {
         "processed": result["processed"],
         "successful": result["successful"],
