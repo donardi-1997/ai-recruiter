@@ -2414,6 +2414,65 @@ def list_candidates(
 # DELETE CANDIDATE
 # ============================================================
 
+@app.delete("/api/candidates")
+def delete_all_candidates(
+    current_user: dict = Depends(get_current_user),
+):
+    try:
+        owner_id = current_user["sub"]
+        scan_kwargs = {}
+        owned_candidates = []
+        while True:
+            page = candidates_table.scan(**scan_kwargs)
+            owned_candidates.extend(
+                candidate
+                for candidate in page.get("Items", [])
+                if candidate.get("owner_id") == owner_id
+            )
+            last_key = page.get("LastEvaluatedKey")
+            if not last_key:
+                break
+            scan_kwargs["ExclusiveStartKey"] = last_key
+
+        deleted = 0
+        errors = []
+        for candidate in owned_candidates:
+            candidate_id = candidate.get("candidate_id")
+            try:
+                evaluations = evaluations_table.query(
+                    IndexName="candidate-index",
+                    KeyConditionExpression=Key("candidate_id").eq(candidate_id),
+                )
+                for evaluation in evaluations.get("Items", []):
+                    evaluations_table.delete_item(
+                        Key={
+                            "job_id": evaluation["job_id"],
+                            "candidate_id": evaluation["candidate_id"],
+                        }
+                    )
+
+                candidates_table.delete_item(Key={"candidate_id": candidate_id})
+                for location_key in ("s3_location", "metadata_location"):
+                    location = candidate.get(location_key)
+                    if location:
+                        parts = location.split("/", 3)
+                        if len(parts) == 4:
+                            s3.delete_object(Bucket=parts[2], Key=parts[3])
+                deleted += 1
+            except Exception as error:
+                errors.append({"candidate_id": candidate_id, "error": str(error)})
+
+        return {
+            "requested": len(owned_candidates),
+            "deleted": deleted,
+            "failed": len(errors),
+            "errors": errors,
+        }
+    except Exception as error:
+        print(f"ERROR DELETE ALL CANDIDATES: {str(error)}")
+        raise HTTPException(status_code=500, detail="No fue posible eliminar los candidatos.")
+
+
 @app.delete("/api/candidates/{candidate_id}"
 )
 def delete_candidate(

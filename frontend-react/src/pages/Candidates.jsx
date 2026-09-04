@@ -248,6 +248,30 @@ function Candidates() {
     }
   }
 
+  async function deleteAllCandidates() {
+    const confirmed = window.confirm(
+      `¿Seguro que deseas eliminar los ${candidates.length} candidatos? Esta acción no se puede deshacer. También se eliminarán sus evaluaciones y CVs.`,
+    );
+    if (!confirmed) return;
+
+    try {
+      setLoading(true);
+      const response = await api.delete("/candidates");
+      const result = response.data;
+      await loadData();
+      setSelectedJob({});
+      setSelectedEvaluation(null);
+      if (result.failed) {
+        window.alert(`${result.deleted} candidatos eliminados. ${result.failed} no pudieron eliminarse.`);
+      }
+    } catch (error) {
+      console.error("DELETE ALL CANDIDATES ERROR:", error.response?.data || error);
+      window.alert(error.response?.data?.detail || "No fue posible eliminar los candidatos.");
+    } finally {
+      setLoading(false);
+    }
+  }
+
   function getDisplayFilename(candidate) {
     if (candidate.name) {
       const cleanName = candidate.name
@@ -328,7 +352,17 @@ function Candidates() {
         </button>
       </div>
 
-      <div className="section-heading candidate-section-heading"><div><h2>Candidatos registrados</h2><p>{candidates.length} {candidates.length === 1 ? "perfil disponible" : "perfiles disponibles"}</p></div></div>
+      <div className="section-heading candidate-section-heading">
+        <div>
+          <h2>Candidatos registrados</h2>
+          <p>{candidates.length} {candidates.length === 1 ? "perfil disponible" : "perfiles disponibles"}</p>
+        </div>
+        {candidates.length > 0 && (
+          <button className="btn btn-danger" onClick={deleteAllCandidates} disabled={loading}>
+            🗑 Eliminar todos
+          </button>
+        )}
+      </div>
 
       {candidates.length === 0 ? (
         <div className="card">
