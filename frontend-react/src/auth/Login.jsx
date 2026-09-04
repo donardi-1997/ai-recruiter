@@ -27,7 +27,7 @@ function Login() {
       const { data } = await api.post("/auth/login", { email, password });
       localStorage.setItem("access_token", data.access_token);
       localStorage.setItem("id_token", data.id_token);
-      localStorage.setItem("refresh_token", data.refresh_token);
+      localStorage.removeItem("refresh_token");
       navigate("/dashboard");
     } catch (err) {
       setError(

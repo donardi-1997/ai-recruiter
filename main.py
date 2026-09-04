@@ -22,7 +22,9 @@ from fastapi import (
     Form,
     HTTPException,
     UploadFile,
-    Depends
+    Depends,
+    Cookie,
+    Response
 )
 
 from fastapi.security import (
@@ -40,7 +42,7 @@ from PyPDF2 import PdfReader
 from langchain_aws import ChatBedrock
 from langchain_core.prompts import ChatPromptTemplate
 
-from auth import LoginRequest, login_user
+from auth import LoginRequest, login_user, refresh_user
 
 # ============================================================
 # ENVIRONMENT VARIABLES
@@ -370,6 +372,7 @@ def register_user(
 @app.post("/api/auth/login")
 def login(
     data: LoginRequest
+    , response: Response
 ):
 
     result = login_user(
@@ -384,7 +387,36 @@ def login(
             detail=result["error"]
         )
 
+    refresh_token = result.pop("refresh_token", None)
+    if refresh_token:
+        response.set_cookie(
+            "ai_recruiter_refresh",
+            refresh_token,
+            max_age=30 * 24 * 60 * 60,
+            httponly=True,
+            secure=True,
+            samesite="lax",
+            path="/api",
+        )
     return result
+
+
+@app.post("/api/auth/refresh")
+def refresh_session(
+    refresh_token: str | None = Cookie(default=None, alias="ai_recruiter_refresh"),
+):
+    if not refresh_token:
+        raise HTTPException(status_code=401, detail="Sesión no disponible.")
+    result = refresh_user(refresh_token)
+    if result.get("error"):
+        raise HTTPException(status_code=401, detail=result["error"])
+    return result
+
+
+@app.post("/api/auth/logout")
+def logout(response: Response):
+    response.delete_cookie("ai_recruiter_refresh", path="/api")
+    return {"logged_out": True}
 
 # ============================================================
 # AUTH - CURRENT USER

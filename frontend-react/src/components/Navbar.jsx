@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { NavLink, useNavigate } from "react-router-dom";
+import api from "../api/client";
 
 const navItems = [
   { to: "/dashboard", label: "Resumen", icon: "⌁" },
@@ -32,7 +33,8 @@ function Navbar() {
     return () => window.removeEventListener("keydown", closeOnEscape);
   }, []);
 
-  function logout() {
+  async function logout() {
+    await api.post("/auth/logout").catch(() => {});
     localStorage.removeItem("access_token");
     localStorage.removeItem("id_token");
     localStorage.removeItem("refresh_token");

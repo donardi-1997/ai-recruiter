@@ -199,6 +199,23 @@ def login_user(
         }
 
 
+def refresh_user(refresh_token: str):
+    try:
+        response = cognito_client.initiate_auth(
+            ClientId=COGNITO_CLIENT_ID,
+            AuthFlow="REFRESH_TOKEN_AUTH",
+            AuthParameters={"REFRESH_TOKEN": refresh_token},
+        )
+        auth = response.get("AuthenticationResult", {})
+        return {
+            "access_token": auth.get("AccessToken"),
+            "id_token": auth.get("IdToken"),
+            "expires_in": auth.get("ExpiresIn"),
+        }
+    except ClientError:
+        return {"error": "La sesión expiró. Inicia sesión nuevamente."}
+
+
 
 # ============================================================
 # CONFIRM USER

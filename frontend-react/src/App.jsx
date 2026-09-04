@@ -24,12 +24,19 @@ function ProtectedRoute({ children }) {
 
   useEffect(() => {
     async function checkAuth() {
-      const token = localStorage.getItem("access_token");
+      let token = localStorage.getItem("access_token");
 
       if (!token) {
-        setValid(false);
-        setChecking(false);
-        return;
+        try {
+          const response = await api.post("/auth/refresh");
+          token = response.data.access_token;
+          localStorage.setItem("access_token", token);
+          if (response.data.id_token) localStorage.setItem("id_token", response.data.id_token);
+        } catch {
+          setValid(false);
+          setChecking(false);
+          return;
+        }
       }
 
       try {
