@@ -68,8 +68,10 @@ function Candidates() {
       for (let start = 0; start < candidateFiles.length; start += UPLOAD_BATCH_SIZE) {
         const batch = candidateFiles.slice(start, start + UPLOAD_BATCH_SIZE);
         const formData = new FormData();
-        batch.forEach((file) => formData.append("files", file));
-        const response = await api.post("/candidates/bulk", formData);
+        batch.forEach((file) => formData.append("files", file, file.name));
+        const response = await api.post("/candidates/bulk", formData, {
+          headers: { "Content-Type": undefined },
+        });
         const result = response.data;
         summary.processed += result.processed ?? result.total ?? batch.length;
         summary.successful += result.successful ?? result.created ?? 0;
@@ -89,8 +91,12 @@ function Candidates() {
     } catch (error) {
       console.error("CREATE CANDIDATE ERROR:", error.response?.data || error);
 
-      alert(
-        error.response?.data?.detail || "No fue posible agregar el candidato",
+      const detail = error.response?.data?.detail;
+      const message = Array.isArray(detail)
+        ? detail.map((item) => item.msg).join(" ")
+        : detail || "No fue posible agregar los candidatos.";
+      setFileError(
+        `${error.response?.status ? `${error.response.status}: ` : ""}${message}`,
       );
     } finally {
       setCreatingCandidate(false);
