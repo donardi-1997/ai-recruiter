@@ -14,9 +14,10 @@ function Candidates() {
   const [selectedEvaluation, setSelectedEvaluation] = useState(null);
 
   const [showCreateModal, setShowCreateModal] = useState(false);
-  const [candidateName, setCandidateName] = useState("");
-  const [candidateFile, setCandidateFile] = useState(null);
+  const [candidateFiles, setCandidateFiles] = useState([]);
   const [creatingCandidate, setCreatingCandidate] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState(null);
+  const [uploadSummary, setUploadSummary] = useState(null);
 
   async function loadData() {
     try {
@@ -42,35 +43,25 @@ function Candidates() {
 
   async function createCandidate(e) {
     e.preventDefault();
-
-    if (!candidateName.trim()) {
-      alert("Ingrese el nombre del candidato");
+    if (!candidateFiles.length) {
+      alert("Seleccione al menos un CV en PDF");
       return;
     }
-
-    if (!candidateFile) {
-      alert("Seleccione el CV en PDF");
-      return;
-    }
-
     try {
       setCreatingCandidate(true);
-
+      setUploadProgress({ current: 0, total: candidateFiles.length });
       const formData = new FormData();
-
-      formData.append("name", candidateName.trim());
-      formData.append("file", candidateFile);
-
-      await api.post("/candidates", formData, {
-        headers: {
-          "Content-Type": "multipart/form-data",
+      candidateFiles.forEach((file) => formData.append("files", file));
+      const response = await api.post("/candidates/bulk", formData, {
+        onUploadProgress: (event) => {
+          if (event.total) {
+            setUploadProgress({ current: event.loaded, total: event.total, bytes: true });
+          }
         },
       });
-
-      setCandidateName("");
-      setCandidateFile(null);
+      setUploadSummary(response.data);
+      setCandidateFiles([]);
       setShowCreateModal(false);
-
       await loadData();
     } catch (error) {
       console.error("CREATE CANDIDATE ERROR:", error.response?.data || error);
@@ -435,44 +426,14 @@ function Candidates() {
                     fontWeight: "600",
                   }}
                 >
-                  Nombre del candidato
+                  CVs en PDF
                 </label>
-
-                <input
-                  type="text"
-                  value={candidateName}
-                  onChange={(e) => setCandidateName(e.target.value)}
-                  placeholder="Ej. Nicolas Felipe Castro"
-                  style={{
-                    width: "100%",
-                    padding: "12px 14px",
-                    border: "1px solid var(--border)",
-                    borderRadius: "var(--radius-sm)",
-                    fontSize: "14px",
-                    color: "var(--text)",
-                    background: "white",
-                    outline: "none",
-                  }}
-                />
-              </div>
-
-              <div style={{ marginBottom: "24px" }}>
-                <label
-                  style={{
-                    display: "block",
-                    marginBottom: "8px",
-                    fontSize: "14px",
-                    fontWeight: "600",
-                  }}
-                >
-                  CV en PDF
-                </label>
-
                 <input
                   type="file"
-                  accept=".pdf,application/pdf"
+                  accept="application/pdf,.pdf"
+                  multiple
                   onChange={(e) =>
-                    setCandidateFile(e.target.files?.[0] || null)
+                    setCandidateFiles(Array.from(e.target.files || []))
                   }
                   style={{
                     width: "100%",
@@ -485,7 +446,7 @@ function Candidates() {
                   }}
                 />
 
-                {candidateFile && (
+                {candidateFiles.length > 0 && (
                   <p
                     className="muted"
                     style={{
@@ -493,7 +454,13 @@ function Candidates() {
                       fontSize: "13px",
                     }}
                   >
-                    📄 {candidateFile.name}
+                    {candidateFiles.length} archivo(s) seleccionado(s):{" "}
+                    {candidateFiles.map((file) => file.name).join(", ")}
+                  </p>
+                )}
+                {uploadProgress && (
+                  <p className="muted" style={{ marginTop: "8px", fontSize: "13px" }}>
+                    Procesando {uploadProgress.bytes ? "archivos..." : `${uploadProgress.current} de ${uploadProgress.total}`}
                   </p>
                 )}
               </div>
@@ -519,11 +486,28 @@ function Candidates() {
                   className="btn btn-primary"
                   disabled={creatingCandidate}
                 >
-                  {creatingCandidate ? "Subiendo CV..." : "Agregar candidato"}
+                  {creatingCandidate ? "Procesando CVs..." : "Subir candidatos"}
                 </button>
               </div>
             </form>
           </div>
+        </div>
+      )}
+
+      {uploadSummary && (
+        <div className="card" style={{ marginTop: "20px" }}>
+          <h3>{uploadSummary.total} archivos seleccionados</h3>
+          <p>{uploadSummary.created} candidatos creados · {uploadSummary.failed} errores</p>
+          {uploadSummary.candidates?.map((candidate) => (
+            <p key={candidate.candidate_id}>
+              ✅ {candidate.name} · {candidate.original_filename} · {candidate.ingestion_status || "STARTING"}
+            </p>
+          ))}
+          {uploadSummary.errors?.map((error) => (
+            <p key={error.original_filename} style={{ color: "#b91c1c" }}>
+              ❌ {error.original_filename} — {error.error}
+            </p>
+          ))}
         </div>
       )}
 

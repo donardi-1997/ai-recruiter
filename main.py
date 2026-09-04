@@ -1,6 +1,8 @@
 import json
 import os
+import re
 import uuid
+from io import BytesIO
 from typing import Any
 
 import boto3
@@ -33,6 +35,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from jose import jwt
 
 from pydantic import BaseModel, Field
+from PyPDF2 import PdfReader
 
 from langchain_aws import ChatBedrock
 from langchain_core.prompts import ChatPromptTemplate
@@ -64,6 +67,7 @@ S3_BUCKET = "ai-cv-rag-adrian-2026"
 S3_PREFIX = "documents"
 
 NUMBER_OF_RESULTS = 50
+MAX_CV_SIZE_BYTES = 15 * 1024 * 1024
 
 
 # ============================================================
@@ -1711,6 +1715,131 @@ def list_jobs(
 # ============================================================
 # CREATE CANDIDATE / UPLOAD CV
 # ============================================================
+def _clean_extracted_text(value: str | None) -> str | None:
+    if not value:
+        return None
+    value = re.sub(r"\s+", " ", value).strip(" \t\r\n-|•")
+    return value or None
+
+
+def extract_candidate_profile_from_pdf(pdf_bytes: bytes) -> dict:
+    reader = PdfReader(BytesIO(pdf_bytes))
+    text = "\n".join(page.extract_text() or "" for page in reader.pages)
+    lines = [_clean_extracted_text(line) for line in text.splitlines()]
+    lines = [line for line in lines if line]
+    email = re.search(r"\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b", text, re.I)
+    phone = re.search(r"(?<!\w)(?:\+?\d[\d\s().-]{7,}\d)(?!\w)", text)
+    name = None
+    for line in lines[:12]:
+        words = line.split()
+        if 2 <= len(words) <= 5 and (not email or email.group(0).lower() not in line.lower()):
+            if all(re.match(r"^[^\W\d_][\w'’-]*$", word, re.UNICODE) for word in words):
+                name = line
+                break
+    location = None
+    title = None
+    for line in lines[:40]:
+        lower = line.lower()
+        if ":" in line and any(x in lower for x in ("ubicación", "location", "ciudad", "dirección")):
+            location = _clean_extracted_text(line.split(":", 1)[1])
+        if ":" in line and any(x in lower for x in ("perfil", "professional title", "cargo", "title")):
+            title = _clean_extracted_text(line.split(":", 1)[1])
+    if not title:
+        title = next((line for line in lines[:20] if any(
+            x in line.lower() for x in ("developer", "engineer", "manager", "designer", "analyst",
+                                        "desarrollador", "ingeniero", "gerente")
+        )), None)
+    return {
+        "name": _clean_extracted_text(name),
+        "email": _clean_extracted_text(email.group(0) if email else None),
+        "phone": _clean_extracted_text(phone.group(0) if phone else None),
+        "location": location,
+        "professional_title": _clean_extracted_text(title),
+    }
+
+
+def _fallback_candidate_name(filename: str) -> str:
+    stem = os.path.splitext(os.path.basename(filename))[0]
+    return _clean_extracted_text(re.sub(r"[_-]+", " ", stem)) or "Candidato"
+
+
+def _service_error_message(error: Exception) -> str:
+    response = getattr(error, "response", {})
+    aws_error = response.get("Error", {}) if isinstance(response, dict) else {}
+    return aws_error.get("Message", "No fue posible completar el registro del candidato.")
+
+
+async def _prepare_bulk_candidate(file: UploadFile, current_user: dict) -> dict:
+    original_filename = os.path.basename(file.filename or "")
+    if not original_filename.lower().endswith(".pdf"):
+        raise ValueError("El CV debe estar en formato PDF.")
+    content = await file.read()
+    if not content:
+        raise ValueError("El archivo está vacío.")
+    if len(content) > MAX_CV_SIZE_BYTES:
+        raise ValueError("El archivo supera el límite de 15 MB.")
+    if not content.startswith(b"%PDF"):
+        raise ValueError("El archivo no tiene una firma PDF válida.")
+    try:
+        profile = extract_candidate_profile_from_pdf(content)
+    except Exception as error:
+        raise ValueError("No fue posible procesar el PDF.") from error
+    candidate_id = str(uuid.uuid4())
+    name = profile["name"] or _fallback_candidate_name(original_filename)
+    filename = f"cv-{candidate_id}.pdf"
+    metadata_filename = f"{filename}.metadata.json"
+    s3_key = f"{S3_PREFIX}/{filename}"
+    metadata_key = f"{S3_PREFIX}/{metadata_filename}"
+    metadata = {"metadataAttributes": {
+        "candidate_id": {"value": {"type": "STRING", "stringValue": candidate_id}},
+        "candidate_name": {"value": {"type": "STRING", "stringValue": name}},
+        "user_sub": {"value": {"type": "STRING", "stringValue": current_user["sub"]}},
+    }}
+    try:
+        s3.put_object(Bucket=S3_BUCKET, Key=s3_key, Body=content, ContentType="application/pdf")
+        s3.put_object(
+            Bucket=S3_BUCKET, Key=metadata_key,
+            Body=json.dumps(metadata, ensure_ascii=False).encode("utf-8"),
+            ContentType="application/json",
+        )
+        ingestion = bedrock_agent.start_ingestion_job(
+            knowledgeBaseId=KNOWLEDGE_BASE_ID, dataSourceId=DATA_SOURCE_ID
+        ).get("ingestionJob", {})
+        record = {
+            "candidate_id": candidate_id, "owner_id": current_user["sub"], "user_sub": current_user["sub"],
+            "name": name, **profile, "filename": filename, "original_filename": original_filename,
+            "s3_location": f"s3://{S3_BUCKET}/{s3_key}",
+            "metadata_location": f"s3://{S3_BUCKET}/{metadata_key}",
+            "ingestion_job_id": ingestion.get("ingestionJobId"),
+            "ingestion_status": ingestion.get("status"), "indexed": False,
+        }
+        save_candidate_record(record)
+        return record
+    except Exception as error:
+        try:
+            s3.delete_object(Bucket=S3_BUCKET, Key=s3_key)
+            s3.delete_object(Bucket=S3_BUCKET, Key=metadata_key)
+        except Exception:
+            pass
+        raise RuntimeError(_service_error_message(error)) from error
+
+
+@app.post("/api/candidates/bulk")
+async def create_candidates_bulk(
+    files: list[UploadFile] = File(...),
+    current_user: dict = Depends(get_current_user),
+):
+    candidates, errors = [], []
+    for file in files:
+        try:
+            candidates.append(await _prepare_bulk_candidate(file, current_user))
+        except (ValueError, RuntimeError) as error:
+            errors.append({"original_filename": os.path.basename(file.filename or ""), "error": str(error)})
+        except Exception:
+            errors.append({"original_filename": os.path.basename(file.filename or ""), "error": "Error inesperado al procesar el archivo."})
+    return {"total": len(files), "created": len(candidates), "failed": len(errors), "candidates": candidates, "errors": errors}
+
+
 @app.post("/api/candidates"
 )
 async def create_candidate(
@@ -1872,6 +2001,7 @@ async def create_candidate(
     candidate_record = {
         "candidate_id": candidate_id,
         "owner_id": current_user["sub"],
+        "user_sub": current_user["sub"],
         "name": name.strip(),
         "filename": filename,
         "s3_location": (
