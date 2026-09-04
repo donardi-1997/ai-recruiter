@@ -2,6 +2,10 @@ import requests
 import streamlit as st
 import streamlit.components.v1 as components
 import base64
+import os
+import boto3
+import uuid
+import json
 import datetime
 
 # ============================================================
@@ -138,30 +142,140 @@ with main:
                     st.code(str(e))
 
 with right:
-    st.header('📄 Candidate CV')
-    st.info('Sube el CV para usarlo en las búsquedas. (S3 backend opcional)')
+    st.header('📄 Candidate CV & Admin')
 
-    uploaded = st.file_uploader('Subir CV (pdf, txt, docx)', type=['pdf','txt','docx'])
-    if uploaded is not None:
-        st.session_state.uploaded_file = uploaded
-        st.success(f'Archivo cargado: {uploaded.name} ({uploaded.size} bytes)')
-        # Preview first bytes
-        try:
-            raw = uploaded.getvalue()
-            preview = raw[:4000]
+    # Admin toggle / login
+    admin_mode = st.checkbox('Modo Admin')
+
+    AWS_REGION = os.environ.get('AWS_REGION', 'us-east-2')
+    S3_BUCKET = os.environ.get('S3_BUCKET')
+    DDB_TABLE = os.environ.get('DDB_TABLE', 'ai_recruiter_cvs')
+    ADMIN_PASSWORD = os.environ.get('ADMIN_PASSWORD', 'changeme')
+
+    if admin_mode:
+        pwd = st.text_input('Admin password', type='password')
+        if pwd != ADMIN_PASSWORD:
+            st.warning('Contraseña admin requerida para acceder.')
+        else:
+            st.success('Acceso admin concedido')
+
+            st.subheader('📤 Subir CV a S3')
+            uploaded = st.file_uploader('Subir CV (pdf, txt, docx)', type=['pdf','txt','docx'])
+            if uploaded is not None:
+                st.session_state.uploaded_file = uploaded
+                st.write(f'Archivo listo para subir: {uploaded.name} ({uploaded.size} bytes)')
+                if st.button('Subir a S3'):
+                    if not S3_BUCKET:
+                        st.error('S3_BUCKET no configurado en env. Variable S3_BUCKET requerida')
+                    else:
+                        try:
+                            s3 = boto3.client('s3', region_name=AWS_REGION)
+                            key = f'cvs/{uuid.uuid4().hex}_{uploaded.name}'
+                            s3.put_object(Bucket=S3_BUCKET, Key=key, Body=uploaded.getvalue())
+                            s3_uri = f's3://{S3_BUCKET}/{key}'
+                            st.success(f'Subido: {s3_uri}')
+                            # Ensure DynamoDB table exists then store metadata
+                            dynamodb = boto3.resource('dynamodb', region_name=AWS_REGION)
+                            try:
+                                table = dynamodb.Table(DDB_TABLE)
+                                table.load()
+                            except Exception:
+                                st.info('Creando tabla DynamoDB para metadatos...')
+                                dynamodb.create_table(
+                                    TableName=DDB_TABLE,
+                                    KeySchema=[{'AttributeName':'cv_id','KeyType':'HASH'}],
+                                    AttributeDefinitions=[{'AttributeName':'cv_id','AttributeType':'S'}],
+                                    BillingMode='PAY_PER_REQUEST'
+                                )
+                                # wait until exists
+                                table = dynamodb.Table(DDB_TABLE)
+                                table.wait_until_exists()
+                            # Put item
+                            item = {
+                                'cv_id': uuid.uuid4().hex,
+                                'filename': uploaded.name,
+                                's3_key': key,
+                                's3_uri': s3_uri,
+                                'uploaded_at': datetime.datetime.utcnow().isoformat(),
+                                'score': 0
+                            }
+                            table.put_item(Item=item)
+                            st.success('Metadatos guardados en DynamoDB')
+                        except Exception as e:
+                            st.error('Error subiendo a S3 o guardando metadatos')
+                            st.code(str(e))
+
+            st.divider()
+            st.subheader('📚 Lista de CVs / Ranking')
             try:
-                txt = preview.decode('utf-8', errors='ignore')
-                st.text_area('Preview', txt[:2000], height=200)
-            except Exception:
-                st.write('Preview no disponible para este tipo de archivo.')
-        except Exception:
-            st.write('No fue posible leer el archivo.')
+                dynamodb = boto3.resource('dynamodb', region_name=AWS_REGION)
+                table = dynamodb.Table(DDB_TABLE)
+                # scan (small scale admin testing ok)
+                resp = table.scan()
+                items = resp.get('Items', [])
+                if not items:
+                    st.info('No hay CVs registrados aún')
+                else:
+                    # show as table sorted by score
+                    items_sorted = sorted(items, key=lambda x: float(x.get('score', 0)), reverse=True)
+                    for it in items_sorted:
+                        st.markdown(f"**{it.get('filename')}** — Score: {it.get('score')}")
+                        cols = st.columns([0.6,0.2,0.2])
+                        with cols[0]:
+                            st.write(it.get('s3_uri'))
+                        with cols[1]:
+                            new_score = st.number_input(f"Score_{it['cv_id']}", min_value=0.0, max_value=100.0, value=float(it.get('score',0)), step=1.0, key=f"score_{it['cv_id']}")
+                        with cols[2]:
+                            if st.button('Actualizar', key=f'upd_{it["cv_id"]}'):
+                                table.update_item(Key={'cv_id': it['cv_id']}, UpdateExpression='SET score = :s', ExpressionAttributeValues={':s': Decimal(str(new_score)) if 'Decimal' in globals() else new_score})
+                                st.success('Score actualizado')
+                                st.experimental_rerun()
+                        # Auto compute suggestion via backend (optional)
+                        if st.button('Calcular puntuación (API)', key=f'calc_{it["cv_id"]}'):
+                            try:
+                                # Ask backend to evaluate using S3 URI in prompt
+                                prompt = f"Evalúa el CV en {it.get('s3_uri')} y da una puntuación de 0 a 100 basada en habilidades y experiencia. Devuelve solo el número." 
+                                r = requests.post(API_URL, json={'question': prompt}, timeout=60)
+                                if r.status_code == 200:
+                                    out = r.json()
+                                    # try to parse number
+                                    ans = out.get('answer','')
+                                    import re
+                                    m = re.search(r"(\d{1,3}(?:\.\d+)?)", ans)
+                                    if m:
+                                        score_val = float(m.group(1))
+                                        table.update_item(Key={'cv_id': it['cv_id']}, UpdateExpression='SET score = :s', ExpressionAttributeValues={':s': score_val})
+                                        st.success(f'Puntuación calculada: {score_val}')
+                                        st.experimental_rerun()
+                                    else:
+                                        st.warning('No se pudo extraer una puntuación numérica de la respuesta')
+                                else:
+                                    st.error('API error')
+                            except Exception as e:
+                                st.error('Error llamando a la API')
+                                st.code(str(e))
 
-    st.divider()
-    st.subheader('Settings')
-    st.caption('Opciones rápidas')
-    api_region = st.text_input('AWS Region', value='us-east-2')
-    st.button('Guardar ajustes')
+            except Exception as e:
+                st.error('No se pudo conectar a DynamoDB. ¿Permisos/AWS creds?')
+                st.code(str(e))
+
+    else:
+        # Non-admin user flow
+        st.info('Sube el CV para usarlo en las búsquedas. (Admin: activa modo Admin arriba)')
+        uploaded = st.file_uploader('Subir CV (pdf, txt, docx)', type=['pdf','txt','docx'])
+        if uploaded is not None:
+            st.session_state.uploaded_file = uploaded
+            st.success(f'Archivo cargado: {uploaded.name} ({uploaded.size} bytes)')
+            try:
+                raw = uploaded.getvalue()
+                preview = raw[:4000]
+                try:
+                    txt = preview.decode('utf-8', errors='ignore')
+                    st.text_area('Preview', txt[:2000], height=200)
+                except Exception:
+                    st.write('Preview no disponible para este tipo de archivo.')
+            except Exception:
+                st.write('No fue posible leer el archivo.')
 
     st.divider()
     st.subheader('Architecture')
