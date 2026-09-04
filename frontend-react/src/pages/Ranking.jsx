@@ -153,10 +153,11 @@ function Ranking() {
     try {
       setLoading(true);
       const response = await api.post(`/jobs/${selectedJob}/ranking/recalculate`);
+      const totalCandidates = response.data.total_candidates || 0;
       const failed = response.data.failed || 0;
 
       if (failed > 0) {
-        alert(`Ranking recalculado con ${failed} candidato${failed === 1 ? "" : "s"} que no pudo${failed === 1 ? "" : "ieron"} evaluarse.`);
+        alert(`Se procesaron ${totalCandidates} candidatos actuales, incluidos los nuevos. ${failed} no pudo${failed === 1 ? "" : "ieron"} evaluarse.`);
       }
 
       await loadRanking();

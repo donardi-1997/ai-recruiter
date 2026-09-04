@@ -3032,6 +3032,11 @@ def recalculate_job_ranking(
     job_id: str,
     current_user: dict = Depends(get_current_user),
 ):
+    """Reevaluate every current candidate owned by the authenticated user.
+
+    The candidate pool is the source of truth here; existing evaluations are
+    only overwritten as each candidate is processed.
+    """
     job = get_job_record(job_id)
     if not job:
         raise HTTPException(status_code=404, detail="Vacante no encontrada.")
@@ -3067,6 +3072,7 @@ def recalculate_job_ranking(
 
     return {
         "job_id": job_id,
+        "total_candidates": len(candidates),
         "evaluated": evaluated,
         "failed": len(failures),
         "failures": failures,
