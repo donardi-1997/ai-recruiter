@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import api from "../api/client";
 
@@ -18,6 +18,11 @@ function Candidates() {
   const [creatingCandidate, setCreatingCandidate] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(null);
   const [uploadSummary, setUploadSummary] = useState(null);
+  const [fileError, setFileError] = useState("");
+  const [isDraggingFiles, setIsDraggingFiles] = useState(false);
+  const [showAllFiles, setShowAllFiles] = useState(false);
+  const fileInputRef = useRef(null);
+  const folderInputRef = useRef(null);
   const UPLOAD_BATCH_SIZE = 25;
 
   async function loadData() {
@@ -45,7 +50,7 @@ function Candidates() {
   async function createCandidate(e) {
     e.preventDefault();
     if (!candidateFiles.length) {
-      alert("Seleccione al menos un CV en PDF");
+      setFileError("Selecciona al menos un archivo PDF.");
       return;
     }
 
@@ -93,14 +98,48 @@ function Candidates() {
   }
 
   function handleCandidateFilesChange(event) {
-    const selectedFiles = Array.from(event.target.files || []);
-    const pdfFiles = selectedFiles.filter((file) =>
-      file.name.toLowerCase().endsWith(".pdf"),
+    addCandidateFiles(Array.from(event.target.files || []));
+    event.target.value = "";
+  }
+
+  function addCandidateFiles(selectedFiles) {
+    const invalidFile = selectedFiles.find(
+      (file) => !file.name.toLowerCase().endsWith(".pdf"),
     );
-    if (pdfFiles.length !== selectedFiles.length) {
-      alert("Solo se incluirán archivos PDF.");
+    if (invalidFile) {
+      setFileError(`${invalidFile.name} no es un archivo PDF.`);
     }
-    setCandidateFiles(pdfFiles);
+    const validFiles = selectedFiles.filter(
+      (file) =>
+        file.name.toLowerCase().endsWith(".pdf") &&
+        file.size > 0 &&
+        file.size <= 15 * 1024 * 1024,
+    );
+    const existing = new Set(candidateFiles.map((file) => `${file.name}:${file.size}`));
+    const uniqueFiles = validFiles.filter((file) => {
+      const key = `${file.name}:${file.size}`;
+      if (existing.has(key)) return false;
+      existing.add(key);
+      return true;
+    });
+    if (selectedFiles.some((file) => file.size === 0)) {
+      setFileError("Los archivos vacíos no pueden procesarse.");
+    } else if (selectedFiles.some((file) => file.size > 15 * 1024 * 1024)) {
+      setFileError("Cada archivo debe pesar máximo 15 MB.");
+    } else if (!invalidFile) {
+      setFileError("");
+    }
+    setCandidateFiles((current) => [...current, ...uniqueFiles]);
+  }
+
+  function removeCandidateFile(index) {
+    setCandidateFiles((current) => current.filter((_, fileIndex) => fileIndex !== index));
+  }
+
+  function handleDrop(event) {
+    event.preventDefault();
+    setIsDraggingFiles(false);
+    if (!creatingCandidate) addCandidateFiles(Array.from(event.dataTransfer.files || []));
   }
 
   useEffect(() => {
@@ -409,6 +448,9 @@ function Candidates() {
       {showCreateModal && (
         <div
           className="modal-overlay"
+          onKeyDown={(event) => {
+            if (event.key === "Escape" && !creatingCandidate) setShowCreateModal(false);
+          }}
           onClick={() => {
             if (!creatingCandidate) {
               setShowCreateModal(false);
@@ -416,7 +458,7 @@ function Candidates() {
           }}
         >
           <div
-            className="modal"
+            className="modal candidate-upload-modal"
             onClick={(e) => e.stopPropagation()}
             style={{
               maxWidth: "520px",
@@ -424,7 +466,7 @@ function Candidates() {
           >
             <div className="modal-header">
               <div>
-                <h2>Agregar candidato</h2>
+                <h2>Agregar candidatos</h2>
 
                 <p
                   className="muted"
@@ -432,7 +474,7 @@ function Candidates() {
                     marginTop: "6px",
                   }}
                 >
-                  Sube el CV del candidato para analizarlo con IA.
+                  Sube uno o varios CVs. AI Recruiter identificará automáticamente a cada candidato y extraerá su información.
                 </p>
               </div>
 
@@ -441,41 +483,50 @@ function Candidates() {
                 onClick={() => setShowCreateModal(false)}
                 disabled={creatingCandidate}
               >
-                ✕
+                <span aria-hidden="true">✕</span>
               </button>
             </div>
 
             <form onSubmit={createCandidate}>
-              <div style={{ marginBottom: "20px" }}>
-                <label
-                  style={{
-                    display: "block",
-                    marginBottom: "8px",
-                    fontSize: "14px",
-                    fontWeight: "600",
-                  }}
-                >
-                  CVs en PDF
-                </label>
+              <div className={`candidate-dropzone ${isDraggingFiles ? "is-dragging" : ""} ${creatingCandidate ? "is-disabled" : ""}`}
+                role="button"
+                tabIndex={0}
+                aria-label="Agregar archivos PDF"
+                onClick={() => fileInputRef.current?.click()}
+                onKeyDown={(event) => {
+                  if ((event.key === "Enter" || event.key === " ") && !creatingCandidate) {
+                    event.preventDefault();
+                    fileInputRef.current?.click();
+                  }
+                }}
+                onDragOver={(event) => { event.preventDefault(); setIsDraggingFiles(true); }}
+                onDragLeave={() => setIsDraggingFiles(false)}
+                onDrop={handleDrop}
+              >
+                <span className="candidate-dropzone-icon" aria-hidden="true">↑</span>
+                <strong>Arrastra tus CVs aquí</strong>
+                <span>o selecciona archivos desde tu equipo</span>
+                <button type="button" className="btn btn-primary" onClick={(event) => {
+                  event.stopPropagation();
+                  fileInputRef.current?.click();
+                }} disabled={creatingCandidate}>Seleccionar PDFs</button>
+                <small>Solo archivos PDF · Puedes seleccionar varios</small>
                 <input
+                  ref={fileInputRef}
                   type="file"
                   accept="application/pdf,.pdf"
                   multiple
                   onChange={handleCandidateFilesChange}
-                  style={{
-                    width: "100%",
-                    padding: "12px",
-                    border: "1px dashed var(--border)",
-                    borderRadius: "var(--radius-sm)",
-                    background: "#f8fafc",
-                    fontSize: "14px",
-                    cursor: "pointer",
-                  }}
+                  className="visually-hidden-input"
                 />
-                <p className="muted" style={{ marginTop: "8px", fontSize: "13px" }}>
-                  Puedes seleccionar archivos individuales o una carpeta completa.
-                </p>
+              </div>
+              <div className="candidate-folder-action">
+                <span>¿Tienes muchos CVs?</span>
+                <button type="button" className="btn-link" onClick={() => folderInputRef.current?.click()} disabled={creatingCandidate}>
+                  Seleccionar carpeta
+                </button>
                 <input
+                  ref={folderInputRef}
                   type="file"
                   accept="application/pdf,.pdf"
                   multiple
@@ -483,36 +534,33 @@ function Candidates() {
                   directory=""
                   onChange={handleCandidateFilesChange}
                   aria-label="Seleccionar carpeta con CVs"
-                  style={{
-                    width: "100%",
-                    marginTop: "8px",
-                    padding: "10px",
-                    border: "1px dashed var(--border)",
-                    borderRadius: "var(--radius-sm)",
-                    background: "#f8fafc",
-                    fontSize: "13px",
-                    cursor: "pointer",
-                  }}
+                  className="visually-hidden-input"
                 />
-
-                {candidateFiles.length > 0 && (
-                  <p
-                    className="muted"
-                    style={{
-                      marginTop: "8px",
-                      fontSize: "13px",
-                    }}
-                  >
-                    {candidateFiles.length} archivo(s) seleccionado(s):{" "}
-                    {candidateFiles.map((file) => file.name).join(", ")}
-                  </p>
-                )}
-                {uploadProgress && (
-                  <p className="muted" style={{ marginTop: "8px", fontSize: "13px" }}>
-                    Procesando {uploadProgress.bytes ? "archivos..." : `${uploadProgress.current} de ${uploadProgress.total}`}
-                  </p>
-                )}
               </div>
+              {fileError && <p className="candidate-upload-error" role="alert">{fileError}</p>}
+              {candidateFiles.length > 0 && (
+                <div className="candidate-file-list">
+                  <strong>{candidateFiles.length} archivos seleccionados</strong>
+                  {(showAllFiles ? candidateFiles : candidateFiles.slice(0, 5)).map((file, index) => (
+                    <div className="candidate-file-row" key={`${file.name}:${file.size}`}>
+                      <span aria-hidden="true">✓</span>
+                      <span title={file.name}>{file.name}</span>
+                      <small>{Math.round(file.size / 1024)} KB</small>
+                      <button type="button" aria-label={`Quitar ${file.name}`} onClick={() => removeCandidateFile(index)} disabled={creatingCandidate}>×</button>
+                    </div>
+                  ))}
+                  {candidateFiles.length > 5 && <button type="button" className="btn-link" onClick={() => setShowAllFiles((value) => !value)}>
+                    {showAllFiles ? "Contraer lista" : `Ver los ${candidateFiles.length - 5} restantes`}
+                  </button>}
+                </div>
+              )}
+                {uploadProgress && (
+                  <div className="candidate-upload-progress" aria-live="polite">
+                    <strong>Procesando candidatos</strong>
+                    <span>{uploadProgress.current} de {uploadProgress.total}</span>
+                    <progress value={uploadProgress.current} max={uploadProgress.total} />
+                  </div>
+                )}
 
               <div
                 style={{
@@ -533,9 +581,9 @@ function Candidates() {
                 <button
                   type="submit"
                   className="btn btn-primary"
-                  disabled={creatingCandidate}
+                  disabled={creatingCandidate || !candidateFiles.length}
                 >
-                  {creatingCandidate ? "Procesando CVs..." : "Subir candidatos"}
+                  {creatingCandidate ? "Procesando CVs..." : candidateFiles.length === 1 ? "Subir candidato" : `Subir ${candidateFiles.length || ""} candidatos`}
                 </button>
               </div>
             </form>

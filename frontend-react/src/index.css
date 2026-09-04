@@ -244,6 +244,30 @@ select { appearance: none; padding-right: 42px; background-image: linear-gradien
 .modal-overlay { position: fixed !important; inset: 0 !important; z-index: 1000 !important; display: grid !important; place-items: center !important; padding: 20px !important; background: rgba(4,13,27,.68) !important; backdrop-filter: blur(8px); }
 .modal { width: min(720px, 100%) !important; max-height: 88vh !important; overflow: auto !important; padding: clamp(22px, 4vw, 34px) !important; border: 1px solid rgba(255,255,255,.8); border-radius: 20px !important; background: white !important; box-shadow: 0 30px 80px rgba(4,13,27,.3); }
 .modal-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 20px; margin-bottom: 22px; }
+.candidate-upload-modal { width: min(640px, calc(100vw - 32px)) !important; max-height: min(760px, calc(100vh - 32px)) !important; overflow-y: auto !important; }
+.candidate-upload-modal .modal-header h2 { margin-bottom: 8px; }
+.candidate-upload-modal .modal-header p { max-width: 500px; line-height: 1.55; }
+.candidate-dropzone { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; min-height: 220px; padding: 28px 20px; border: 1.5px dashed #b9c7dc; border-radius: 18px; background: #f8faff; color: #536176; text-align: center; cursor: pointer; transition: border-color .2s, background .2s, box-shadow .2s; }
+.candidate-dropzone:hover, .candidate-dropzone:focus-visible, .candidate-dropzone.is-dragging { border-color: var(--accent); background: #eef5ff; box-shadow: 0 0 0 4px rgba(37, 99, 235, .1); outline: none; }
+.candidate-dropzone.is-disabled { opacity: .65; cursor: not-allowed; }
+.candidate-dropzone strong { color: var(--text-h); font-size: 1.1rem; }
+.candidate-dropzone-icon { display: grid; width: 50px; height: 50px; place-items: center; border-radius: 15px; background: #dbeafe; color: #2563eb; font-size: 2rem; font-weight: 700; line-height: 1; }
+.candidate-dropzone small { color: #7c8ba1; }
+.visually-hidden-input { position: absolute !important; width: 1px !important; height: 1px !important; overflow: hidden !important; clip: rect(0 0 0 0) !important; white-space: nowrap !important; clip-path: inset(50%) !important; }
+.candidate-folder-action { display: flex; justify-content: center; gap: 5px; padding: 14px 0 4px; color: #718096; font-size: .85rem; }
+.btn-link { border: 0; padding: 0; background: transparent; color: var(--accent); font: inherit; font-weight: 700; cursor: pointer; }
+.btn-link:disabled { opacity: .5; cursor: not-allowed; }
+.candidate-upload-error { margin: 10px 0; padding: 10px 12px; border-radius: 10px; background: #fff1f2; color: #be123c; font-size: .85rem; }
+.candidate-file-list { display: flex; flex-direction: column; gap: 8px; margin-top: 14px; padding: 14px; border: 1px solid #e5eaf2; border-radius: 14px; background: #fbfcfe; }
+.candidate-file-row { display: grid; grid-template-columns: auto minmax(0, 1fr) auto auto; align-items: center; gap: 9px; min-width: 0; padding: 6px 0; color: #334155; font-size: .85rem; }
+.candidate-file-row > span:nth-child(2) { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.candidate-file-row > span:first-child { color: #16a34a; font-weight: 700; }
+.candidate-file-row small { color: #94a3b8; white-space: nowrap; }
+.candidate-file-row button { width: 28px; height: 28px; border: 0; border-radius: 8px; background: transparent; color: #94a3b8; font-size: 1.2rem; cursor: pointer; }
+.candidate-file-row button:hover { background: #fee2e2; color: #dc2626; }
+.candidate-upload-progress { display: grid; grid-template-columns: 1fr auto; gap: 8px 14px; margin-top: 16px; color: #334155; font-size: .85rem; }
+.candidate-upload-progress progress { grid-column: 1 / -1; width: 100%; height: 8px; accent-color: var(--accent); }
+@media (max-width: 520px) { .candidate-upload-modal { padding: 20px !important; } .candidate-upload-modal .modal-header { gap: 10px; } .candidate-dropzone { min-height: 190px; padding: 22px 14px; } .candidate-upload-modal form > div:last-child { flex-direction: column-reverse; } .candidate-upload-modal form > div:last-child .btn { width: 100%; } }
 .score { color: var(--ink); font-family: "Manrope", sans-serif; font-size: 3rem; font-weight: 800; letter-spacing: -.06em; }
 .score-bar { width: 100%; height: 9px; overflow: hidden; border-radius: 999px; background: #e8edf4; }
 .score-fill { height: 100%; border-radius: inherit; background: linear-gradient(90deg, var(--blue), var(--cyan)); }
