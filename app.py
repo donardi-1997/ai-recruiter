@@ -1,13 +1,14 @@
 import requests
 import streamlit as st
-
+import streamlit.components.v1 as components
+import base64
+import datetime
 
 # ============================================================
 # CONFIGURATION
 # ============================================================
 
 API_URL = "https://vb9uu61dt6.execute-api.us-east-2.amazonaws.com/prod/chat"
-
 
 # ============================================================
 # PAGE CONFIG
@@ -16,31 +17,48 @@ API_URL = "https://vb9uu61dt6.execute-api.us-east-2.amazonaws.com/prod/chat"
 st.set_page_config(
     page_title="AI CV Recruiter",
     page_icon="🤖",
-    layout="centered"
+    layout="wide"
 )
 
+# Custom CSS for nicer UI
+st.markdown(
+    """
+    <style>
+    :root {
+      --accent:#6C63FF;
+      --muted:#6b7280;
+      --card:#ffffff;
+      --bg:#f6f7fb;
+    }
+    .stApp { background: var(--bg); }
+    .header {
+      display:flex; align-items:center; gap:12px;
+    }
+    .title { font-size:28px; font-weight:700; }
+    .subtitle { color:var(--muted); margin-top:-6px; }
+    .chat-box { background:var(--card); padding:16px; border-radius:12px; box-shadow: 0 4px 14px rgba(30,41,59,0.06); }
+    .user-msg { background:#eef2ff; padding:10px 12px; border-radius:10px; }
+    .assistant-msg { background:#f8fafc; padding:12px; border-radius:10px; }
+    .small { color:var(--muted); font-size:12px }
+    .source { background:#fff; padding:8px; border-radius:8px; border:1px solid #eef2ff; }
+    .logo { height:48px; width:48px; border-radius:8px; background:linear-gradient(135deg,var(--accent),#9b8cff); display:flex; align-items:center; justify-content:center; color:white; font-weight:700 }
+    </style>
+    """,
+    unsafe_allow_html=True
+)
 
 # ============================================================
 # HEADER
 # ============================================================
 
-st.title("🤖 AI CV Recruiter")
-
-st.markdown(
-    """
-    Analiza el CV de un candidato utilizando:
-
-    - 🧠 Amazon Bedrock
-    - 🔎 RAG / búsqueda semántica
-    - 📚 Amazon Bedrock Knowledge Bases
-    - 🗄️ Amazon S3
-    - ⚡ AWS Lambda
-    - 🌐 API Gateway
-    """
-)
+col1, col2 = st.columns([0.12, 0.88])
+with col1:
+    st.markdown('<div class="logo">AI</div>', unsafe_allow_html=True)
+with col2:
+    st.markdown('<div class="header"><div class="title">AI CV Recruiter</div></div>', unsafe_allow_html=True)
+    st.markdown('<div class="subtitle">Analiza y resume CVs con Bedrock + RAG — bonito y funcional</div>', unsafe_allow_html=True)
 
 st.divider()
-
 
 # ============================================================
 # SESSION STATE
@@ -49,257 +67,121 @@ st.divider()
 if "messages" not in st.session_state:
     st.session_state.messages = []
 
+if "uploaded_file" not in st.session_state:
+    st.session_state.uploaded_file = None
 
 # ============================================================
-# CHAT HISTORY
+# LAYOUT: Main + Right panel
 # ============================================================
 
-for message in st.session_state.messages:
+main, right = st.columns([2, 1])
 
-    with st.chat_message(message["role"]):
+with main:
+    st.markdown('<div class="chat-box">', unsafe_allow_html=True)
 
-        st.markdown(
-            message["content"]
-        )
+    # Chat history display with nicer bubbles
+    for i, message in enumerate(st.session_state.messages):
+        role = message.get('role')
+        content = message.get('content')
+        timestamp = message.get('time', '')
+        if role == 'user':
+            st.markdown(f"<div class='user-msg'><strong>Tú:</strong> {content}</div>", unsafe_allow_html=True)
+            st.write('')
+        else:
+            st.markdown(f"<div class='assistant-msg'><strong>AI:</strong> {content}</div>", unsafe_allow_html=True)
+            # copy + download buttons
+            cols = st.columns([0.1,0.1,0.8])
+            with cols[0]:
+                # Copy button using component
+                comp_html = f"""
+                <button onclick="navigator.clipboard.writeText(`{content.replace('`','\\`')}`)">📋 Copiar</button>
+                """
+                components.html(comp_html, height=35)
+            with cols[1]:
+                st.download_button('⬇️', content, file_name=f'answer_{i}.txt')
+            with cols[2]:
+                st.write('')
+            st.write('')
 
+    st.markdown('</div>', unsafe_allow_html=True)
 
-# ============================================================
-# CHAT INPUT
-# ============================================================
+    # Input area
+    with st.form('ask_form', clear_on_submit=True):
+        question = st.text_input('Pregunta algo sobre el candidato...', '')
+        submitted = st.form_submit_button('Enviar')
 
-question = st.chat_input(
-    "Pregunta algo sobre el candidato..."
-)
+    if submitted and question:
+        # Save user message
+        st.session_state.messages.append({'role':'user','content':question,'time':str(datetime.datetime.utcnow())})
+        # show immediate user message
+        st.experimental_rerun()
 
+    # If last message is user and not answered, call API
+    if st.session_state.messages and st.session_state.messages[-1]['role'] == 'user':
+        last = st.session_state.messages[-1]
+        # Check if it already has an assistant reply after it
+        if len(st.session_state.messages) < 2 or st.session_state.messages[-2]['role'] != 'assistant' or st.session_state.messages[-2].get('in_reply_to') != last.get('time'):
+            with st.spinner('Analizando el CV...'):
+                try:
+                    response = requests.post(API_URL, json={'question': last['content']}, timeout=60)
+                    if response.status_code != 200:
+                        st.error(f'API Error: {response.status_code}')
+                        st.code(response.text)
+                    else:
+                        data = response.json()
+                        answer = data.get('answer', 'No se recibió respuesta')
+                        sources = data.get('sources', [])
+                        st.session_state.messages.append({'role':'assistant','content':answer,'time':str(datetime.datetime.utcnow()),'sources':sources,'in_reply_to': last.get('time')})
+                        st.experimental_rerun()
+                except Exception as e:
+                    st.error('Error conectando con la API.')
+                    st.code(str(e))
 
-# ============================================================
-# PROCESS QUESTION
-# ============================================================
+with right:
+    st.header('📄 Candidate CV')
+    st.info('Sube el CV para usarlo en las búsquedas. (S3 backend opcional)')
 
-if question:
-
-    # --------------------------------------------------------
-    # User message
-    # --------------------------------------------------------
-
-    st.session_state.messages.append(
-        {
-            "role": "user",
-            "content": question
-        }
-    )
-
-    with st.chat_message("user"):
-        st.markdown(question)
-
-
-    # --------------------------------------------------------
-    # Assistant message
-    # --------------------------------------------------------
-
-    with st.chat_message("assistant"):
-
-        with st.spinner("Analizando el CV..."):
-
+    uploaded = st.file_uploader('Subir CV (pdf, txt, docx)', type=['pdf','txt','docx'])
+    if uploaded is not None:
+        st.session_state.uploaded_file = uploaded
+        st.success(f'Archivo cargado: {uploaded.name} ({uploaded.size} bytes)')
+        # Preview first bytes
+        try:
+            raw = uploaded.getvalue()
+            preview = raw[:4000]
             try:
+                txt = preview.decode('utf-8', errors='ignore')
+                st.text_area('Preview', txt[:2000], height=200)
+            except Exception:
+                st.write('Preview no disponible para este tipo de archivo.')
+        except Exception:
+            st.write('No fue posible leer el archivo.')
 
-                response = requests.post(
-                    API_URL,
-                    json={
-                        "question": question
-                    },
-                    timeout=60
-                )
+    st.divider()
+    st.subheader('Settings')
+    st.caption('Opciones rápidas')
+    api_region = st.text_input('AWS Region', value='us-east-2')
+    st.button('Guardar ajustes')
 
-
-                # ------------------------------------------------
-                # HTTP error
-                # ------------------------------------------------
-
-                if response.status_code != 200:
-
-                    st.error(
-                        f"API Error: {response.status_code}"
-                    )
-
-                    st.code(
-                        response.text
-                    )
-
-                    st.stop()
-
-
-                # ------------------------------------------------
-                # Parse response
-                # ------------------------------------------------
-
-                data = response.json()
-
-
-                answer = data.get(
-                    "answer",
-                    "No se recibió una respuesta."
-                )
-
-
-                # ------------------------------------------------
-                # Display answer
-                # ------------------------------------------------
-
-                st.markdown(answer)
-
-
-                # ------------------------------------------------
-                # Sources
-                # ------------------------------------------------
-
-                sources = data.get(
-                    "sources",
-                    []
-                )
-
-                if sources:
-
-                    with st.expander(
-                        "📚 Fuentes utilizadas"
-                    ):
-
-                        for index, source in enumerate(
-                            sources,
-                            start=1
-                        ):
-
-                            score = source.get(
-                                "score",
-                                0
-                            )
-
-                            location = source.get(
-                                "location",
-                                {}
-                            )
-
-                            s3_location = location.get(
-                                "s3Location",
-                                {}
-                            )
-
-                            uri = s3_location.get(
-                                "uri",
-                                "Unknown"
-                            )
-
-
-                            st.markdown(
-                                f"""
-                                **Fuente {index}**
-
-                                - Documento: `{uri}`
-                                - Relevancia: `{score:.2%}`
-                                """
-                            )
-
-
-                # ------------------------------------------------
-                # Save assistant message
-                # ------------------------------------------------
-
-                st.session_state.messages.append(
-                    {
-                        "role": "assistant",
-                        "content": answer
-                    }
-                )
-
-
-            except requests.exceptions.Timeout:
-
-                st.error(
-                    "La API tardó demasiado en responder."
-                )
-
-
-            except requests.exceptions.RequestException as e:
-
-                st.error(
-                    "No fue posible conectarse con la API."
-                )
-
-                st.code(
-                    str(e)
-                )
-
-
-            except Exception as e:
-
-                st.error(
-                    "Ocurrió un error inesperado."
-                )
-
-                st.code(
-                    str(e)
-                )
-
-
-# ============================================================
-# SIDEBAR
-# ============================================================
-
-with st.sidebar:
-
-    st.header("📄 Candidate CV")
-
-    st.info(
-        "El chatbot responde utilizando "
-        "información recuperada del CV."
-    )
+    st.divider()
+    st.subheader('Architecture')
+    st.markdown('''
+    - Streamlit (Frontend)
+    - API Gateway → Lambda (Backend)
+    - Bedrock KB + S3 (RAG)
+    ''')
 
     st.divider()
 
-    st.subheader("Architecture")
-
-    st.markdown(
-        """
-        **Frontend**
-
-        Streamlit
-
-        ↓
-
-        **API**
-
-        Amazon API Gateway
-
-        ↓
-
-        **Compute**
-
-        AWS Lambda
-
-        ↓
-
-        **RAG**
-
-        Amazon Bedrock Knowledge Base
-
-        ↓
-
-        **Vector DB**
-
-        Amazon S3 Vectors
-
-        ↓
-
-        **LLM**
-
-        Amazon Nova 2 Lite
-        """
-    )
-
-    st.divider()
-
-    if st.button("🗑️ Limpiar conversación"):
-
+    if st.button('🗑️ Limpiar conversación'):
         st.session_state.messages = []
+        st.experimental_rerun()
 
-        st.rerun()
+# Footnote / help
+st.markdown('''
+---
+Consejos:
+- Usa el uploader para adjuntar CVs.
+- Copia o descarga respuestas con los botones.
+- Para integrar upload a S3 o a la KB, añade un endpoint backend /upload.
+''')
