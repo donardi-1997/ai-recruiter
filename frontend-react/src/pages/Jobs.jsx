@@ -105,6 +105,7 @@ function Jobs() {
               <article className="job-card" key={job.job_id}>
                 <div className="job-card-top"><span className="job-card-icon" aria-hidden="true">▤</span><span className="status-pill"><i /> Activa</span></div>
                 <h3>{job.title}</h3><p>{job.description}</p>
+                <p className="muted">{job.candidate_count || 0} candidato{job.candidate_count === 1 ? "" : "s"} asignado{job.candidate_count === 1 ? "" : "s"}</p>
                 <div className="job-card-actions"><button className="btn btn-secondary" onClick={() => editJob(job)}>Editar</button><button className="btn btn-danger btn-icon" aria-label={`Eliminar ${job.title}`} onClick={() => deleteJob(job.job_id)}>⌫</button></div>
               </article>
             ))}

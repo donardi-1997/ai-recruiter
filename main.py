@@ -311,6 +311,10 @@ NUMBER_OF_RESULTS = 50
 CANDIDATES_TABLE = "ai-recruiter-candidates"
 JOBS_TABLE = "ai-recruiter-jobs"
 EVALUATIONS_TABLE = "ai-recruiter-evaluations"
+JOB_CANDIDATES_TABLE = os.getenv(
+    "JOB_CANDIDATES_TABLE",
+    "ai-recruiter-job-candidates"
+)
 
 # ============================================================
 # FASTAPI
@@ -465,6 +469,9 @@ jobs_table = dynamodb.Table(
 evaluations_table = dynamodb.Table(
     EVALUATIONS_TABLE
 )
+job_candidates_table = dynamodb.Table(
+    JOB_CANDIDATES_TABLE
+)
 
 # ============================================================
 # LLM
@@ -520,6 +527,9 @@ class CreateJobRequest(BaseModel):
 
 class EvaluateJobRequest(BaseModel):
     job_id: str
+
+class AssignCandidatesRequest(BaseModel):
+    candidate_ids: list[str] = Field(default_factory=list)
 
 class JobResponse(BaseModel):
     job_id: str
@@ -797,6 +807,32 @@ def save_evaluation_record(
     evaluations_table.put_item(
         Item=evaluation
     )
+
+def assign_candidate_to_job(
+    job_id: str,
+    candidate_id: str,
+    owner_id: str,
+):
+    job_candidates_table.put_item(
+        Item={
+            "job_id": job_id,
+            "candidate_id": candidate_id,
+            "owner_id": owner_id,
+            "status": "PENDING_EVALUATION",
+            "assigned_at": datetime.now(timezone.utc).isoformat(),
+        }
+    )
+
+def get_job_candidate_ids(job_id: str, owner_id: str) -> set[str]:
+    response = job_candidates_table.query(
+        KeyConditionExpression=Key("job_id").eq(job_id),
+        FilterExpression=Attr("owner_id").eq(owner_id),
+    )
+    return {
+        item["candidate_id"]
+        for item in response.get("Items", [])
+        if item.get("candidate_id")
+    }
 
 def parse_json_field(value):
 
@@ -1733,6 +1769,9 @@ def list_jobs(
             for job in jobs
             if job.get("owner_id") == owner_id
         ]
+        for job in user_jobs:
+            assigned_ids = get_job_candidate_ids(job["job_id"], owner_id)
+            job["candidate_count"] = len(assigned_ids)
 
         return {
             "jobs": user_jobs
@@ -2373,6 +2412,54 @@ def get_job(
     )
 
     return job
+
+@app.post("/api/jobs/{job_id}/candidates")
+def assign_candidates_to_job(
+    job_id: str,
+    request: AssignCandidatesRequest,
+    current_user: dict = Depends(get_current_user),
+):
+    job = get_job_record(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Vacante no encontrada.")
+    validate_job_owner(job, current_user)
+
+    assigned = 0
+    for candidate_id in dict.fromkeys(request.candidate_ids):
+        candidate = get_candidate_record(candidate_id)
+        if not candidate:
+            continue
+        if candidate.get("owner_id") != current_user["sub"]:
+            raise HTTPException(
+                status_code=403,
+                detail="No tienes permiso sobre uno de los candidatos.",
+            )
+        assign_candidate_to_job(job_id, candidate_id, current_user["sub"])
+        assigned += 1
+
+    return {
+        "job_id": job_id,
+        "assigned": assigned,
+        "candidate_ids": list(dict.fromkeys(request.candidate_ids)),
+    }
+
+@app.delete("/api/jobs/{job_id}/candidates/{candidate_id}")
+def unassign_candidate_from_job(
+    job_id: str,
+    candidate_id: str,
+    current_user: dict = Depends(get_current_user),
+):
+    job = get_job_record(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Vacante no encontrada.")
+    validate_job_owner(job, current_user)
+    candidate = get_candidate_record(candidate_id)
+    if not candidate or candidate.get("owner_id") != current_user["sub"]:
+        raise HTTPException(status_code=404, detail="Candidato no encontrado.")
+    job_candidates_table.delete_item(
+        Key={"job_id": job_id, "candidate_id": candidate_id}
+    )
+    return {"job_id": job_id, "candidate_id": candidate_id, "unassigned": True}
 
 # ============================================================
 # LIST CANDIDATES
@@ -3042,13 +3129,15 @@ def recalculate_job_ranking(
         raise HTTPException(status_code=404, detail="Vacante no encontrada.")
     validate_job_owner(job, current_user)
 
+    assigned_ids = get_job_candidate_ids(job_id, current_user["sub"])
     candidates = []
-    scan_kwargs = {
-        "FilterExpression": Attr("owner_id").eq(current_user["sub"])
-    }
+    scan_kwargs = {"FilterExpression": Attr("owner_id").eq(current_user["sub"])}
     while True:
         response = candidates_table.scan(**scan_kwargs)
-        candidates.extend(response.get("Items", []))
+        candidates.extend(
+            candidate for candidate in response.get("Items", [])
+            if candidate.get("candidate_id") in assigned_ids
+        )
         last_key = response.get("LastEvaluatedKey")
         if not last_key:
             break
@@ -3374,6 +3463,17 @@ def get_job_ranking(
 
         owner_id = current_user["sub"]
 
+        assigned_ids = get_job_candidate_ids(job_id, owner_id)
+        if not assigned_ids:
+            legacy_evaluations = evaluations_table.query(
+                KeyConditionExpression=Key("job_id").eq(job_id)
+            ).get("Items", [])
+            for evaluation in legacy_evaluations:
+                candidate_id = evaluation.get("candidate_id")
+                if evaluation.get("owner_id") == owner_id and candidate_id:
+                    assign_candidate_to_job(job_id, candidate_id, owner_id)
+                    assigned_ids.add(candidate_id)
+
         # ====================================================
         # OBTENER TODOS LOS CANDIDATOS DEL USUARIO
         #
@@ -3402,10 +3502,8 @@ def get_job_ranking(
         )
 
         all_candidates.extend(
-            candidates_response.get(
-                "Items",
-                []
-            )
+            candidate for candidate in candidates_response.get("Items", [])
+            if candidate.get("candidate_id") in assigned_ids
         )
 
         # ====================================================
@@ -3432,10 +3530,8 @@ def get_job_ranking(
             )
 
             all_candidates.extend(
-                candidates_response.get(
-                    "Items",
-                    []
-                )
+                candidate for candidate in candidates_response.get("Items", [])
+                if candidate.get("candidate_id") in assigned_ids
             )
 
         print(

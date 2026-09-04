@@ -8,6 +8,7 @@ function Candidates() {
   const [jobs, setJobs] = useState([]);
 
   const [selectedJob, setSelectedJob] = useState({});
+  const [uploadJob, setUploadJob] = useState("");
 
   const [loading, setLoading] = useState(false);
 
@@ -84,9 +85,15 @@ function Candidates() {
           total: candidateFiles.length,
         });
       }
+      if (uploadJob && summary.candidates.length > 0) {
+        await api.post(`/jobs/${uploadJob}/candidates`, {
+          candidate_ids: summary.candidates.map((candidate) => candidate.candidate_id),
+        });
+      }
       setUploadSummary(summary);
       setCandidateFiles([]);
       setShowCreateModal(false);
+      setUploadJob("");
       await loadData();
     } catch (error) {
       console.error("CREATE CANDIDATE ERROR:", error.response?.data || error);
@@ -183,6 +190,24 @@ function Candidates() {
       console.error("EVALUATION ERROR:", error.response?.data || error);
 
       alert("Error evaluando candidato");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function assignCandidate(candidateId) {
+    const jobId = selectedJob[candidateId];
+    if (!jobId) {
+      alert("Seleccione una vacante");
+      return;
+    }
+    try {
+      setLoading(true);
+      await api.post(`/jobs/${jobId}/candidates`, { candidate_ids: [candidateId] });
+      alert("Candidato asignado a la vacante.");
+      await loadData();
+    } catch (error) {
+      alert(error.response?.data?.detail || "No fue posible asignar el candidato.");
     } finally {
       setLoading(false);
     }
@@ -471,10 +496,17 @@ function Candidates() {
 
               <button
                 className="btn btn-primary"
+                onClick={() => assignCandidate(candidate.candidate_id)}
+                disabled={loading}
+              >
+                {loading ? "Asignando..." : "Asignar a vacante"}
+              </button>
+              <button
+                className="btn btn-secondary"
                 onClick={() => evaluate(candidate.candidate_id)}
                 disabled={loading}
               >
-                {loading ? "Evaluando..." : "Evaluar candidato"}
+                Evaluar candidato
               </button>
             </div>
           </div>
@@ -528,6 +560,14 @@ function Candidates() {
             </div>
 
             <form onSubmit={createCandidate}>
+              <div className="form-group" style={{ marginBottom: "16px" }}>
+                <label htmlFor="upload-job">Asignar estos candidatos a una vacante (opcional)</label>
+                <select id="upload-job" className="select" value={uploadJob} onChange={(event) => setUploadJob(event.target.value)} disabled={creatingCandidate}>
+                  <option value="">Solo pool global</option>
+                  {jobs.map((job) => <option key={job.job_id} value={job.job_id}>{job.title}</option>)}
+                </select>
+                <small className="muted">Solo los candidatos asignados aparecen en el ranking de esa vacante.</small>
+              </div>
               <div className={`candidate-dropzone ${isDraggingFiles ? "is-dragging" : ""} ${creatingCandidate ? "is-disabled" : ""}`}
                 role="button"
                 tabIndex={0}
