@@ -2,6 +2,7 @@ import json
 import os
 import re
 import uuid
+from datetime import datetime, timezone
 from io import BytesIO
 from typing import Any
 
@@ -574,6 +575,7 @@ class JobRankingResponse(BaseModel):
     page_size: int
     total: int
     total_pages: int
+    pending_candidates: int = 0
     candidates: list[
         CandidateRankingItem
     ]
@@ -2933,6 +2935,7 @@ def evaluate_candidate_job(
             "owner_id": job["owner_id"],
 
             "status": "COMPLETED",
+            "evaluated_at": datetime.now(timezone.utc).isoformat(),
 
             "match_score": int(
                 evaluation.get(
@@ -3827,6 +3830,11 @@ def get_job_ranking(
 
             total_pages=total_pages,
 
+            pending_candidates=max(
+                0,
+                len(all_candidates) - len(evaluations_by_candidate)
+            ),
+
             candidates=ranked_candidates
         )
 
@@ -3886,6 +3894,12 @@ def get_candidate_job_evaluation(
             raise HTTPException(
                 status_code=404,
                 detail="Candidato no encontrado."
+            )
+
+        if candidate.get("owner_id") != current_user["sub"]:
+            raise HTTPException(
+                status_code=403,
+                detail="No tienes permiso sobre este candidato."
             )
 
         # ====================================================
@@ -4231,20 +4245,27 @@ def get_job_summary(
                 )
             )
 
-        # ====================================================
-        # TOTAL CANDIDATOS
-        # ====================================================
-
-        # Las evaluaciones están asociadas directamente
-        # a la vacante mediante job_id.
-        #
-        # Por eso el total de candidatos de esta vacante
-        # debe calcularse desde evaluations_table y no
-        # desde candidates_table.
-
-        total_candidates = len(
-            evaluations
+        # Candidates are a user-owned pool; an evaluation associates one
+        # candidate with this job. Pending candidates must not be scored as 0.
+        owner_candidates = []
+        candidates_response = candidates_table.scan(
+            FilterExpression=Attr("owner_id").eq(current_user["sub"])
         )
+        owner_candidates.extend(candidates_response.get("Items", []))
+        while candidates_response.get("LastEvaluatedKey"):
+            candidates_response = candidates_table.scan(
+                FilterExpression=Attr("owner_id").eq(current_user["sub"]),
+                ExclusiveStartKey=candidates_response["LastEvaluatedKey"],
+            )
+            owner_candidates.extend(candidates_response.get("Items", []))
+
+        evaluated_ids = {
+            item.get("candidate_id")
+            for item in evaluations
+            if item.get("status", "COMPLETED") == "COMPLETED"
+        }
+        total_candidates = len(owner_candidates)
+        pending_candidates = max(0, total_candidates - len(evaluated_ids))
 
         # ====================================================
         # RESPONSE
@@ -4261,9 +4282,7 @@ def get_job_summary(
                 evaluated_candidates
             ),
 
-            pending_candidates=(
-                pending_candidates
-            ),
+            pending_candidates=pending_candidates,
 
             failed_candidates=(
                 failed_candidates
@@ -4621,6 +4640,12 @@ def get_candidate_explanation(
             raise HTTPException(
                 status_code=404,
                 detail="Candidato no encontrado."
+            )
+
+        if candidate.get("owner_id") != current_user["sub"]:
+            raise HTTPException(
+                status_code=403,
+                detail="No tienes permiso sobre este candidato."
             )
 
         # ====================================================
@@ -5255,6 +5280,12 @@ def get_candidate_requirements(
             raise HTTPException(
                 status_code=404,
                 detail="Candidato no encontrado."
+            )
+
+        if candidate.get("owner_id") != current_user["sub"]:
+            raise HTTPException(
+                status_code=403,
+                detail="No tienes permiso sobre este candidato."
             )
 
         # ====================================================

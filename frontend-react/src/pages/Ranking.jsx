@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { Link } from "react-router-dom";
 
 import api from "../api/client";
 
@@ -29,6 +30,7 @@ function Ranking() {
 
   const [rankingInfo, setRankingInfo] = useState({
     total: 0,
+    pending: 0,
     minimum: 0,
     maximum: 0,
   });
@@ -54,6 +56,14 @@ function Ranking() {
     // eslint-disable-next-line react-hooks/set-state-in-effect
     loadJobs();
   }, []);
+
+  useEffect(() => {
+    if (!selectedJob && jobs.length > 0) {
+      // Select the first owned vacancy so the ranking is visible on entry.
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setSelectedJob(jobs[0].job_id);
+    }
+  }, [jobs, selectedJob]);
 
   // ============================================================
   // LOAD RANKING
@@ -102,7 +112,7 @@ function Ranking() {
 
       const data = response.data;
 
-      const candidates = data.candidates || [];
+      const candidates = data.candidates || data.ranking || data.items || [];
 
       setRanking(candidates);
 
@@ -112,6 +122,7 @@ function Ranking() {
 
       setRankingInfo({
         total: data.total ?? candidates.length,
+        pending: data.pending_candidates ?? 0,
 
         minimum: allScores.length > 0 ? Math.min(...allScores) : 0,
 
@@ -125,6 +136,15 @@ function Ranking() {
       setLoading(false);
     }
   }
+
+  useEffect(() => {
+    if (selectedJob) {
+      // Load the selected vacancy ranking when the page initializes.
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      loadRanking();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedJob]);
 
   // ============================================================
   // OPEN ANALYSIS
@@ -430,6 +450,12 @@ function Ranking() {
         </div>
       </div>
 
+      {selectedJob && rankingInfo.pending > 0 && (
+        <p className="muted" style={{ marginTop: "16px" }}>
+          {rankingInfo.pending} candidato{rankingInfo.pending === 1 ? "" : "s"} pendiente{rankingInfo.pending === 1 ? "" : "s"} de evaluación.
+        </p>
+      )}
+
       {/* ========================================================
           SUMMARY
       ======================================================== */}
@@ -478,7 +504,9 @@ function Ranking() {
               borderRadius: "12px",
             }}
           >
-            <p>No hay candidatos que cumplan con los filtros seleccionados.</p>
+            <p>{rankingInfo.pending > 0
+              ? "No hay candidatos evaluados para esta vacante."
+              : "No hay candidatos que cumplan con los filtros seleccionados."}</p>
           </div>
         )}
 
@@ -761,6 +789,13 @@ function Ranking() {
             >
               Cerrar
             </button>
+            <Link
+              className="btn btn-primary"
+              to={`/candidates/${selectedCandidate.candidate_id}?job_id=${selectedJob}`}
+              style={{ marginTop: "20px", marginLeft: "10px" }}
+            >
+              Abrir ficha de esta vacante
+            </Link>
           </div>
         </div>
       )}

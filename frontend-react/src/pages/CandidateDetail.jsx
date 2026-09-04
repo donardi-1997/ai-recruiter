@@ -1,9 +1,11 @@
 import { useEffect, useState } from "react";
-import { Link, useParams } from "react-router-dom";
+import { Link, useParams, useSearchParams } from "react-router-dom";
 import api from "../api/client";
 
 function CandidateDetail() {
   const { candidate_id } = useParams();
+  const [searchParams] = useSearchParams();
+  const jobId = searchParams.get("job_id");
   const [candidate, setCandidate] = useState(null);
   const [evaluations, setEvaluations] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -13,10 +15,14 @@ function CandidateDetail() {
       try {
         const [candidateResponse, evaluationResponse] = await Promise.all([
           api.get(`/candidates/${candidate_id}`),
-          api.get(`/candidates/${candidate_id}/evaluations`),
+          api.get(jobId
+            ? `/jobs/${jobId}/candidates/${candidate_id}`
+            : `/candidates/${candidate_id}/evaluations`),
         ]);
         setCandidate(candidateResponse.data);
-        setEvaluations(evaluationResponse.data.evaluations || []);
+        setEvaluations(jobId
+          ? [evaluationResponse.data]
+          : evaluationResponse.data.evaluations || []);
       } catch (error) {
         console.error("No fue posible cargar el candidato", error);
       } finally {
@@ -24,7 +30,7 @@ function CandidateDetail() {
       }
     }
     load();
-  }, [candidate_id]);
+  }, [candidate_id, jobId]);
 
   if (loading) return <div className="page"><div className="page-loading"><span /> Cargando perfil…</div></div>;
   const evaluation = evaluations[0];
@@ -34,7 +40,7 @@ function CandidateDetail() {
       <Link to="/candidates" className="back-link">← Volver a candidatos</Link>
       <header className="candidate-profile-header">
         <div className="candidate-avatar">{candidate?.name?.slice(0, 2).toUpperCase() || "CV"}</div>
-        <div><span className="eyebrow">Perfil de candidato</span><h1>{candidate?.name || "Candidato"}</h1><p>{candidate?.filename || "Currículum registrado"}</p></div>
+        <div><span className="eyebrow">Perfil de candidato</span><h1>{candidate?.name || "Candidato"}</h1><p>{candidate?.filename || "Currículum registrado"}</p>{jobId && <p>Evaluado para la vacante seleccionada</p>}</div>
         <span className="status-pill"><i /> Disponible</span>
       </header>
 
