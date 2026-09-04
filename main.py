@@ -3025,6 +3025,54 @@ def evaluate_candidate_job(
         )
 
 # ============================================================
+# RECALCULATE JOB RANKING
+# ============================================================
+@app.post("/api/jobs/{job_id}/ranking/recalculate")
+def recalculate_job_ranking(
+    job_id: str,
+    current_user: dict = Depends(get_current_user),
+):
+    job = get_job_record(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Vacante no encontrada.")
+    validate_job_owner(job, current_user)
+
+    candidates = []
+    scan_kwargs = {
+        "FilterExpression": Attr("owner_id").eq(current_user["sub"])
+    }
+    while True:
+        response = candidates_table.scan(**scan_kwargs)
+        candidates.extend(response.get("Items", []))
+        last_key = response.get("LastEvaluatedKey")
+        if not last_key:
+            break
+        scan_kwargs["ExclusiveStartKey"] = last_key
+
+    evaluated = 0
+    failures = []
+    for candidate in candidates:
+        try:
+            evaluate_candidate_job(
+                candidate["candidate_id"],
+                EvaluateJobRequest(job_id=job_id),
+                current_user,
+            )
+            evaluated += 1
+        except HTTPException as error:
+            failures.append({
+                "candidate_id": candidate.get("candidate_id"),
+                "error": error.detail,
+            })
+
+    return {
+        "job_id": job_id,
+        "evaluated": evaluated,
+        "failed": len(failures),
+        "failures": failures,
+    }
+
+# ============================================================
 # GET EVALUATIONS BY JOB
 # ============================================================
 @app.get("/api/jobs/{job_id}/evaluations"

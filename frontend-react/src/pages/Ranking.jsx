@@ -35,6 +35,8 @@ function Ranking() {
     maximum: 0,
   });
 
+  const hasRanking = rankingInfo.total > 0;
+
   // ============================================================
   // LOAD JOBS
   // ============================================================
@@ -132,6 +134,34 @@ function Ranking() {
       console.error("ERROR LOADING RANKING:", error.response?.data || error);
 
       alert(error.response?.data?.detail || "No fue posible cargar el ranking");
+    } finally {
+      setLoading(false);
+    }
+
+  }
+
+  async function recalculateRanking() {
+    if (!selectedJob) {
+      alert("Seleccione una vacante");
+      return;
+    }
+
+    if (!window.confirm("¿Recalcular el ranking de todos los candidatos para esta vacante?")) {
+      return;
+    }
+
+    try {
+      setLoading(true);
+      const response = await api.post(`/jobs/${selectedJob}/ranking/recalculate`);
+      const failed = response.data.failed || 0;
+
+      if (failed > 0) {
+        alert(`Ranking recalculado con ${failed} candidato${failed === 1 ? "" : "s"} que no pudo${failed === 1 ? "" : "ieron"} evaluarse.`);
+      }
+
+      await loadRanking();
+    } catch (error) {
+      alert(error.response?.data?.detail || "No fue posible recalcular el ranking");
     } finally {
       setLoading(false);
     }
@@ -438,14 +468,14 @@ function Ranking() {
 
           <button
             className="btn btn-primary"
-            onClick={loadRanking}
+            onClick={hasRanking ? recalculateRanking : loadRanking}
             disabled={loading}
             style={{
               padding: "10px 18px",
               cursor: loading ? "not-allowed" : "pointer",
             }}
           >
-            {loading ? "Analizando..." : "Ver ranking"}
+            {loading ? "Analizando..." : hasRanking ? "Recalcular ranking" : "Ver ranking"}
           </button>
         </div>
       </div>
