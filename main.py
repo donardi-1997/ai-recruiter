@@ -60,9 +60,9 @@ AWS_REGION = os.getenv(
     "us-east-2"
 )
 
-KNOWLEDGE_BASE_ID = "CP7BI7MQVB"
+KNOWLEDGE_BASE_ID = os.getenv("KNOWLEDGE_BASE_ID", "VUGNMJQAEN")
 
-DATA_SOURCE_ID = "9A6HM1WZQR"
+DATA_SOURCE_ID = os.getenv("DATA_SOURCE_ID", "P8SUL2VFHA")
 
 S3_BUCKET = "ai-cv-rag-adrian-2026"
 
@@ -296,9 +296,9 @@ def get_current_owner_id(
 # CONFIGURACIÓN
 # ============================================================
 
-AWS_REGION = "us-east-2"
-KNOWLEDGE_BASE_ID = "CP7BI7MQVB"
-DATA_SOURCE_ID = "9A6HM1WZQR"
+AWS_REGION = os.getenv("AWS_REGION", "us-east-2")
+KNOWLEDGE_BASE_ID = os.getenv("KNOWLEDGE_BASE_ID", "VUGNMJQAEN")
+DATA_SOURCE_ID = os.getenv("DATA_SOURCE_ID", "P8SUL2VFHA")
 S3_BUCKET = "ai-cv-rag-adrian-2026"
 S3_PREFIX = "documents"
 NUMBER_OF_RESULTS = 50
