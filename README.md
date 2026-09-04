@@ -51,19 +51,28 @@ La plataforma centraliza el proceso de selección: almacena los CV, los indexa e
 
 ```mermaid
 flowchart LR
-    U[Usuario] --> CF[Amazon CloudFront]
-    CF --> S3F[S3 - Frontend React]
-    CF --> ALB[Application Load Balancer]
-    ALB --> ECS[FastAPI en ECS Fargate]
-    ECS --> COG[Amazon Cognito]
-    ECS --> DDB[Amazon DynamoDB]
-    ECS --> S3CV[S3 - Hojas de vida]
+    U[Usuario] --> LS[Lightsail]
+    LS --> NGINX[Nginx + React]
+    NGINX --> API[FastAPI]
+    API --> COG[Amazon Cognito]
+    API --> DDB[Amazon DynamoDB]
+    API --> S3CV[S3 - Hojas de vida]
     S3CV --> KB[Bedrock Knowledge Base]
-    ECS --> KB
-    ECS --> LLM[Amazon Nova Lite]
+    API --> KB
+    API --> LLM[Amazon Nova Lite]
 ```
 
-El frontend se publica como sitio estático privado en S3 y se sirve mediante CloudFront. Las solicitudes bajo `/api/*` se envían al backend FastAPI a través de un Application Load Balancer. El backend usa roles IAM para acceder a Cognito, DynamoDB, S3 y Amazon Bedrock.
+La aplicación se ejecuta en una instancia Lightsail con Docker Compose. Nginx sirve el frontend React y enruta `/api/*` al backend FastAPI en la misma instancia. Cognito, DynamoDB, S3 y Bedrock se mantienen como servicios administrados de AWS: contienen los datos actuales y no tienen un equivalente local compatible en Lightsail.
+
+Para iniciar localmente la arquitectura simplificada:
+
+```powershell
+Copy-Item .env.example .env
+# Completa las variables de Cognito y configura credenciales AWS para Boto3.
+docker compose up --build -d
+```
+
+La aplicación queda disponible en `http://localhost` y la API en `http://localhost/api`.
 
 ## Tecnologías
 
@@ -91,13 +100,8 @@ El frontend se publica como sitio estático privado en S3 y se sirve mediante Cl
 - Bedrock Knowledge Bases
 - Amazon S3
 - Amazon DynamoDB
-- Amazon ECR
-- Amazon ECS Fargate
-- Application Load Balancer
-- Amazon CloudFront
-- AWS Certificate Manager y Route 53
+- Amazon Lightsail
 - AWS CloudFormation
-- GitHub Actions con autenticación OIDC
 
 ## Estructura del proyecto
 
