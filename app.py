@@ -6,7 +6,7 @@ import streamlit as st
 # CONFIGURATION
 # ============================================================
 
-API_URL = "https://ub8njxuol0.execute-api.us-east-2.amazonaws.com/chat"
+API_URL = "https://vb9uu61dt6.execute-api.us-east-2.amazonaws.com/prod/chat"
 
 
 # ============================================================
