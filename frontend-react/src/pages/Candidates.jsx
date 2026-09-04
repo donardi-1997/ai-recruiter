@@ -18,6 +18,7 @@ function Candidates() {
   const [creatingCandidate, setCreatingCandidate] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(null);
   const [uploadSummary, setUploadSummary] = useState(null);
+  const UPLOAD_BATCH_SIZE = 25;
 
   async function loadData() {
     try {
@@ -47,19 +48,36 @@ function Candidates() {
       alert("Seleccione al menos un CV en PDF");
       return;
     }
+
     try {
       setCreatingCandidate(true);
-      setUploadProgress({ current: 0, total: candidateFiles.length });
-      const formData = new FormData();
-      candidateFiles.forEach((file) => formData.append("files", file));
-      const response = await api.post("/candidates/bulk", formData, {
-        onUploadProgress: (event) => {
-          if (event.total) {
-            setUploadProgress({ current: event.loaded, total: event.total, bytes: true });
-          }
-        },
-      });
-      setUploadSummary(response.data);
+      const summary = {
+        processed: 0,
+        successful: 0,
+        failed: 0,
+        total: candidateFiles.length,
+        created: 0,
+        candidates: [],
+        errors: [],
+      };
+      for (let start = 0; start < candidateFiles.length; start += UPLOAD_BATCH_SIZE) {
+        const batch = candidateFiles.slice(start, start + UPLOAD_BATCH_SIZE);
+        const formData = new FormData();
+        batch.forEach((file) => formData.append("files", file));
+        const response = await api.post("/candidates/bulk", formData);
+        const result = response.data;
+        summary.processed += result.processed ?? result.total ?? batch.length;
+        summary.successful += result.successful ?? result.created ?? 0;
+        summary.failed += result.failed ?? result.errors?.length ?? 0;
+        summary.created = summary.successful;
+        summary.candidates.push(...(result.candidates || []));
+        summary.errors.push(...(result.errors || []));
+        setUploadProgress({
+          current: Math.min(summary.processed, candidateFiles.length),
+          total: candidateFiles.length,
+        });
+      }
+      setUploadSummary(summary);
       setCandidateFiles([]);
       setShowCreateModal(false);
       await loadData();
@@ -72,6 +90,17 @@ function Candidates() {
     } finally {
       setCreatingCandidate(false);
     }
+  }
+
+  function handleCandidateFilesChange(event) {
+    const selectedFiles = Array.from(event.target.files || []);
+    const pdfFiles = selectedFiles.filter((file) =>
+      file.name.toLowerCase().endsWith(".pdf"),
+    );
+    if (pdfFiles.length !== selectedFiles.length) {
+      alert("Solo se incluirán archivos PDF.");
+    }
+    setCandidateFiles(pdfFiles);
   }
 
   useEffect(() => {
@@ -432,9 +461,7 @@ function Candidates() {
                   type="file"
                   accept="application/pdf,.pdf"
                   multiple
-                  onChange={(e) =>
-                    setCandidateFiles(Array.from(e.target.files || []))
-                  }
+                  onChange={handleCandidateFilesChange}
                   style={{
                     width: "100%",
                     padding: "12px",
@@ -442,6 +469,28 @@ function Candidates() {
                     borderRadius: "var(--radius-sm)",
                     background: "#f8fafc",
                     fontSize: "14px",
+                    cursor: "pointer",
+                  }}
+                />
+                <p className="muted" style={{ marginTop: "8px", fontSize: "13px" }}>
+                  Puedes seleccionar archivos individuales o una carpeta completa.
+                </p>
+                <input
+                  type="file"
+                  accept="application/pdf,.pdf"
+                  multiple
+                  webkitdirectory=""
+                  directory=""
+                  onChange={handleCandidateFilesChange}
+                  aria-label="Seleccionar carpeta con CVs"
+                  style={{
+                    width: "100%",
+                    marginTop: "8px",
+                    padding: "10px",
+                    border: "1px dashed var(--border)",
+                    borderRadius: "var(--radius-sm)",
+                    background: "#f8fafc",
+                    fontSize: "13px",
                     cursor: "pointer",
                   }}
                 />

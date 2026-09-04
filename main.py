@@ -1829,15 +1829,39 @@ async def create_candidates_bulk(
     files: list[UploadFile] = File(...),
     current_user: dict = Depends(get_current_user),
 ):
+    print("BULK_UPLOAD_STARTED", {"count": len(files), "user_sub": current_user.get("sub")})
+    if not files:
+        raise HTTPException(status_code=400, detail="Debes seleccionar al menos un PDF.")
+    if len(files) > 100:
+        raise HTTPException(status_code=400, detail="Puedes subir un máximo de 100 PDFs por lote.")
     candidates, errors = [], []
     for file in files:
+        original_filename = os.path.basename(file.filename or "")
+        print("BULK_FILE_PROCESSING", {"filename": original_filename})
         try:
             candidates.append(await _prepare_bulk_candidate(file, current_user))
+            print("BULK_FILE_SUCCESS", {"filename": original_filename})
         except (ValueError, RuntimeError) as error:
-            errors.append({"original_filename": os.path.basename(file.filename or ""), "error": str(error)})
+            errors.append({"original_filename": original_filename, "error": str(error)})
+            print("BULK_FILE_FAILED", {"filename": original_filename, "error": str(error)})
         except Exception:
-            errors.append({"original_filename": os.path.basename(file.filename or ""), "error": "Error inesperado al procesar el archivo."})
-    return {"total": len(files), "created": len(candidates), "failed": len(errors), "candidates": candidates, "errors": errors}
+            errors.append({"original_filename": original_filename, "error": "Error inesperado al procesar el archivo."})
+            print("BULK_FILE_FAILED", {"filename": original_filename, "error": "unexpected_error"})
+    result = {
+        "processed": len(files),
+        "successful": len(candidates),
+        "failed": len(errors),
+        "total": len(files),
+        "created": len(candidates),
+        "candidates": candidates,
+        "errors": errors,
+    }
+    print("BULK_UPLOAD_COMPLETED", {
+        "processed": result["processed"],
+        "successful": result["successful"],
+        "failed": result["failed"],
+    })
+    return result
 
 
 @app.post("/api/candidates"
