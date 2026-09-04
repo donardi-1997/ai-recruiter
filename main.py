@@ -331,6 +331,7 @@ app.add_middleware(
 
         # Producción
         "https://ai.adrianguerra.net",
+        "https://d2c1mv108wl5wv.cloudfront.net",
     ],
     allow_credentials=True,
     allow_methods=["*"],
