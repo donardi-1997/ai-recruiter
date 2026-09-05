@@ -42,6 +42,7 @@ def _check_db() -> bool:
 
 
 @router.get("/health")
+@router.get("/api/health")
 def health_check():
     """Health check endpoint.
 
