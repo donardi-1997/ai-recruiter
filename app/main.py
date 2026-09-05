@@ -5,8 +5,9 @@ import os
 import uuid
 from typing import Any
 
-from fastapi import Depends, FastAPI, File, HTTPException, Query, UploadFile
+from fastapi import Depends, FastAPI, File, HTTPException, Query, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 
 from app import crud
@@ -40,6 +41,7 @@ app.add_middleware(
         "http://localhost:5174",
         "http://localhost:5175",
         "https://ai.adrianguerra.net",
+        "https://air.adrianguerra.net",
     ],
     allow_credentials=True,
     allow_methods=["*"],
@@ -47,6 +49,15 @@ app.add_middleware(
 )
 
 app.include_router(health_router)
+
+
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception):
+    logger.error("Unhandled error on %s %s: %s", request.method, request.url.path, exc, exc_info=True)
+    return JSONResponse(
+        status_code=500,
+        content={"detail": "Error interno del servidor."},
+    )
 
 
 @app.on_event("startup")
@@ -144,8 +155,12 @@ def delete_all_candidates(
     db: Session = Depends(get_db),
     _user: dict = Depends(get_current_user),
 ):
-    deleted, failed = crud.delete_all_candidates(db)
-    return {"deleted": deleted, "failed": failed}
+    try:
+        deleted, failed = crud.delete_all_candidates(db)
+        return {"deleted": deleted, "failed": failed}
+    except Exception as exc:
+        logger.error("Error deleting all candidates: %s", exc)
+        raise HTTPException(status_code=500, detail="Error al eliminar candidatos.")
 
 
 @app.delete("/api/candidates/{candidate_id}")
@@ -154,9 +169,13 @@ def delete_candidate(
     db: Session = Depends(get_db),
     _user: dict = Depends(get_current_user),
 ):
-    _require_candidate(db, candidate_id)
-    crud.delete_candidate(db, candidate_id)
-    return {"detail": "Candidato eliminado."}
+    candidate = _require_candidate(db, candidate_id)
+    try:
+        crud.delete_candidate(db, candidate_id)
+        return {"detail": "Candidato eliminado."}
+    except Exception as exc:
+        logger.error("Error deleting candidate %s: %s", candidate_id, exc)
+        raise HTTPException(status_code=500, detail="Error al eliminar candidato.")
 
 
 @app.get("/api/candidates/{candidate_id}/download")

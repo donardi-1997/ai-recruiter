@@ -164,7 +164,7 @@ jobs:
             # Wait for backend health
             echo "Waiting for backend..."
             for i in \$(seq 1 30); do
-              if sudo docker exec ai-recruiter-api python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/health')" 2>/dev/null; then
+              if sudo docker exec ai-recruiter-api python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:80/health')" 2>/dev/null; then
                 echo "Backend healthy!"
                 break
               fi
@@ -190,5 +190,5 @@ jobs:
             --region ${{ env.AWS_REGION }} \
             --query "instance.publicIpAddress" \
             --output text)
-          HTTP_CODE=$(curl -sf -o /dev/null -w "%{http_code}" http://$INSTANCE_IP/api/health || echo "000")
+          HTTP_CODE=$(curl -sf -o /dev/null -w "%{http_code}" http://$INSTANCE_IP/health || echo "000")
           echo "Health check: HTTP $HTTP_CODE"
