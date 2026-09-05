@@ -20,7 +20,7 @@ concurrency:
 env:
   AWS_REGION: us-east-2
   S3_BUCKET: ai-recruiter-frontend-765761474007
-  CLOUDFRONT_DISTRIBUTION_ID: E2D9QVT3763I47
+  CLOUDFRONT_DISTRIBUTION_ID: E1IBIX4EWENEP7
   VITE_API_URL: /api
 jobs:
   validate:
