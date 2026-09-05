@@ -80,7 +80,13 @@
         "lightsail:GetInstance",
         "lightsail:DownloadDefaultKeyPair",
         "lightsail:GetLoadBalancers",
-        "lightsail:GetLoadBalancer"
+        "lightsail:GetLoadBalancer",
+        "lightsail:GetContainerServices",
+        "lightsail:CreateContainerServiceDeployment",
+        "lightsail:UpdateContainerService",
+        "lightsail:GetContainerServiceDeployments",
+        "lightsail:GetContainerImages",
+        "lightsail:PushContainerImage"
       ],
       "Resource": "*"
     }
