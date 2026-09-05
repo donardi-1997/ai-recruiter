@@ -20,7 +20,7 @@ env:
   AWS_ACCOUNT_ID: "765761474007"
   ECR_BACKEND_REPO: ai-recruiter-api
   ECR_FRONTEND_REPO: ai-recruiter-frontend
-  SERVICE_NAME: ai-recruiter-api
+  INSTANCE_NAME: ai-recruiter
 
 jobs:
   backend-tests:
@@ -107,92 +107,82 @@ jobs:
           docker build --tag "$ECR_REGISTRY/$ECR_FRONTEND_REPO:latest" ./frontend-react
           docker push "$ECR_REGISTRY/$ECR_FRONTEND_REPO:latest"
 
-      - name: Enable ECR access on container service
-        run: |
-          aws lightsail update-container-service \
-            --service-name $SERVICE_NAME \
-            --is-enabled \
-            --private-registry-access '{"ecrImagePullerRole":{"isActive":true}}' \
-            --region $AWS_REGION || true
-
-      - name: Wait for service to be ready
-        run: |
-          echo "Waiting for service to be READY..."
-          for i in $(seq 1 30); do
-            STATE=$(aws lightsail get-container-services \
-              --service-name $SERVICE_NAME \
-              --region $AWS_REGION \
-              --query "containerServices[0].state" \
-              --output text)
-            echo "State: $STATE"
-            if [ "$STATE" = "READY" ]; then
-              echo "Service is ready!"
-              break
-            fi
-            sleep 10
-          done
-
-      - name: Deploy to Lightsail Container Service
+      - name: Deploy via SSH
         env:
           ECR_REGISTRY: ${{ steps.ecr-login.outputs.registry }}
         run: |
-          aws lightsail create-container-service-deployment \
-            --service-name $SERVICE_NAME \
+          # Get instance IP
+          INSTANCE_IP=$(aws lightsail get-instance \
+            --instance-name $INSTANCE_NAME \
             --region $AWS_REGION \
-            --containers "{
-              \"api\": {
-                \"image\": \"$ECR_REGISTRY/$ECR_BACKEND_REPO:latest\",
-                \"environment\": {
-                  \"DATABASE_URL\": \"${{ secrets.DATABASE_URL }}\",
-                  \"AWS_REGION\": \"$AWS_REGION\",
-                  \"COGNITO_USER_POOL_ID\": \"${{ secrets.COGNITO_USER_POOL_ID }}\",
-                  \"COGNITO_CLIENT_ID\": \"${{ secrets.COGNITO_CLIENT_ID }}\"
-                },
-                \"ports\": {
-                  \"8000\": \"HTTP\"
-                }
-              },
-              \"web\": {
-                \"image\": \"$ECR_REGISTRY/$ECR_FRONTEND_REPO:latest\",
-                \"ports\": {
-                  \"80\": \"HTTP\"
-                }
-              }
-            }" \
-            --public-endpoint "{
-              \"containerName\": \"web\",
-              \"containerPort\": 80,
-              \"healthCheck\": {
-                \"path\": \"/api/health\",
-                \"successCodes\": \"200\"
-              }
-            }"
+            --query "instance.publicIpAddress" \
+            --output text)
+          echo "Instance IP: $INSTANCE_IP"
 
-      - name: Wait for deployment
-        run: |
-          echo "Waiting for deployment to stabilize..."
-          sleep 60
-          for i in $(seq 1 30); do
-            STATE=$(aws lightsail get-container-service-deployments \
-              --service-name $SERVICE_NAME \
-              --region $AWS_REGION \
-              --query "deployments[0].state" \
-              --output text)
-            echo "Deployment state: $STATE"
-            if [ "$STATE" = "ACTIVE" ]; then
-              echo "Deployment active!"
-              break
-            fi
-            sleep 10
-          done
+          # Get SSH key
+          KEY_FILE="/tmp/lightsail-key.pem"
+          echo "${{ secrets.LIGHTSAIL_SSH_KEY }}" > "$KEY_FILE"
+          chmod 600 "$KEY_FILE"
+
+          # Deploy via SSH
+          ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -i "$KEY_FILE" ubuntu@$INSTANCE_IP bash -s << REMOTE_SCRIPT
+            set -e
+
+            # ECR login
+            aws ecr get-login-password --region $AWS_REGION | \
+              sudo docker login --username AWS --password-stdin $ECR_REGISTRY
+
+            # Pull images
+            sudo docker pull $ECR_REGISTRY/$ECR_BACKEND_REPO:latest
+            sudo docker pull $ECR_REGISTRY/$ECR_FRONTEND_REPO:latest
+
+            # Stop old containers
+            sudo docker stop ai-recruiter-api ai-recruiter-web 2>/dev/null || true
+            sudo docker rm ai-recruiter-api ai-recruiter-web 2>/dev/null || true
+
+            # Create network
+            sudo docker network create ai-recruiter 2>/dev/null || true
+
+            # Start backend with local PostgreSQL
+            sudo docker run -d \
+              --name ai-recruiter-api \
+              --network ai-recruiter \
+              --restart unless-stopped \
+              -e DATABASE_URL='postgresql://postgres:postgres@host.docker.internal:5432/ai_recruiter' \
+              -e AWS_REGION=$AWS_REGION \
+              -e COGNITO_USER_POOL_ID='${{ secrets.COGNITO_USER_POOL_ID }}' \
+              -e COGNITO_CLIENT_ID='${{ secrets.COGNITO_CLIENT_ID }}' \
+              --add-host=host.docker.internal:host-gateway \
+              $ECR_REGISTRY/$ECR_BACKEND_REPO:latest
+
+            # Wait for backend health
+            echo "Waiting for backend..."
+            for i in \$(seq 1 30); do
+              if sudo docker exec ai-recruiter-api python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/health')" 2>/dev/null; then
+                echo "Backend healthy!"
+                break
+              fi
+              sleep 2
+            done
+
+            # Start frontend
+            sudo docker run -d \
+              --name ai-recruiter-web \
+              --network ai-recruiter \
+              --restart unless-stopped \
+              -p 80:80 \
+              $ECR_REGISTRY/$ECR_FRONTEND_REPO:latest
+
+            echo "Deployment complete"
+          REMOTE_SCRIPT
 
       - name: Health check
         run: |
-          URL=$(aws lightsail get-container-services \
-            --service-name $SERVICE_NAME \
-            --region $AWS_REGION \
-            --query "containerServices[0].url" \
+          sleep 10
+          INSTANCE_IP=$(aws lightsail get-instance \
+            --instance-name ${{ env.INSTANCE_NAME }} \
+            --region ${{ env.AWS_REGION }} \
+            --query "instance.publicIpAddress" \
             --output text)
-          echo "Service URL: $URL"
-          HTTP_CODE=$(curl -sf -o /dev/null -w "%{http_code}" "${URL}api/health" || echo "000")
+          HTTP_CODE=$(curl -sf -o /dev/null -w "%{http_code}" http://$INSTANCE_IP/api/health || echo "000")
           echo "Health check: HTTP $HTTP_CODE"
