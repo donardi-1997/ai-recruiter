@@ -1,8 +1,4 @@
-"""SQLAlchemy ORM models — sync PostgreSQL.
-
-Table names use REEMPLAZAR_DB_TABLE_* placeholders.
-Schema matches migration 001_create_tables.py (UUID PKs).
-"""
+"""SQLAlchemy ORM models — sync PostgreSQL."""
 
 import uuid
 from datetime import datetime, timezone
@@ -22,12 +18,8 @@ from sqlalchemy.orm import relationship
 from app.db import Base
 
 
-# ============================================================
-# CANDIDATES
-# ============================================================
-
 class Candidate(Base):
-    __tablename__ = "REEMPLAZAR_DB_TABLE_CANDIDATES"
+    __tablename__ = "candidates"
 
     id = Column(
         UUID(as_uuid=False),
@@ -44,14 +36,11 @@ class Candidate(Base):
     metadata_ = Column("metadata", JSON, nullable=True, default=dict)
 
     rankings = relationship("RankingItem", back_populates="candidate")
+    jobs = relationship("JobCandidate", back_populates="candidate")
 
-
-# ============================================================
-# JOBS
-# ============================================================
 
 class Job(Base):
-    __tablename__ = "REEMPLAZAR_DB_TABLE_JOBS"
+    __tablename__ = "jobs"
 
     id = Column(
         UUID(as_uuid=False),
@@ -59,6 +48,7 @@ class Job(Base):
         default=lambda: str(uuid.uuid4()),
     )
     title = Column(Text, nullable=False)
+    description = Column(Text, nullable=True)
     created_at = Column(
         DateTime(timezone=True),
         nullable=False,
@@ -66,14 +56,11 @@ class Job(Base):
     )
 
     rankings = relationship("Ranking", back_populates="job")
+    candidates = relationship("JobCandidate", back_populates="job")
 
 
-# ============================================================
-# RANKINGS
-# ============================================================
-
-class Ranking(Base):
-    __tablename__ = "REEMPLAZAR_DB_TABLE_RANKINGS"
+class JobCandidate(Base):
+    __tablename__ = "job_candidates"
 
     id = Column(
         UUID(as_uuid=False),
@@ -82,7 +69,65 @@ class Ranking(Base):
     )
     job_id = Column(
         UUID(as_uuid=False),
-        ForeignKey("REEMPLAZAR_DB_TABLE_JOBS.id", ondelete="CASCADE"),
+        ForeignKey("jobs.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    candidate_id = Column(
+        UUID(as_uuid=False),
+        ForeignKey("candidates.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    assigned_at = Column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=lambda: datetime.now(timezone.utc),
+    )
+
+    job = relationship("Job", back_populates="candidates")
+    candidate = relationship("Candidate", back_populates="jobs")
+
+
+class Evaluation(Base):
+    __tablename__ = "evaluations"
+
+    id = Column(
+        UUID(as_uuid=False),
+        primary_key=True,
+        default=lambda: str(uuid.uuid4()),
+    )
+    candidate_id = Column(
+        UUID(as_uuid=False),
+        ForeignKey("candidates.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    job_id = Column(
+        UUID(as_uuid=False),
+        ForeignKey("jobs.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    match_score = Column(Float, nullable=False, default=0.0)
+    recommendation = Column(Text, nullable=True)
+    summary = Column(Text, nullable=True)
+    strengths = Column(JSON, nullable=True, default=list)
+    gaps = Column(JSON, nullable=True, default=list)
+    created_at = Column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=lambda: datetime.now(timezone.utc),
+    )
+
+
+class Ranking(Base):
+    __tablename__ = "rankings"
+
+    id = Column(
+        UUID(as_uuid=False),
+        primary_key=True,
+        default=lambda: str(uuid.uuid4()),
+    )
+    job_id = Column(
+        UUID(as_uuid=False),
+        ForeignKey("jobs.id", ondelete="CASCADE"),
         nullable=False,
     )
     ranking_version = Column(Integer, nullable=False, default=0)
@@ -102,12 +147,8 @@ class Ranking(Base):
     )
 
 
-# ============================================================
-# RANKING ITEMS
-# ============================================================
-
 class RankingItem(Base):
-    __tablename__ = "REEMPLAZAR_DB_TABLE_RANKING_ITEMS"
+    __tablename__ = "ranking_items"
 
     id = Column(
         UUID(as_uuid=False),
@@ -116,12 +157,12 @@ class RankingItem(Base):
     )
     ranking_id = Column(
         UUID(as_uuid=False),
-        ForeignKey("REEMPLAZAR_DB_TABLE_RANKINGS.id", ondelete="CASCADE"),
+        ForeignKey("rankings.id", ondelete="CASCADE"),
         nullable=False,
     )
     candidate_id = Column(
         UUID(as_uuid=False),
-        ForeignKey("REEMPLAZAR_DB_TABLE_CANDIDATES.id", ondelete="CASCADE"),
+        ForeignKey("candidates.id", ondelete="CASCADE"),
         nullable=False,
     )
     score = Column(Float, nullable=False, default=0.0)

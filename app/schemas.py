@@ -51,6 +51,15 @@ class RankingResponse(BaseModel):
 # RECALCULATE  (POST /api/jobs/{job_id}/ranking/recalculate)
 # ============================================================
 
+class JobResponse(BaseModel):
+    id: str
+    title: str
+    description: str | None = None
+    created_at: datetime | None = None
+
+    model_config = {"from_attributes": True}
+
+
 class RecalculateResponse(BaseModel):
     job_id:           str
     mode:             str

@@ -7,23 +7,9 @@ from typing import Any
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
-from app.models import Candidate, Job, Ranking, RankingItem
+from app.models import Candidate, Evaluation, Job, JobCandidate, Ranking, RankingItem
 
 logger = logging.getLogger(__name__)
-
-
-# ============================================================
-# SCORING SKELETON
-# ============================================================
-
-def compute_score_for_candidate(candidate: Candidate) -> float:
-    """Compute an affinity score for *candidate*.
-
-    Skeleton — replace with your ML model / Bedrock evaluator.
-    Returns a placeholder score between 0.0 and 100.0.
-    """
-    # TODO: integrate your ML model here
-    return 0.0
 
 
 # ============================================================
@@ -34,12 +20,58 @@ def get_job(db: Session, job_id: str) -> Job | None:
     return db.query(Job).filter(Job.id == job_id).first()
 
 
+def list_jobs(db: Session) -> list[Job]:
+    return db.query(Job).order_by(Job.created_at.desc()).all()
+
+
+def create_job(db: Session, *, title: str, description: str | None = None) -> Job:
+    job = Job(title=title, description=description)
+    db.add(job)
+    db.commit()
+    db.refresh(job)
+    return job
+
+
 # ============================================================
 # CANDIDATES
 # ============================================================
 
 def get_candidate(db: Session, candidate_id: str) -> Candidate | None:
     return db.query(Candidate).filter(Candidate.id == candidate_id).first()
+
+
+def list_candidates(db: Session) -> list[Candidate]:
+    return db.query(Candidate).order_by(Candidate.created_at.desc()).all()
+
+
+def create_candidate(
+    db: Session,
+    *,
+    name: str,
+    email: str | None = None,
+    metadata: dict | None = None,
+) -> Candidate:
+    candidate = Candidate(name=name, email=email, metadata_=metadata or {})
+    db.add(candidate)
+    db.commit()
+    db.refresh(candidate)
+    return candidate
+
+
+def delete_candidate(db: Session, candidate_id: str) -> bool:
+    candidate = get_candidate(db, candidate_id)
+    if not candidate:
+        return False
+    db.delete(candidate)
+    db.commit()
+    return True
+
+
+def delete_all_candidates(db: Session) -> tuple[int, int]:
+    count = db.query(Candidate).count()
+    db.query(Candidate).delete()
+    db.commit()
+    return count, 0
 
 
 def list_candidates_for_job(
@@ -49,20 +81,72 @@ def list_candidates_for_job(
     page: int = 1,
     page_size: int = 10,
 ) -> tuple[list[Candidate], int]:
-    """List candidates that have ranking items for a given job."""
-    from app.models import RankingItem
-
+    """List candidates assigned to a given job."""
     query = (
         db.query(Candidate)
-        .join(RankingItem, RankingItem.candidate_id == Candidate.id)
-        .join(Ranking, Ranking.id == RankingItem.ranking_id)
-        .filter(Ranking.job_id == job_id)
-        .distinct()
+        .join(JobCandidate, JobCandidate.candidate_id == Candidate.id)
+        .filter(JobCandidate.job_id == job_id)
         .order_by(Candidate.name)
     )
     total = query.count() or 0
     items = query.offset((page - 1) * page_size).limit(page_size).all()
     return items, total
+
+
+# ============================================================
+# JOB-CANDIDATE ASSIGNMENT
+# ============================================================
+
+def assign_candidates_to_job(
+    db: Session,
+    job_id: str,
+    candidate_ids: list[str],
+) -> tuple[int, int]:
+    assigned = 0
+    skipped = 0
+    for cid in candidate_ids:
+        existing = (
+            db.query(JobCandidate)
+            .filter(JobCandidate.job_id == job_id, JobCandidate.candidate_id == cid)
+            .first()
+        )
+        if existing:
+            skipped += 1
+            continue
+        db.add(JobCandidate(job_id=job_id, candidate_id=cid))
+        assigned += 1
+    db.commit()
+    return assigned, skipped
+
+
+# ============================================================
+# EVALUATIONS
+# ============================================================
+
+def create_evaluation(
+    db: Session,
+    *,
+    candidate_id: str,
+    job_id: str,
+    match_score: float,
+    recommendation: str,
+    summary: str,
+    strengths: list[str],
+    gaps: list[str],
+) -> Evaluation:
+    evaluation = Evaluation(
+        candidate_id=candidate_id,
+        job_id=job_id,
+        match_score=match_score,
+        recommendation=recommendation,
+        summary=summary,
+        strengths=strengths,
+        gaps=gaps,
+    )
+    db.add(evaluation)
+    db.commit()
+    db.refresh(evaluation)
+    return evaluation
 
 
 # ============================================================
@@ -111,10 +195,6 @@ def insert_ranking_items(
     ranking_id: str,
     items: list[dict[str, Any]],
 ) -> int:
-    """Bulk insert ranking items atomically.
-
-    Each *items* dict must contain: candidate_id, score, position.
-    """
     count = 0
     for item in items:
         db.add(
@@ -149,7 +229,6 @@ def build_ranking_response(
     page: int = 1,
     page_size: int = 10,
 ) -> dict[str, Any]:
-    """Build ranking response — empty if no ranking exists."""
     job = get_job(db, job_id)
     meta = get_ranking_metadata(db, job_id)
 
