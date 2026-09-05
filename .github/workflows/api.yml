@@ -88,12 +88,16 @@ jobs:
           echo "${{ secrets.LIGHTSAIL_SSH_KEY }}" > "$KEY_FILE"
           chmod 600 "$KEY_FILE"
 
-          # Deploy to instance (ECR login runs on the instance itself)
+          # Get ECR password and encode for safe transfer
+          ECR_PASS=$(aws ecr get-login-password --region $AWS_REGION)
+          ECR_PASS_B64=$(echo -n "$ECR_PASS" | base64)
+
+          # Deploy to instance (base64 decode on remote for safe transfer)
           ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -i "$KEY_FILE" ubuntu@$INSTANCE_IP \
-            "aws ecr get-login-password --region $AWS_REGION | docker login --username AWS --password-stdin $ECR_REGISTRY && \
-             docker pull $ECR_REGISTRY/$ECR_REPOSITORY:latest && \
-             docker rm -f ai-recruiter 2>/dev/null; \
-             docker run -d --name ai-recruiter --restart unless-stopped \
+            "echo '$ECR_PASS_B64' | base64 -d | sudo docker login --username AWS --password-stdin $ECR_REGISTRY && \
+             sudo docker pull $ECR_REGISTRY/$ECR_REPOSITORY:latest && \
+             sudo docker rm -f ai-recruiter 2>/dev/null; \
+             sudo docker run -d --name ai-recruiter --restart unless-stopped \
                -p 80:80 -e DATABASE_URL='${{ secrets.DATABASE_URL }}' \
                $ECR_REGISTRY/$ECR_REPOSITORY:latest"
 
