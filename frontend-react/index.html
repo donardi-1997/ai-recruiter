@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#071426" />
+    <meta name="description" content="AI Recruiter centraliza candidatos, evalúa afinidad con inteligencia artificial y prioriza el talento para cada vacante." />
+    <meta property="og:type" content="website" />
+    <meta property="og:title" content="AI Recruiter | Talent Intelligence" />
+    <meta property="og:description" content="Talent intelligence, powered by AI." />
+    <meta property="og:url" content="https://ai.adrianguerra.net" />
+    <meta property="og:image" content="https://ai.adrianguerra.net/og.png" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="AI Recruiter | Talent Intelligence" />
+    <meta name="twitter:description" content="Talent intelligence, powered by AI." />
+    <meta name="twitter:image" content="https://ai.adrianguerra.net/og.png" />
+    <title>AI Recruiter | Talent Intelligence</title>
+    <script>
+      (function() {
+        var t = localStorage.getItem('theme');
+        if (!t) t = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+        document.documentElement.setAttribute('data-theme', t);
+      })();
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.jsx"></script>
+  </body>
+</html>

@@ -1,32 +1,100 @@
 import json
+import logging
 import os
+import re
 import uuid
+from datetime import datetime, timezone
+from io import BytesIO
 from typing import Any
+
 import boto3
+import botocore.exceptions
+from boto3.dynamodb.conditions import Key, Attr
+import requests
+
+from auth import (
+    create_user,
+    login_user
+)
+
+from dotenv import load_dotenv
+
 from fastapi import (
     FastAPI,
     File,
     Form,
     HTTPException,
-    UploadFile
+    UploadFile,
+    Depends,
+    Cookie,
+    Response
 )
+
+from fastapi.security import (
+    HTTPBearer,
+    HTTPAuthorizationCredentials
+)
+
+from fastapi.middleware.cors import CORSMiddleware
+
+from jose import jwt
+
 from pydantic import BaseModel, Field
+from PyPDF2 import PdfReader
+
 from langchain_aws import ChatBedrock
 from langchain_core.prompts import ChatPromptTemplate
 
-# ============================================================
-# COGNITO CONFIGURATION
-# ============================================================
+from auth import LoginRequest, login_user, refresh_user
 
-import os
-from dotenv import load_dotenv
+# ============================================================
+# ENVIRONMENT VARIABLES
+# ============================================================
 
 load_dotenv()
+
+# ============================================================
+# LOGGING
+# ============================================================
+
+logger = logging.getLogger(__name__)
+
+if not logging.getLogger().handlers:
+    logging.basicConfig(
+        level=os.getenv("LOG_LEVEL", "INFO"),
+        format="%(asctime)s %(levelname)s %(name)s - %(message)s"
+    )
+
+
+# ============================================================
+# AWS CONFIGURATION
+# ============================================================
 
 AWS_REGION = os.getenv(
     "AWS_REGION",
     "us-east-2"
 )
+
+AWS_ENDPOINT = os.getenv(
+    "AWS_ENDPOINT",
+    ""
+)
+
+KNOWLEDGE_BASE_ID = os.getenv("KNOWLEDGE_BASE_ID", "VUGNMJQAEN")
+
+DATA_SOURCE_ID = os.getenv("DATA_SOURCE_ID", "P8SUL2VFHA")
+
+S3_BUCKET = "ai-cv-rag-adrian-2026"
+
+S3_PREFIX = "documents"
+
+NUMBER_OF_RESULTS = 50
+MAX_CV_SIZE_BYTES = 15 * 1024 * 1024
+
+
+# ============================================================
+# COGNITO CONFIGURATION
+# ============================================================
 
 COGNITO_USER_POOL_ID = os.getenv(
     "COGNITO_USER_POOL_ID"
@@ -36,28 +104,242 @@ COGNITO_CLIENT_ID = os.getenv(
     "COGNITO_CLIENT_ID"
 )
 
-print("COGNITO USER POOL:", COGNITO_USER_POOL_ID)
-print("COGNITO CLIENT ID:", COGNITO_CLIENT_ID)
+COGNITO_ISSUER = (
+    f"https://cognito-idp.{AWS_REGION}.amazonaws.com/"
+    f"{COGNITO_USER_POOL_ID}"
+)
+
+COGNITO_JWKS_URL = (
+    f"{COGNITO_ISSUER}/.well-known/jwks.json"
+)
+
+
+print(
+    "COGNITO USER POOL:",
+    COGNITO_USER_POOL_ID
+)
+
+print(
+    "COGNITO CLIENT ID:",
+    COGNITO_CLIENT_ID
+)
+
+print(
+    "COGNITO ISSUER:",
+    COGNITO_ISSUER
+)
+
+
+# ============================================================
+# COGNITO AUTHENTICATION
+# ============================================================
+
+security = HTTPBearer()
+
+_cognito_jwks = None
+
+# ============================================================
+# GET COGNITO JWKS
+# ============================================================
+
+def get_cognito_jwks():
+
+    global _cognito_jwks
+
+    if _cognito_jwks is None:
+
+        response = requests.get(
+            COGNITO_JWKS_URL,
+            timeout=10
+        )
+
+        response.raise_for_status()
+
+        _cognito_jwks = response.json()
+
+    return _cognito_jwks
+
+
+# ============================================================
+# VALIDATE COGNITO JWT
+# ============================================================
+
+# ============================================================
+# VALIDATE COGNITO ACCESS TOKEN
+# ============================================================
+
+def get_current_user(
+    credentials: HTTPAuthorizationCredentials = Depends(
+        security
+    )
+):
+
+    token = credentials.credentials
+
+    try:
+
+        # ====================================================
+        # JWT HEADER
+        # ====================================================
+
+        header = jwt.get_unverified_header(
+            token
+        )
+
+        kid = header.get(
+            "kid"
+        )
+
+        if not kid:
+
+            raise HTTPException(
+                status_code=401,
+                detail="JWT sin kid."
+            )
+
+        # ====================================================
+        # COGNITO PUBLIC KEYS
+        # ====================================================
+
+        jwks = get_cognito_jwks()
+
+        key = next(
+            (
+                key
+                for key in jwks["keys"]
+                if key["kid"] == kid
+            ),
+            None
+        )
+
+        if not key:
+
+            raise HTTPException(
+                status_code=401,
+                detail="Clave JWT no encontrada."
+            )
+
+        # ====================================================
+        # DECODE + SIGNATURE + ISSUER + EXPIRATION
+        # ====================================================
+
+        payload = jwt.decode(
+            token,
+            key,
+            algorithms=["RS256"],
+            issuer=COGNITO_ISSUER,
+            options={
+                "verify_aud": False
+            }
+        )
+
+        # ====================================================
+        # VALIDATE TOKEN TYPE
+        # ====================================================
+
+        token_use = payload.get(
+            "token_use"
+        )
+
+        if token_use != "access":
+
+            raise HTTPException(
+                status_code=401,
+                detail="Se requiere un Cognito Access Token."
+            )
+
+        # ====================================================
+        # VALIDATE CLIENT ID
+        # ====================================================
+
+        token_client_id = payload.get(
+            "client_id"
+        )
+
+        if token_client_id != COGNITO_CLIENT_ID:
+
+            raise HTTPException(
+                status_code=401,
+                detail="El token no pertenece a esta aplicación."
+            )
+
+        # ====================================================
+        # VALIDATE SUBJECT
+        # ====================================================
+
+        if not payload.get("sub"):
+
+            raise HTTPException(
+                status_code=401,
+                detail="JWT sin identificador de usuario."
+            )
+
+        print(
+            "JWT VALIDATED:",
+            {
+                "sub": payload.get("sub"),
+                "username": payload.get("username"),
+                "token_use": payload.get("token_use"),
+                "client_id": payload.get("client_id")
+            }
+        )
+
+        return payload
+
+    except HTTPException:
+
+        raise
+
+    except Exception as e:
+
+        print(
+            "JWT VALIDATION ERROR:",
+            str(e)
+        )
+
+        raise HTTPException(
+            status_code=401,
+            detail="Token inválido o expirado."
+        )
+
+# ============================================================
+# CURRENT USER ID
+# ============================================================
+
+def get_current_owner_id(
+    current_user: dict = Depends(get_current_user)
+):
+
+    return current_user["sub"]
 
 # ============================================================
 # CONFIGURACIÓN
 # ============================================================
-AWS_REGION = "us-east-2"
-KNOWLEDGE_BASE_ID = "CP7BI7MQVB"
-DATA_SOURCE_ID = "9A6HM1WZQR"
+
+AWS_REGION = os.getenv("AWS_REGION", "us-east-2")
+KNOWLEDGE_BASE_ID = os.getenv("KNOWLEDGE_BASE_ID", "VUGNMJQAEN")
+DATA_SOURCE_ID = os.getenv("DATA_SOURCE_ID", "P8SUL2VFHA")
 S3_BUCKET = "ai-cv-rag-adrian-2026"
 S3_PREFIX = "documents"
 NUMBER_OF_RESULTS = 50
+
 # ============================================================
 # DYNAMODB
 # ============================================================
+
 CANDIDATES_TABLE = "ai-recruiter-candidates"
 JOBS_TABLE = "ai-recruiter-jobs"
 EVALUATIONS_TABLE = "ai-recruiter-evaluations"
+JOB_CANDIDATES_TABLE = os.getenv(
+    "JOB_CANDIDATES_TABLE",
+    "ai-recruiter-job-candidates"
+)
+RANKINGS_TABLE = "ai-recruiter-rankings"
 
 # ============================================================
 # FASTAPI
 # ============================================================
+
 app = FastAPI(
     title="AI Recruiter API",
     description=(
@@ -67,9 +349,121 @@ app = FastAPI(
     version="2.0.0"
 )
 
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[
+        # Desarrollo local
+        "http://localhost:5173",
+        "http://localhost:5174",
+        "http://localhost:5175",
+        "http://127.0.0.1:5173",
+        "http://127.0.0.1:5174",
+        "http://127.0.0.1:5175",
+
+        # Producción
+        "https://ai.adrianguerra.net",
+        "https://d2c1mv108wl5wv.cloudfront.net",
+    ],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+class LoginRequest(BaseModel):
+    email: str
+    password: str
+
+# ============================================================
+# AUTH - REGISTER USER (COGNITO)
+# ============================================================
+
+@app.post("/api/auth/register"
+)
+def register_user(
+    email: str,
+    password: str
+):
+
+    return create_user(
+        email,
+        password
+    )
+
+
+# ============================================================
+# AUTH - LOGIN USER (COGNITO)
+# ============================================================
+
+@app.post("/api/auth/login")
+def login(
+    data: LoginRequest
+    , response: Response
+):
+
+    result = login_user(
+        data.email,
+        data.password
+    )
+
+    if result.get("error"):
+
+        raise HTTPException(
+            status_code=401,
+            detail=result["error"]
+        )
+
+    refresh_token = result.pop("refresh_token", None)
+    if refresh_token:
+        response.set_cookie(
+            "ai_recruiter_refresh",
+            refresh_token,
+            max_age=30 * 24 * 60 * 60,
+            httponly=True,
+            secure=True,
+            samesite="lax",
+            path="/api",
+        )
+    return result
+
+
+@app.post("/api/auth/refresh")
+def refresh_session(
+    refresh_token: str | None = Cookie(default=None, alias="ai_recruiter_refresh"),
+):
+    if not refresh_token:
+        raise HTTPException(status_code=401, detail="Sesión no disponible.")
+    result = refresh_user(refresh_token)
+    if result.get("error"):
+        raise HTTPException(status_code=401, detail=result["error"])
+    return result
+
+
+@app.post("/api/auth/logout")
+def logout(response: Response):
+    response.delete_cookie("ai_recruiter_refresh", path="/api")
+    return {"logged_out": True}
+
+# ============================================================
+# AUTH - CURRENT USER
+# ============================================================
+
+@app.get("/api/auth/me"
+)
+def get_current_user_info(
+    current_user: dict = Depends(
+        get_current_user
+    )
+):
+
+    return {
+        "authenticated": True,
+        "user": current_user
+    }
+
 # ============================================================
 # AWS CLIENTS
 # ============================================================
+
 s3 = boto3.client(
     "s3",
     region_name=AWS_REGION
@@ -95,6 +489,123 @@ jobs_table = dynamodb.Table(
 evaluations_table = dynamodb.Table(
     EVALUATIONS_TABLE
 )
+job_candidates_table = dynamodb.Table(
+    JOB_CANDIDATES_TABLE
+)
+rankings_table = dynamodb.Table(
+    RANKINGS_TABLE
+)
+
+# ============================================================
+# RANKINGS TABLE - CLIENTE Y PROVISIONAMIENTO
+# ============================================================
+
+def get_rankings_dynamodb_client():
+    """Boto3 client for the rankings table.
+
+    Reads AWS_REGION / AWS_ENDPOINT from env vars (optional endpoint
+    is useful for DynamoDB Local or integration testing).
+    """
+    client_kwargs = {
+        "region_name": AWS_REGION,
+    }
+    if AWS_ENDPOINT:
+        client_kwargs["endpoint_url"] = AWS_ENDPOINT
+    return boto3.client("dynamodb", **client_kwargs)
+
+def get_rankings_dynamodb_resource():
+    """Boto3 resource for the rankings table (same config as client)."""
+    resource_kwargs = {
+        "region_name": AWS_REGION,
+    }
+    if AWS_ENDPOINT:
+        resource_kwargs["endpoint_url"] = AWS_ENDPOINT
+    return boto3.resource("dynamodb", **resource_kwargs)
+
+# Minimum IAM policy required by this module to read/write the
+# rankings table and (optionally) create it on first run.
+RANKINGS_MIN_IAM_POLICY = {
+    "Version": "2012-10-17",
+    "Statement": [
+        {
+            "Sid": "RankingsTableCRUD",
+            "Effect": "Allow",
+            "Action": [
+                "dynamodb:GetItem",
+                "dynamodb:PutItem",
+                "dynamodb:UpdateItem",
+                "dynamodb:DeleteItem",
+                "dynamodb:Query",
+            ],
+            "Resource": "arn:aws:dynamodb:*:*:table/ai-recruiter-rankings",
+        },
+        {
+            "Sid": "RankingsTableCreate",
+            "Effect": "Allow",
+            "Action": [
+                "dynamodb:DescribeTable",
+                "dynamodb:CreateTable",
+            ],
+            "Resource": "arn:aws:dynamodb:*:*:table/ai-recruiter-rankings",
+        },
+    ],
+}
+
+def ensure_rankings_table_exists() -> bool:
+    """Create the rankings table (PK: job_id) if it does not exist.
+
+    Optional bootstrap helper; in production prefer CloudFormation /
+    Terraform. Requires the actions documented in
+    RANKINGS_MIN_IAM_POLICY. Returns True when the table is ready
+    (existing or newly created), False on error.
+    """
+    client = get_rankings_dynamodb_client()
+    try:
+        client.describe_table(TableName=RANKINGS_TABLE)
+        logger.info(
+            "Rankings table already exists: %s",
+            RANKINGS_TABLE,
+        )
+        return True
+    except botocore.exceptions.ClientError as error:
+        error_code = error.response.get("Error", {}).get("Code")
+        if error_code != "ResourceNotFoundException":
+            logger.exception(
+                "Error verifying rankings table '%s': %s",
+                RANKINGS_TABLE,
+                error,
+            )
+            return False
+
+    try:
+        logger.info("Creating rankings table: %s", RANKINGS_TABLE)
+        client.create_table(
+            TableName=RANKINGS_TABLE,
+            KeySchema=[
+                {
+                    "AttributeName": "job_id",
+                    "KeyType": "HASH",
+                }
+            ],
+            AttributeDefinitions=[
+                {
+                    "AttributeName": "job_id",
+                    "AttributeType": "S",
+                }
+            ],
+            BillingMode="PAY_PER_REQUEST",
+        )
+        waiter = client.get_waiter("table_exists")
+        waiter.wait(TableName=RANKINGS_TABLE)
+        logger.info("Rankings table created: %s", RANKINGS_TABLE)
+        return True
+    except botocore.exceptions.ClientError as error:
+        logger.exception(
+            "Error creating rankings table '%s': %s",
+            RANKINGS_TABLE,
+            error,
+        )
+        return False
 
 # ============================================================
 # LLM
@@ -110,6 +621,8 @@ llm = ChatBedrock(
 # ============================================================
 # REQUEST / RESPONSE MODELS
 # ============================================================
+
+
 class AskCandidateRequest(BaseModel):
     question: str = Field(
         ...,
@@ -149,6 +662,9 @@ class CreateJobRequest(BaseModel):
 class EvaluateJobRequest(BaseModel):
     job_id: str
 
+class AssignCandidatesRequest(BaseModel):
+    candidate_ids: list[str] = Field(default_factory=list)
+
 class JobResponse(BaseModel):
     job_id: str
     title: str
@@ -181,10 +697,20 @@ class CandidateRankingItem(BaseModel):
     rank: int
     candidate_id: str
     candidate_name: str
-    match_score: int
+
+    match_score: int | None = None
+
     recommendation: str
-    strengths: list[str]
-    gaps: list[str]
+
+    status: str
+
+    strengths: list[str] = Field(
+        default_factory=list
+    )
+
+    gaps: list[str] = Field(
+        default_factory=list
+    )
 
 class JobRankingResponse(BaseModel):
     job_id: str
@@ -193,6 +719,9 @@ class JobRankingResponse(BaseModel):
     page_size: int
     total: int
     total_pages: int
+    pending_candidates: int = 0
+    ranking_generated_at: str | None = None
+    ranking_version: int | None = None
     candidates: list[
         CandidateRankingItem
     ]
@@ -256,6 +785,8 @@ class CandidateRequirementsResponse(BaseModel):
     match_score: int
     recommendation: str
     requirements: list[CandidateRequirementItem]
+
+
 # ============================================================
 # JSON CLEANER
 # ============================================================
@@ -382,6 +913,16 @@ def get_job_record(
         "Item"
     )
 
+def validate_job_owner(
+    job: dict,
+    current_user: dict
+):
+    if job.get("owner_id") != current_user["sub"]:
+        raise HTTPException(
+            status_code=403,
+            detail="No tienes permiso para acceder a esta vacante."
+        )
+
 def save_candidate_record(
     candidate: dict
 ):
@@ -403,6 +944,123 @@ def save_evaluation_record(
         Item=evaluation
     )
 
+def assign_candidate_to_job(
+    job_id: str,
+    candidate_id: str,
+    owner_id: str,
+):
+    job_candidates_table.put_item(
+        Item={
+            "job_id": job_id,
+            "candidate_id": candidate_id,
+            "owner_id": owner_id,
+            "status": "PENDING_EVALUATION",
+            "assigned_at": datetime.now(timezone.utc).isoformat(),
+        }
+    )
+
+def get_job_candidate_ids(job_id: str, owner_id: str) -> set[str]:
+    response = job_candidates_table.query(
+        KeyConditionExpression=Key("job_id").eq(job_id),
+        FilterExpression=Attr("owner_id").eq(owner_id),
+    )
+    return {
+        item["candidate_id"]
+        for item in response.get("Items", [])
+        if item.get("candidate_id")
+    }
+
+def get_owned_candidate_ids(owner_id: str) -> set[str]:
+    ids = set()
+    scan_kwargs = {"FilterExpression": Attr("owner_id").eq(owner_id)}
+    while True:
+        response = candidates_table.scan(**scan_kwargs)
+        ids.update(
+            item["candidate_id"]
+            for item in response.get("Items", [])
+            if item.get("candidate_id")
+        )
+        if not response.get("LastEvaluatedKey"):
+            return ids
+        scan_kwargs["ExclusiveStartKey"] = response["LastEvaluatedKey"]
+
+# ============================================================
+# RANKING METADATA
+# ============================================================
+
+def get_ranking_metadata(job_id: str) -> dict | None:
+    try:
+        response = rankings_table.get_item(
+            Key={"job_id": job_id}
+        )
+        return response.get("Item")
+    except Exception as error:
+        logger.exception(
+            "ERROR GETTING RANKING METADATA job_id=%s: %s",
+            job_id,
+            error,
+        )
+        raise HTTPException(
+            status_code=500,
+            detail=(
+                "Error al leer los metadatos del "
+                "ranking."
+            )
+        )
+
+def save_ranking_metadata(job_id: str, version: int):
+    now = datetime.now(timezone.utc).isoformat()
+    try:
+        rankings_table.put_item(
+            Item={
+                "job_id": job_id,
+                "ranking_generated_at": now,
+                "ranking_version": version,
+            }
+        )
+    except Exception as error:
+        logger.exception(
+            "ERROR SAVING RANKING METADATA job_id=%s: %s",
+            job_id,
+            error,
+        )
+        raise HTTPException(
+            status_code=500,
+            detail=(
+                "Error al guardar los metadatos del "
+                "ranking."
+            )
+        )
+
+def get_new_candidate_ids(
+    job_id: str,
+    owner_id: str,
+    since: str,
+) -> set[str]:
+    response = job_candidates_table.query(
+        KeyConditionExpression=Key("job_id").eq(job_id),
+        FilterExpression=(
+            Attr("owner_id").eq(owner_id)
+            & Attr("assigned_at").gt(since)
+        ),
+    )
+    return {
+        item["candidate_id"]
+        for item in response.get("Items", [])
+        if item.get("candidate_id")
+    }
+
+def parse_json_field(value):
+
+    if isinstance(value, str):
+
+        try:
+            return json.loads(value)
+
+        except:
+            return value
+
+    return value
 # ============================================================
 # BUILD SOURCES
 # ============================================================
@@ -1038,7 +1696,6 @@ DESCRIPCIÓN DE LA VACANTE:
     print(evaluated)
     print("=" * 80)
 
-
     # ========================================================
     # GARANTIZAR TODOS LOS REQUISITOS
     # ========================================================
@@ -1058,8 +1715,8 @@ DESCRIPCIÓN DE LA VACANTE:
         )
 
         print(
-            ">>> BUSCANDO:",
-            key,
+            ">>> REQUISITO FINAL:",
+            normalized_requirement,
             "=>",
             existing
         )
@@ -1067,7 +1724,16 @@ DESCRIPCIÓN DE LA VACANTE:
         if existing:
 
             final_requirements.append(
-                existing
+                {
+                    "requirement": normalized_requirement,
+                    "status": existing.get(
+                        "status",
+                        "MISSING"
+                    ),
+                    "evidence": existing.get(
+                        "evidence"
+                    )
+                }
             )
 
         else:
@@ -1080,55 +1746,11 @@ DESCRIPCIÓN DE LA VACANTE:
                 }
             )
 
-    # ========================================================
-    # MISSING
-    # ========================================================
-
-    if status == "MISSING":
-        evidence = None
-
-    elif evidence:
-
-        words = evidence.split()
-
-        if len(words) > 30:
-            evidence = (
-                " ".join(words[:30])
-                + "..."
-            )
-
-
-    # ========================================================
-    # GARANTIZAR TODOS LOS REQUISITOS
-    # ========================================================
-    final_requirements = []
-
-    for requirement in requirements_from_job:
-
-        existing = evaluated.get(
-            requirement.lower()
-        )
-
-        if existing:
-
-            final_requirements.append(
-                existing
-            )
-
-        else:
-
-            final_requirements.append(
-                {
-                    "requirement": requirement,
-                    "status": "MISSING",
-                    "evidence": None
-                }
-            )
-
 
     # ========================================================
     # SCORE
     # ========================================================
+
     total = len(
         final_requirements
     )
@@ -1137,13 +1759,19 @@ DESCRIPCIÓN DE LA VACANTE:
 
     for requirement in final_requirements:
 
-        if requirement["status"] == "MATCH":
+        status = requirement.get(
+            "status",
+            "MISSING"
+        )
+
+        if status == "MATCH":
 
             points += 1
 
-        elif requirement["status"] == "PARTIAL":
+        elif status == "PARTIAL":
 
             points += 0.5
+
 
     if total > 0:
 
@@ -1161,38 +1789,58 @@ DESCRIPCIÓN DE LA VACANTE:
     # ========================================================
 
     if match_score >= 80:
+
         recommendation = "STRONG_MATCH"
+
     elif match_score >= 60:
+
         recommendation = "PARTIAL_MATCH"
+
     else:
+
         recommendation = "LOW_MATCH"
+
 
     # ========================================================
     # STRENGTHS
     # ========================================================
 
-    strengths = [
-        requirement["requirement"]
-        for requirement
-        in final_requirements
-        if requirement["status"] == "MATCH"
-    ]
+    strengths = []
+
+    for requirement in final_requirements:
+
+        if requirement.get(
+            "status"
+        ) == "MATCH":
+
+            strengths.append(
+                requirement.get(
+                    "requirement"
+                )
+            )
+
 
     # ========================================================
     # GAPS
     # ========================================================
-    gaps = [
-        requirement["requirement"]
-        for requirement
-        in final_requirements
-        if requirement["status"]
-        in {
+
+    gaps = []
+
+    for requirement in final_requirements:
+
+        if requirement.get(
+            "status"
+        ) in {
             "PARTIAL",
             "MISSING"
-        }
-    ]
+        }:
 
-
+            gaps.append(
+                requirement.get(
+                    "requirement"
+                )
+            )
+            
     # ========================================================
     # SUMMARY
     # ========================================================
@@ -1256,16 +1904,20 @@ DESCRIPCIÓN DE LA VACANTE:
     }
 
 # ============================================================
+# ENDPOINTS
+# ============================================================
+
+# ============================================================
 # HEALTH
 # ============================================================
-@app.get("/")
+@app.get("/api/")
 def root():
     return {
         "service": "AI Recruiter API",
         "status": "ok"
     }
 
-@app.get("/health")
+@app.get("/api/health")
 def health():
     return {
         "status": "healthy"
@@ -1274,12 +1926,12 @@ def health():
 # ============================================================
 # CREATE JOB
 # ============================================================
-@app.post(
-    "/jobs",
+@app.post("/api/jobs",
     response_model=JobResponse
 )
 def create_job(
-    request: CreateJobRequest
+    request: CreateJobRequest,
+    current_user: dict = Depends(get_current_user)
 ):
     try:
         job_id = str(
@@ -1288,7 +1940,8 @@ def create_job(
         job = {
             "job_id": job_id,
             "title": request.title.strip(),
-            "description": request.description.strip()
+            "description": request.description.strip(),
+            "owner_id": current_user["sub"]
         }
         save_job_record(
             job
@@ -1312,17 +1965,32 @@ def create_job(
 # ============================================================
 # LIST JOBS
 # ============================================================
-@app.get(
-    "/jobs"
+@app.get("/api/jobs"
 )
-def list_jobs():
+def list_jobs(
+    current_user: dict = Depends(get_current_user)
+):
     try:
         response = jobs_table.scan()
+
+        jobs = response.get(
+            "Items",
+            []
+        )
+
+        owner_id = current_user["sub"]
+
+        user_jobs = [
+            job
+            for job in jobs
+            if job.get("owner_id") == owner_id
+        ]
+        for job in user_jobs:
+            assigned_ids = get_job_candidate_ids(job["job_id"], owner_id)
+            job["candidate_count"] = len(assigned_ids)
+
         return {
-            "jobs": response.get(
-                "Items",
-                []
-            )
+            "jobs": user_jobs
         }
     except Exception as e:
         print(
@@ -1334,44 +2002,190 @@ def list_jobs():
         )
 
 # ============================================================
-# GET JOB
-# ============================================================
-@app.get(
-    "/jobs/{job_id}",
-    response_model=JobResponse
-)
-def get_job(
-    job_id: str
-):
-    try:
-        job = get_job_record(
-            job_id
-        )
-        if not job:
-            raise HTTPException(
-                status_code=404,
-                detail="Vacante no encontrada."
-            )
-        return JobResponse(
-            **job
-        )
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(
-            status_code=500,
-            detail=str(e)
-        )
-
-# ============================================================
 # CREATE CANDIDATE / UPLOAD CV
 # ============================================================
-@app.post(
-    "/candidates"
+def _clean_extracted_text(value: str | None) -> str | None:
+    if not value:
+        return None
+    value = re.sub(r"\s+", " ", value).strip(" \t\r\n-|•")
+    return value or None
+
+
+def extract_candidate_profile_from_pdf(pdf_bytes: bytes) -> dict:
+    reader = PdfReader(BytesIO(pdf_bytes))
+    text = "\n".join(page.extract_text() or "" for page in reader.pages)
+    lines = [_clean_extracted_text(line) for line in text.splitlines()]
+    lines = [line for line in lines if line]
+    email = re.search(r"\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b", text, re.I)
+    phone = re.search(r"(?<!\w)(?:\+?\d[\d\s().-]{7,}\d)(?!\w)", text)
+    name = None
+    for line in lines[:12]:
+        words = line.split()
+        if 2 <= len(words) <= 5 and (not email or email.group(0).lower() not in line.lower()):
+            if all(re.match(r"^[^\W\d_][\w'’-]*$", word, re.UNICODE) for word in words):
+                name = line
+                break
+    location = None
+    title = None
+    for line in lines[:40]:
+        lower = line.lower()
+        if ":" in line and any(x in lower for x in ("ubicación", "location", "ciudad", "dirección")):
+            location = _clean_extracted_text(line.split(":", 1)[1])
+        if ":" in line and any(x in lower for x in ("perfil", "professional title", "cargo", "title")):
+            title = _clean_extracted_text(line.split(":", 1)[1])
+    if not title:
+        title = next((line for line in lines[:20] if any(
+            x in line.lower() for x in ("developer", "engineer", "manager", "designer", "analyst",
+                                        "desarrollador", "ingeniero", "gerente")
+        )), None)
+    return {
+        "name": _clean_extracted_text(name),
+        "email": _clean_extracted_text(email.group(0) if email else None),
+        "phone": _clean_extracted_text(phone.group(0) if phone else None),
+        "location": location,
+        "professional_title": _clean_extracted_text(title),
+    }
+
+
+def _fallback_candidate_name(filename: str) -> str:
+    stem = os.path.splitext(os.path.basename(filename))[0]
+    return _clean_extracted_text(re.sub(r"[_-]+", " ", stem)) or "Candidato"
+
+
+def _service_error_message(error: Exception) -> str:
+    response = getattr(error, "response", {})
+    aws_error = response.get("Error", {}) if isinstance(response, dict) else {}
+    return aws_error.get("Message", "No fue posible completar el registro del candidato.")
+
+
+async def _prepare_bulk_candidate(
+    file: UploadFile,
+    current_user: dict,
+    start_ingestion: bool = True,
+) -> dict:
+    original_filename = os.path.basename(file.filename or "")
+    if not original_filename.lower().endswith(".pdf"):
+        raise ValueError("El CV debe estar en formato PDF.")
+    content = await file.read()
+    if not content:
+        raise ValueError("El archivo está vacío.")
+    if len(content) > MAX_CV_SIZE_BYTES:
+        raise ValueError("El archivo supera el límite de 15 MB.")
+    if not content.startswith(b"%PDF"):
+        raise ValueError("El archivo no tiene una firma PDF válida.")
+    try:
+        profile = extract_candidate_profile_from_pdf(content)
+    except Exception as error:
+        raise ValueError("No fue posible procesar el PDF.") from error
+    candidate_id = str(uuid.uuid4())
+    name = profile["name"] or _fallback_candidate_name(original_filename)
+    filename = f"cv-{candidate_id}.pdf"
+    metadata_filename = f"{filename}.metadata.json"
+    s3_key = f"{S3_PREFIX}/{filename}"
+    metadata_key = f"{S3_PREFIX}/{metadata_filename}"
+    metadata = {"metadataAttributes": {
+        "candidate_id": {"value": {"type": "STRING", "stringValue": candidate_id}},
+        "candidate_name": {"value": {"type": "STRING", "stringValue": name}},
+        "user_sub": {"value": {"type": "STRING", "stringValue": current_user["sub"]}},
+    }}
+    try:
+        s3.put_object(Bucket=S3_BUCKET, Key=s3_key, Body=content, ContentType="application/pdf")
+        s3.put_object(
+            Bucket=S3_BUCKET, Key=metadata_key,
+            Body=json.dumps(metadata, ensure_ascii=False).encode("utf-8"),
+            ContentType="application/json",
+        )
+        ingestion = {}
+        if start_ingestion:
+            ingestion = bedrock_agent.start_ingestion_job(
+                knowledgeBaseId=KNOWLEDGE_BASE_ID, dataSourceId=DATA_SOURCE_ID
+            ).get("ingestionJob", {})
+        record = {
+            "candidate_id": candidate_id, "owner_id": current_user["sub"], "user_sub": current_user["sub"],
+            "name": name, **profile, "filename": filename, "original_filename": original_filename,
+            "s3_location": f"s3://{S3_BUCKET}/{s3_key}",
+            "metadata_location": f"s3://{S3_BUCKET}/{metadata_key}",
+            "ingestion_job_id": ingestion.get("ingestionJobId"),
+            "ingestion_status": ingestion.get("status") or "PENDING", "indexed": False,
+        }
+        save_candidate_record(record)
+        return record
+    except Exception as error:
+        try:
+            s3.delete_object(Bucket=S3_BUCKET, Key=s3_key)
+            s3.delete_object(Bucket=S3_BUCKET, Key=metadata_key)
+        except Exception:
+            pass
+        raise RuntimeError(_service_error_message(error)) from error
+
+
+@app.post("/api/candidates/bulk")
+async def create_candidates_bulk(
+    files: list[UploadFile] = File(...),
+    current_user: dict = Depends(get_current_user),
+):
+    print("BULK_UPLOAD_STARTED", {"count": len(files), "user_sub": current_user.get("sub")})
+    if not files:
+        raise HTTPException(status_code=400, detail="Debes seleccionar al menos un PDF.")
+    if len(files) > 100:
+        raise HTTPException(status_code=400, detail="Puedes subir un máximo de 100 PDFs por lote.")
+    candidates, errors = [], []
+    for file in files:
+        original_filename = os.path.basename(file.filename or "")
+        print("BULK_FILE_PROCESSING", {"filename": original_filename})
+        try:
+            candidates.append(await _prepare_bulk_candidate(file, current_user, start_ingestion=False))
+            print("BULK_FILE_SUCCESS", {"filename": original_filename})
+        except (ValueError, RuntimeError) as error:
+            errors.append({"original_filename": original_filename, "error": str(error)})
+            print("BULK_FILE_FAILED", {"filename": original_filename, "error": str(error)})
+        except Exception:
+            errors.append({"original_filename": original_filename, "error": "Error inesperado al procesar el archivo."})
+            print("BULK_FILE_FAILED", {"filename": original_filename, "error": "unexpected_error"})
+    ingestion_error = None
+    if candidates:
+        try:
+            ingestion = bedrock_agent.start_ingestion_job(
+                knowledgeBaseId=KNOWLEDGE_BASE_ID,
+                dataSourceId=DATA_SOURCE_ID,
+            ).get("ingestionJob", {})
+            ingestion_job_id = ingestion.get("ingestionJobId")
+            ingestion_status = ingestion.get("status") or "STARTING"
+            for candidate in candidates:
+                candidate["ingestion_job_id"] = ingestion_job_id
+                candidate["ingestion_status"] = ingestion_status
+                save_candidate_record(candidate)
+        except Exception as error:
+            ingestion_error = _service_error_message(error)
+            for candidate in candidates:
+                candidate["ingestion_status"] = "ERROR"
+                candidate["ingestion_error"] = ingestion_error
+                save_candidate_record(candidate)
+    result = {
+        "processed": len(files),
+        "successful": len(candidates),
+        "failed": len(errors),
+        "total": len(files),
+        "created": len(candidates),
+        "candidates": candidates,
+        "errors": errors,
+    }
+    if ingestion_error:
+        result["ingestion_error"] = ingestion_error
+    print("BULK_UPLOAD_COMPLETED", {
+        "processed": result["processed"],
+        "successful": result["successful"],
+        "failed": result["failed"],
+    })
+    return result
+
+
+@app.post("/api/candidates"
 )
 async def create_candidate(
     name: str = Form(...),
-    file: UploadFile = File(...)
+    file: UploadFile = File(...),
+    current_user: dict = Depends(get_current_user)
 ):
     if not name.strip():
         raise HTTPException(
@@ -1526,6 +2340,8 @@ async def create_candidate(
     # ========================================================
     candidate_record = {
         "candidate_id": candidate_id,
+        "owner_id": current_user["sub"],
+        "user_sub": current_user["sub"],
         "name": name.strip(),
         "filename": filename,
         "s3_location": (
@@ -1576,13 +2392,120 @@ async def create_candidate(
     }
 
 # ============================================================
-# GET CANDIDATE
+# DOWNLOAD CANDIDATE CV
 # ============================================================
-@app.get(
-    "/candidates/{candidate_id}"
+
+@app.get("/api/candidates/{candidate_id}/download"
+)
+def download_candidate_cv(
+    candidate_id: str,
+    current_user: dict = Depends(get_current_user)
+):
+    try:
+
+        candidate = get_candidate_record(
+            candidate_id
+        )
+
+        if not candidate:
+            raise HTTPException(
+                status_code=404,
+                detail="Candidato no encontrado."
+            )
+
+        # ================================================
+        # VALIDAR PROPIETARIO
+        # ================================================
+
+        if candidate.get(
+            "owner_id"
+        ) != current_user["sub"]:
+
+            raise HTTPException(
+                status_code=403,
+                detail="No tienes permiso para acceder a este CV."
+            )
+
+        # ================================================
+        # OBTENER S3 KEY
+        # ================================================
+
+        s3_location = candidate.get(
+            "s3_location"
+        )
+
+        if not s3_location:
+            raise HTTPException(
+                status_code=404,
+                detail="El CV no tiene ubicación en S3."
+            )
+
+        prefix = f"s3://{S3_BUCKET}/"
+
+        if s3_location.startswith(prefix):
+            s3_key = s3_location[len(prefix):]
+        else:
+            s3_key = s3_location
+
+        # ================================================
+        # GENERAR URL TEMPORAL
+        # ================================================
+
+        download_filename = candidate.get("filename")
+
+        if candidate.get("name"):
+            clean_name = (
+                candidate["name"]
+                .strip()
+                .replace(" ", "_")
+            )
+
+            download_filename = f"{clean_name}_CV.pdf"
+
+        if not download_filename:
+            download_filename = "CV.pdf"
+
+
+        download_url = s3.generate_presigned_url(
+            ClientMethod="get_object",
+            Params={
+                "Bucket": S3_BUCKET,
+                "Key": s3_key,
+                "ResponseContentType": "application/pdf",
+                "ResponseContentDisposition": (
+                    f'attachment; filename="{download_filename}"'
+                ),
+            },
+            ExpiresIn=300
+        )
+
+        return {
+            "download_url": download_url
+        }
+
+    except HTTPException:
+        raise
+
+    except Exception as e:
+
+        print(
+            "ERROR DOWNLOAD CANDIDATE CV:",
+            str(e)
+        )
+
+        raise HTTPException(
+            status_code=500,
+            detail="No fue posible generar la descarga del CV."
+        )
+
+# ============================================================
+# GET CANDIDATE BY ID
+# ============================================================
+@app.get("/api/candidates/{candidate_id}"
 )
 def get_candidate(
-    candidate_id: str
+    candidate_id: str,
+    current_user: dict = Depends(get_current_user)
 ):
     try:
         candidate = get_candidate_record(
@@ -1592,6 +2515,11 @@ def get_candidate(
             raise HTTPException(
                 status_code=404,
                 detail="Candidato no encontrado."
+            )
+        if candidate.get("owner_id") != current_user["sub"]:
+            raise HTTPException(
+                status_code=403,
+                detail="No tienes permiso para acceder a este candidato."
             )
         ingestion_job_id = candidate.get(
             "ingestion_job_id"
@@ -1672,21 +2600,112 @@ def get_candidate(
             detail=str(e)
         )
 
+
+# ============================================================
+# GET JOB BY ID
+# ============================================================
+
+@app.get("/api/jobs/{job_id}"
+)
+def get_job(
+    job_id: str,
+    current_user: dict = Depends(get_current_user)
+):
+
+    job = get_job_record(
+        job_id
+    )
+
+    if not job:
+        raise HTTPException(
+            status_code=404,
+            detail="Vacante no encontrada."
+        )
+
+    validate_job_owner(
+        job,
+        current_user
+    )
+
+    return job
+
+@app.post("/api/jobs/{job_id}/candidates")
+def assign_candidates_to_job(
+    job_id: str,
+    request: AssignCandidatesRequest,
+    current_user: dict = Depends(get_current_user),
+):
+    job = get_job_record(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Vacante no encontrada.")
+    validate_job_owner(job, current_user)
+
+    assigned = 0
+    for candidate_id in dict.fromkeys(request.candidate_ids):
+        candidate = get_candidate_record(candidate_id)
+        if not candidate:
+            continue
+        if candidate.get("owner_id") != current_user["sub"]:
+            raise HTTPException(
+                status_code=403,
+                detail="No tienes permiso sobre uno de los candidatos.",
+            )
+        assign_candidate_to_job(job_id, candidate_id, current_user["sub"])
+        assigned += 1
+
+    return {
+        "job_id": job_id,
+        "assigned": assigned,
+        "candidate_ids": list(dict.fromkeys(request.candidate_ids)),
+    }
+
+@app.delete("/api/jobs/{job_id}/candidates/{candidate_id}")
+def unassign_candidate_from_job(
+    job_id: str,
+    candidate_id: str,
+    current_user: dict = Depends(get_current_user),
+):
+    job = get_job_record(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Vacante no encontrada.")
+    validate_job_owner(job, current_user)
+    candidate = get_candidate_record(candidate_id)
+    if not candidate or candidate.get("owner_id") != current_user["sub"]:
+        raise HTTPException(status_code=404, detail="Candidato no encontrado.")
+    job_candidates_table.delete_item(
+        Key={"job_id": job_id, "candidate_id": candidate_id}
+    )
+    return {"job_id": job_id, "candidate_id": candidate_id, "unassigned": True}
+
 # ============================================================
 # LIST CANDIDATES
 # ============================================================
-@app.get(
-    "/candidates"
+@app.get("/api/candidates"
 )
-def list_candidates():
+def list_candidates(
+    current_user: dict = Depends(get_current_user)
+):
+
     try:
         response = candidates_table.scan()
+        
+        candidates = response.get(
+            "Items",
+            []
+        )
+
+        owner_id = current_user["sub"]
+
+        user_candidates = [
+            candidate
+            for candidate in candidates
+            if candidate.get("owner_id") == owner_id
+        ]
+
         return {
-            "candidates": response.get(
-                "Items",
-                []
-            )
+            "candidates": user_candidates
         }
+
     except Exception as e:
         print(
             f"ERROR LIST CANDIDATES: {str(e)}"
@@ -1697,14 +2716,266 @@ def list_candidates():
         )
 
 # ============================================================
+# DELETE CANDIDATE
+# ============================================================
+
+@app.delete("/api/candidates")
+def delete_all_candidates(
+    current_user: dict = Depends(get_current_user),
+):
+    try:
+        owner_id = current_user["sub"]
+        scan_kwargs = {}
+        owned_candidates = []
+        while True:
+            page = candidates_table.scan(**scan_kwargs)
+            owned_candidates.extend(
+                candidate
+                for candidate in page.get("Items", [])
+                if candidate.get("owner_id") == owner_id
+            )
+            last_key = page.get("LastEvaluatedKey")
+            if not last_key:
+                break
+            scan_kwargs["ExclusiveStartKey"] = last_key
+
+        deleted = 0
+        errors = []
+        for candidate in owned_candidates:
+            candidate_id = candidate.get("candidate_id")
+            try:
+                evaluations = evaluations_table.query(
+                    IndexName="candidate-index",
+                    KeyConditionExpression=Key("candidate_id").eq(candidate_id),
+                )
+                for evaluation in evaluations.get("Items", []):
+                    evaluations_table.delete_item(
+                        Key={
+                            "job_id": evaluation["job_id"],
+                            "candidate_id": evaluation["candidate_id"],
+                        }
+                    )
+
+                candidates_table.delete_item(Key={"candidate_id": candidate_id})
+                for location_key in ("s3_location", "metadata_location"):
+                    location = candidate.get(location_key)
+                    if location:
+                        parts = location.split("/", 3)
+                        if len(parts) == 4:
+                            s3.delete_object(Bucket=parts[2], Key=parts[3])
+                deleted += 1
+            except Exception as error:
+                errors.append({"candidate_id": candidate_id, "error": str(error)})
+
+        return {
+            "requested": len(owned_candidates),
+            "deleted": deleted,
+            "failed": len(errors),
+            "errors": errors,
+        }
+    except Exception as error:
+        print(f"ERROR DELETE ALL CANDIDATES: {str(error)}")
+        raise HTTPException(status_code=500, detail="No fue posible eliminar los candidatos.")
+
+
+@app.delete("/api/candidates/{candidate_id}"
+)
+def delete_candidate(
+    candidate_id: str,
+    current_user: dict = Depends(get_current_user)
+):
+
+    try:
+
+        candidate = get_candidate_record(
+            candidate_id
+        )
+
+        if not candidate:
+            raise HTTPException(
+                status_code=404,
+                detail="Candidato no encontrado."
+            )
+
+
+        if candidate.get(
+            "owner_id"
+        ) != current_user["sub"]:
+
+            raise HTTPException(
+                status_code=403,
+                detail="No tienes permiso sobre este candidato."
+            )
+
+
+        # eliminar evaluaciones relacionadas
+        evaluations = evaluations_table.query(
+            IndexName="candidate-index",
+            KeyConditionExpression=
+                Key("candidate_id").eq(candidate_id)
+        )
+
+
+        for evaluation in evaluations.get(
+            "Items",
+            []
+        ):
+
+            evaluations_table.delete_item(
+                Key={
+                    "job_id":
+                        evaluation["job_id"],
+                    "candidate_id":
+                        evaluation["candidate_id"]
+                }
+            )
+
+
+        # eliminar registro candidato
+
+        candidates_table.delete_item(
+            Key={
+                "candidate_id":
+                    candidate_id
+            }
+        )
+
+
+        # eliminar PDF S3
+
+        if candidate.get(
+            "s3_location"
+        ):
+
+            bucket = candidate["s3_location"].split("/")[2]
+
+            key = "/".join(
+                candidate["s3_location"].split("/")[3:]
+            )
+
+            s3.delete_object(
+                Bucket=bucket,
+                Key=key
+            )
+
+
+        return {
+            "message":
+                "Candidato eliminado correctamente.",
+            "candidate_id":
+                candidate_id
+        }
+
+
+    except HTTPException:
+        raise
+
+
+    except Exception as e:
+
+        print(
+            f"ERROR DELETE CANDIDATE: {str(e)}"
+        )
+
+        raise HTTPException(
+            status_code=500,
+            detail=str(e)
+        )
+
+# ============================================================
+# DELETE JOB
+# ============================================================
+
+@app.delete("/api/jobs/{job_id}"
+)
+def delete_job(
+    job_id: str,
+    current_user: dict = Depends(get_current_user)
+):
+
+    try:
+
+        job = get_job_record(
+            job_id
+        )
+
+
+        if not job:
+            raise HTTPException(
+                status_code=404,
+                detail="Vacante no encontrada."
+            )
+
+
+        validate_job_owner(
+            job,
+            current_user
+        )
+
+
+        # borrar evaluaciones asociadas
+
+        evaluations =  evaluations_table.scan(
+            FilterExpression=
+                Attr("job_id").eq(job_id)
+        )
+
+
+        for evaluation in evaluations.get(
+            "Items",
+            []
+        ):
+
+            evaluations_table.delete_item(
+                Key={
+                    "job_id": job_id,
+                    "candidate_id": evaluation["candidate_id"]
+                }
+            )
+
+
+        # borrar vacante
+
+        jobs_table.delete_item(
+            Key={
+                "job_id":
+                    job_id
+            }
+        )
+
+
+        return {
+            "message":
+                "Vacante eliminada correctamente.",
+            "job_id":
+                job_id
+        }
+
+
+
+    except HTTPException:
+        raise
+
+
+    except Exception as e:
+
+        print(
+            f"ERROR DELETE JOB: {str(e)}"
+        )
+
+        raise HTTPException(
+            status_code=500,
+            detail=str(e)
+        )
+# ============================================================
 # INGESTION STATUS
 # ============================================================
-@app.get(
-    "/candidates/{candidate_id}/ingestion/{ingestion_job_id}"
+@app.get("/api/candidates/{candidate_id}/ingestion/{ingestion_job_id}"
 )
 def get_ingestion_status(
     candidate_id: str,
-    ingestion_job_id: str
+    ingestion_job_id: str,
+    current_user: dict = Depends(get_current_user)
 ):
     try:
         response = (
@@ -1765,13 +3036,13 @@ def get_ingestion_status(
 # ============================================================
 # ASK CANDIDATE
 # ============================================================
-@app.post(
-    "/candidates/{candidate_id}/ask",
+@app.post("/api/candidates/{candidate_id}/ask",
     response_model=AskCandidateResponse
 )
 def ask_candidate(
     candidate_id: str,
-    request: AskCandidateRequest
+    request: AskCandidateRequest,
+    current_user: dict = Depends(get_current_user)
 ):
     try:
         candidate = get_candidate_record(
@@ -1781,6 +3052,11 @@ def ask_candidate(
             raise HTTPException(
                 status_code=404,
                 detail="Candidato no encontrado."
+            )
+        if candidate.get("owner_id") != current_user["sub"]:
+            raise HTTPException(
+                status_code=403,
+                detail="No tienes permiso para consultar este candidato."
             )
         results = retrieve_candidate(
             candidate_id=candidate_id,
@@ -1822,13 +3098,13 @@ def ask_candidate(
 # ============================================================
 # EVALUATE CANDIDATE DIRECT
 # ============================================================
-@app.post(
-    "/candidates/{candidate_id}/evaluate",
+@app.post("/api/candidates/{candidate_id}/evaluate",
     response_model=CandidateEvaluation
 )
 def evaluate_candidate_endpoint(
     candidate_id: str,
-    request: EvaluateCandidateRequest
+    request: EvaluateCandidateRequest,
+    current_user: dict = Depends(get_current_user)
 ):
     try:
         candidate = get_candidate_record(
@@ -1893,13 +3169,13 @@ def evaluate_candidate_endpoint(
 # ============================================================
 # EVALUATE CANDIDATE AGAINST JOB
 # ============================================================
-@app.post(
-    "/candidates/{candidate_id}/evaluate-job",
+@app.post("/api/candidates/{candidate_id}/evaluate-job",
     response_model=CandidateEvaluation
 )
 def evaluate_candidate_job(
     candidate_id: str,
-    request: EvaluateJobRequest
+    request: EvaluateJobRequest,
+    current_user: dict = Depends(get_current_user)
 ):
     try:
         candidate = get_candidate_record(
@@ -1920,6 +3196,15 @@ def evaluate_candidate_job(
                     "Vacante no encontrada."
                 )
             )
+        if candidate.get("owner_id") != current_user["sub"]:
+            raise HTTPException(
+                status_code=403,
+                detail="No tienes permiso sobre este candidato."
+            )
+        validate_job_owner(
+            job,
+            current_user
+        )   
         results = retrieve_candidate(
             candidate_id=candidate_id,
             question=job["description"]
@@ -1934,9 +3219,26 @@ def evaluate_candidate_job(
         # ====================================================
         evaluation_record = {
             "job_id": request.job_id,
+            "job_title": job.get(
+                "title",
+                ""
+            ),
+
+            "job_description": job.get(
+                "description",
+                ""
+            ),
+
             "candidate_id": candidate_id,
+            "candidate_name": candidate.get(
+                "name",
+                ""
+            ),
+
+            "owner_id": job["owner_id"],
 
             "status": "COMPLETED",
+            "evaluated_at": datetime.now(timezone.utc).isoformat(),
 
             "match_score": int(
                 evaluation.get(
@@ -2026,19 +3328,120 @@ def evaluate_candidate_job(
         )
 
 # ============================================================
-# EVALUATE ALL CANDIDATES AGAINST JOB
+# RECALCULATE JOB RANKING
 # ============================================================
-@app.post(
-    "/jobs/{job_id}/evaluate"
+@app.post("/api/jobs/{job_id}/ranking/recalculate")
+def recalculate_job_ranking(
+    job_id: str,
+    mode: str = "full",
+    scope: str = "assigned",
+    current_user: dict = Depends(get_current_user),
+):
+    """Reevaluate candidates for a job.
+
+    mode="full"      – reevaluate every assigned candidate.
+    mode="incremental" – evaluate only candidates assigned since the
+                         last ranking run (assigned_at > ranking_generated_at).
+    """
+    if mode not in ("full", "incremental"):
+        raise HTTPException(
+            status_code=400,
+            detail="mode debe ser 'full' o 'incremental'.",
+        )
+
+    job = get_job_record(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Vacante no encontrada.")
+    validate_job_owner(job, current_user)
+
+    owner_id = current_user["sub"]
+
+    # ------------------------------------------------------------------
+    # Determine which candidate ids to evaluate
+    # ------------------------------------------------------------------
+    if mode == "incremental":
+        metadata = get_ranking_metadata(job_id)
+        since = metadata.get("ranking_generated_at") if metadata else None
+        if since:
+            assigned_ids = get_new_candidate_ids(job_id, owner_id, since)
+        else:
+            # No previous ranking – evaluate everything (first run).
+            assigned_ids = get_job_candidate_ids(job_id, owner_id)
+    else:
+        assigned_ids = get_job_candidate_ids(job_id, owner_id)
+
+    if scope == "all":
+        if mode == "incremental":
+            # When scope=all + incremental, fall back to full on owned pool.
+            # (no per-owner assigned_at tracking for "all" scope)
+            assigned_ids = get_owned_candidate_ids(owner_id)
+        else:
+            assigned_ids = get_owned_candidate_ids(owner_id)
+
+    # ------------------------------------------------------------------
+    # Fetch candidate records
+    # ------------------------------------------------------------------
+    candidates = []
+    scan_kwargs = {"FilterExpression": Attr("owner_id").eq(owner_id)}
+    while True:
+        response = candidates_table.scan(**scan_kwargs)
+        candidates.extend(
+            candidate for candidate in response.get("Items", [])
+            if candidate.get("candidate_id") in assigned_ids
+        )
+        last_key = response.get("LastEvaluatedKey")
+        if not last_key:
+            break
+        scan_kwargs["ExclusiveStartKey"] = last_key
+
+    # ------------------------------------------------------------------
+    # Evaluate
+    # ------------------------------------------------------------------
+    evaluated = 0
+    failures = []
+    for candidate in candidates:
+        try:
+            evaluate_candidate_job(
+                candidate["candidate_id"],
+                EvaluateJobRequest(job_id=job_id),
+                current_user,
+            )
+            evaluated += 1
+        except HTTPException as error:
+            failures.append({
+                "candidate_id": candidate.get("candidate_id"),
+                "error": error.detail,
+            })
+
+    # ------------------------------------------------------------------
+    # Update ranking metadata
+    # ------------------------------------------------------------------
+    prev_metadata = get_ranking_metadata(job_id)
+    prev_version = prev_metadata.get("ranking_version", 0) if prev_metadata else 0
+    new_version = prev_version + 1
+    save_ranking_metadata(job_id, new_version)
+
+    return {
+        "job_id": job_id,
+        "mode": mode,
+        "total_candidates": len(candidates),
+        "evaluated": evaluated,
+        "failed": len(failures),
+        "failures": failures,
+        "ranking_version": new_version,
+    }
+
+# ============================================================
+# GET EVALUATIONS BY JOB
+# ============================================================
+@app.get("/api/jobs/{job_id}/evaluations"
 )
-def evaluate_job_against_all_candidates(
-    job_id: str
+def get_job_evaluations(
+    job_id: str,
+    current_user: dict = Depends(get_current_user)
 ):
     try:
 
-        # ====================================================
-        # OBTENER JOB
-        # ====================================================
         job = get_job_record(
             job_id
         )
@@ -2049,202 +3452,208 @@ def evaluate_job_against_all_candidates(
                 detail="Vacante no encontrada."
             )
 
-        print("=" * 60)
-        print(
-            f">>> EVALUANDO JOB: {job_id}"
-        )
-        print(
-            f">>> JOB TITLE: {job['title']}"
-        )
-        print("=" * 60)
 
-        # ====================================================
-        # OBTENER CANDIDATOS
-        # ====================================================
-        response = candidates_table.scan()
+        validate_job_owner(
+            job,
+            current_user
+        )
 
-        candidates = response.get(
+
+        response = evaluations_table.query(
+            KeyConditionExpression=
+                Key("job_id").eq(job_id)
+        )
+
+
+        evaluations = response.get(
             "Items",
             []
         )
 
-        print(
-            f">>> CANDIDATOS ENCONTRADOS: {len(candidates)}"
-        )
+        for item in evaluations:
 
-        # ====================================================
-        # EVALUAR CADA CANDIDATO
-        # ====================================================
-        evaluations = []
-
-        for candidate in candidates:
-
-            candidate_id = candidate.get(
-                "candidate_id"
+            item["requirements"] = parse_json_field(
+                item.get("requirements", [])
             )
 
-            if not candidate_id:
-                continue
-
-            print("=" * 60)
-            print(
-                f">>> EVALUANDO CANDIDATO: {candidate_id}"
-            )
-            print("=" * 60)
-
-            # ================================================
-            # RETRIEVE CV
-            # ================================================
-            results = retrieve_candidate(
-                candidate_id=candidate_id,
-                question=job["description"]
+            item["strengths"] = parse_json_field(
+                item.get("strengths", [])
             )
 
-            # ================================================
-            # EVALUATE
-            # ================================================
-            evaluation = evaluate_candidate(
-                candidate_id=candidate_id,
-                job_description=job["description"],
-                results=results
+            item["gaps"] = parse_json_field(
+                item.get("gaps", [])
             )
 
-            # ================================================
-            # SAVE
-            # ================================================
-            evaluation_record = {
-                "job_id": job_id,
-                "candidate_id": candidate_id,
 
-                "match_score": int(
-                    evaluation.get(
-                        "match_score",
-                        0
-                    )
-                ),
-
-                "recommendation": evaluation.get(
-                    "recommendation",
-                    "LOW_MATCH"
-                ),
-
-                "requirements": json.dumps(
-                    evaluation.get(
-                        "requirements",
-                        []
-                    ),
-                    ensure_ascii=False
-                ),
-
-                "strengths": json.dumps(
-                    evaluation.get(
-                        "strengths",
-                        []
-                    ),
-                    ensure_ascii=False
-                ),
-
-                "gaps": json.dumps(
-                    evaluation.get(
-                        "gaps",
-                        []
-                    ),
-                    ensure_ascii=False
-                ),
-
-                "summary": evaluation.get(
-                    "summary",
-                    ""
-                )
-            }
-
-            save_evaluation_record(
-                evaluation_record
-            )
-
-            # ================================================
-            # RESPONSE ITEM
-            # ================================================
-            evaluations.append(
-                {
-                    "candidate_id": candidate_id,
-                    "match_score": evaluation.get(
-                        "match_score",
-                        0
-                    ),
-                    "recommendation": evaluation.get(
-                        "recommendation",
-                        "LOW_MATCH"
-                    ),
-                    "strengths": evaluation.get(
-                        "strengths",
-                        []
-                    ),
-                    "gaps": evaluation.get(
-                        "gaps",
-                        []
-                    )
-                }
-            )
-
-        # ====================================================
-        # ORDENAR RESULTADOS
-        # ====================================================
         evaluations.sort(
-            key=lambda item:
-            item["match_score"],
+            key=lambda x: int(
+                x.get(
+                    "match_score",
+                    0
+                )
+            ),
             reverse=True
         )
 
-        # ====================================================
-        # RESPONSE
-        # ====================================================
+
         return {
             "job_id": job_id,
-            "job_title": job["title"],
-            "evaluated_candidates": len(
+            "job_title": job.get(
+                "title",
+                ""
+            ),
+            "total": len(
                 evaluations
             ),
-            "candidates": evaluations
+            "evaluations": evaluations
         }
+
 
     except HTTPException:
         raise
 
+
     except Exception as e:
 
         print(
-            f"ERROR BULK JOB EVALUATION: {str(e)}"
+            f"ERROR GET JOB EVALUATIONS: {str(e)}"
         )
 
         raise HTTPException(
             status_code=500,
             detail=str(e)
         )
-    
+
+# ============================================================
+# GET EVALUATIONS BY CANDIDATE
+# ============================================================
+@app.get("/api/candidates/{candidate_id}/evaluations"
+)
+def get_candidate_evaluations(
+    candidate_id: str,
+    current_user: dict = Depends(get_current_user)
+):
+    try:
+
+        candidate = get_candidate_record(
+            candidate_id
+        )
+
+
+        if not candidate:
+            raise HTTPException(
+                status_code=404,
+                detail="Candidato no encontrado."
+            )
+
+
+        if candidate.get(
+            "owner_id"
+        ) != current_user["sub"]:
+
+            raise HTTPException(
+                status_code=403,
+                detail="No tienes permiso sobre este candidato."
+            )
+
+
+        response = evaluations_table.query(
+            IndexName="candidate-index",
+            KeyConditionExpression=
+                Key("candidate_id").eq(candidate_id)
+        )
+
+
+        evaluations = response.get(
+            "Items",
+            []
+        )
+
+        for item in evaluations:
+
+            item["requirements"] = parse_json_field(
+                item.get("requirements", [])
+            )
+
+            item["strengths"] = parse_json_field(
+                item.get("strengths", [])
+            )
+
+            item["gaps"] = parse_json_field(
+                item.get("gaps", [])
+            )
+
+        return {
+            "candidate_id": candidate_id,
+            "candidate_name": candidate.get(
+                "name",
+                ""
+            ),
+            "total": len(
+                evaluations
+            ),
+            "evaluations": evaluations
+        }
+
+
+    except HTTPException:
+        raise
+
+
+    except Exception as e:
+
+        print(
+            f"ERROR GET CANDIDATE EVALUATIONS: {str(e)}"
+        )
+
+        raise HTTPException(
+            status_code=500,
+            detail=str(e)
+        )
+
 # ============================================================
 # JOB RANKING
 # ============================================================
-@app.get(
-    "/jobs/{job_id}/ranking",
+
+@app.get("/api/jobs/{job_id}/ranking",
     response_model=JobRankingResponse
 )
 def get_job_ranking(
     job_id: str,
+    scope: str = "assigned",
     min_score: int = 0,
+    max_score: int = 100,
     recommendation: str | None = None,
     limit: int | None = None,
     page: int = 1,
-    page_size: int = 10
+    page_size: int = 10,
+    current_user: dict = Depends(get_current_user)
 ):
     try:
 
-        
+        # ====================================================
+        # VALIDACIONES
+        # ====================================================
 
         if min_score < 0 or min_score > 100:
             raise HTTPException(
                 status_code=400,
                 detail="min_score debe estar entre 0 y 100."
+            )
+
+        if max_score < 0 or max_score > 100:
+            raise HTTPException(
+                status_code=400,
+                detail="max_score debe estar entre 0 y 100."
+            )
+
+        if min_score > max_score:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "min_score no puede ser mayor "
+                    "que max_score."
+                )
             )
 
         if limit is not None and limit <= 0:
@@ -2265,61 +3674,208 @@ def get_job_ranking(
                 detail="page_size debe estar entre 1 y 100."
             )
 
-        if recommendation:
+        # ====================================================
+        # NORMALIZAR RECOMMENDATION
+        # ====================================================
 
-            allowed_recommendations = {
-                "STRONG_MATCH",
-                "PARTIAL_MATCH",
-                "LOW_MATCH"
-            }
+        if recommendation:
 
             recommendation = recommendation.upper()
 
+            allowed_recommendations = {
+                "STRONG_MATCH",
+                "GOOD_MATCH",
+                "PARTIAL_MATCH",
+                "LOW_MATCH",
+                "PENDING"
+            }
+
             if recommendation not in allowed_recommendations:
+
                 raise HTTPException(
                     status_code=400,
                     detail=(
                         "recommendation debe ser "
-                        "STRONG_MATCH, PARTIAL_MATCH "
-                        "o LOW_MATCH."
+                        "STRONG_MATCH, GOOD_MATCH, "
+                        "PARTIAL_MATCH, LOW_MATCH "
+                        "o PENDING."
                     )
                 )
 
         # ====================================================
-        # OBTENER JOB
+        # OBTENER VACANTE
         # ====================================================
+
         job = get_job_record(
             job_id
         )
 
         if not job:
+
             raise HTTPException(
                 status_code=404,
                 detail="Vacante no encontrada."
             )
 
         # ====================================================
-        # OBTENER EVALUACIONES
+        # VALIDAR PROPIETARIO
         # ====================================================
-        response = evaluations_table.query(
-            KeyConditionExpression=(
-                boto3.dynamodb.conditions.Key(
-                    "job_id"
-                ).eq(job_id)
+
+        validate_job_owner(
+            job,
+            current_user
+        )
+
+        owner_id = current_user["sub"]
+
+        assigned_ids = get_job_candidate_ids(job_id, owner_id)
+        if scope == "all":
+            assigned_ids = get_owned_candidate_ids(owner_id)
+        if not assigned_ids:
+            legacy_evaluations = evaluations_table.query(
+                KeyConditionExpression=Key("job_id").eq(job_id)
+            ).get("Items", [])
+            for evaluation in legacy_evaluations:
+                candidate_id = evaluation.get("candidate_id")
+                if evaluation.get("owner_id") == owner_id and candidate_id:
+                    assign_candidate_to_job(job_id, candidate_id, owner_id)
+                    assigned_ids.add(candidate_id)
+
+        # ====================================================
+        # OBTENER TODOS LOS CANDIDATOS DEL USUARIO
+        #
+        # candidates_table:
+        #   PK = candidate_id
+        #
+        # Por eso NO usamos:
+        #
+        # candidates_table.query(
+        #     Key("owner_id").eq(...)
+        # )
+        #
+        # Usamos scan + FilterExpression.
+        # ====================================================
+
+        all_candidates = []
+
+        candidates_response = candidates_table.scan(
+            FilterExpression=(
+                boto3.dynamodb.conditions.Attr(
+                    "owner_id"
+                ).eq(
+                    owner_id
+                )
             )
         )
 
-        items = response.get(
-            "Items",
-            []
+        all_candidates.extend(
+            candidate for candidate in candidates_response.get("Items", [])
+            if candidate.get("candidate_id") in assigned_ids
         )
 
-        candidates = []
+        # ====================================================
+        # PAGINACIÓN CORRECTA DEL SCAN
+        # ====================================================
+
+        while candidates_response.get(
+            "LastEvaluatedKey"
+        ):
+
+            candidates_response = candidates_table.scan(
+                FilterExpression=(
+                    boto3.dynamodb.conditions.Attr(
+                        "owner_id"
+                    ).eq(
+                        owner_id
+                    )
+                ),
+                ExclusiveStartKey=(
+                    candidates_response[
+                        "LastEvaluatedKey"
+                    ]
+                )
+            )
+
+            all_candidates.extend(
+                candidate for candidate in candidates_response.get("Items", [])
+                if candidate.get("candidate_id") in assigned_ids
+            )
+
+        print(
+            f"RANKING - candidatos encontrados: "
+            f"{len(all_candidates)}"
+        )
 
         # ====================================================
-        # CONSTRUIR RANKING
+        # OBTENER EVALUACIONES DE LA VACANTE
+        #
+        # evaluations_table:
+        #   PK = job_id
+        #
+        # Por eso Query por job_id es correcto.
         # ====================================================
-        for evaluation in items:
+
+        evaluations = []
+
+        evaluations_response = evaluations_table.query(
+            KeyConditionExpression=(
+                boto3.dynamodb.conditions.Key(
+                    "job_id"
+                ).eq(
+                    job_id
+                )
+            )
+        )
+
+        evaluations.extend(
+            evaluations_response.get(
+                "Items",
+                []
+            )
+        )
+
+        # ====================================================
+        # PAGINACIÓN DE EVALUACIONES
+        # ====================================================
+
+        while evaluations_response.get(
+            "LastEvaluatedKey"
+        ):
+
+            evaluations_response = evaluations_table.query(
+                KeyConditionExpression=(
+                    boto3.dynamodb.conditions.Key(
+                        "job_id"
+                    ).eq(
+                        job_id
+                    )
+                ),
+                ExclusiveStartKey=(
+                    evaluations_response[
+                        "LastEvaluatedKey"
+                    ]
+                )
+            )
+
+            evaluations.extend(
+                evaluations_response.get(
+                    "Items",
+                    []
+                )
+            )
+
+        print(
+            f"RANKING - evaluaciones encontradas: "
+            f"{len(evaluations)}"
+        )
+
+        # ====================================================
+        # INDEXAR EVALUACIONES POR CANDIDATO
+        # ====================================================
+
+        evaluations_by_candidate = {}
+
+        for evaluation in evaluations:
 
             candidate_id = evaluation.get(
                 "candidate_id"
@@ -2328,107 +3884,234 @@ def get_job_ranking(
             if not candidate_id:
                 continue
 
-            # ================================================
-            # OBTENER CANDIDATO
-            # ================================================
-            candidate = get_candidate_record(
+            evaluations_by_candidate[
+                candidate_id
+            ] = evaluation
+
+        print(
+            f"RANKING - candidatos evaluados: "
+            f"{len(evaluations_by_candidate)}"
+        )
+
+        # ====================================================
+        # CONSTRUIR RANKING
+        # ====================================================
+
+        candidates = []
+
+        for candidate in all_candidates:
+
+            candidate_id = candidate.get(
+                "candidate_id"
+            )
+
+            if not candidate_id:
+                continue
+
+            # =================================================
+            # BUSCAR EVALUACIÓN
+            # =================================================
+
+            evaluation = evaluations_by_candidate.get(
                 candidate_id
             )
 
-            if not candidate:
+            # =================================================
+            # CANDIDATO SIN EVALUACIÓN
+            # =================================================
+
+            if not evaluation:
+
+                if recommendation == "PENDING":
+
+                    candidates.append(
+                        {
+                            "candidate_id": candidate_id,
+
+                            "candidate_name": candidate.get(
+                                "name",
+                                "Unknown"
+                            ),
+
+                            "match_score": 0,
+
+                            "recommendation": "PENDING",
+
+                            "strengths": [],
+
+                            "gaps": []
+                        }
+                    )
+
                 continue
 
-            # ================================================
-            # PARSEAR STRENGTHS
-            # ================================================
-            strengths_raw = evaluation.get(
-                "strengths",
-                "[]"
-            )
+            # =================================================
+            # SCORE
+            # =================================================
 
             try:
 
-                strengths = json.loads(
-                    strengths_raw
+                match_score = int(
+                    evaluation.get(
+                        "match_score",
+                        0
+                    )
                 )
 
             except Exception:
 
-                strengths = []
+                match_score = 0
+
+            # Mantener score entre 0 y 100.
+
+            match_score = max(
+                0,
+                min(
+                    100,
+                    match_score
+                )
+            )
+
+            # =================================================
+            # RECOMMENDATION
+            # =================================================
+
+            evaluation_recommendation = (
+                evaluation.get(
+                    "recommendation",
+                    "LOW_MATCH"
+                )
+            )
+
+            if not evaluation_recommendation:
+
+                evaluation_recommendation = (
+                    "LOW_MATCH"
+                )
+
+            evaluation_recommendation = str(
+                evaluation_recommendation
+            ).upper()
+
+            # =================================================
+            # FILTRO MIN SCORE
+            # =================================================
+
+            if match_score < min_score:
+                continue
+
+            # =================================================
+            # FILTRO MAX SCORE
+            # =================================================
+
+            if match_score > max_score:
+                continue
+
+            # =================================================
+            # FILTRO RECOMMENDATION
+            # =================================================
+
+            if (
+                recommendation
+                and recommendation != "PENDING"
+                and evaluation_recommendation
+                != recommendation
+            ):
+                continue
+
+            # =================================================
+            # STRENGTHS
+            # =================================================
+
+            strengths_raw = evaluation.get(
+                "strengths",
+                []
+            )
+
+            if isinstance(
+                strengths_raw,
+                str
+            ):
+
+                try:
+
+                    strengths = json.loads(
+                        strengths_raw
+                    )
+
+                except Exception:
+
+                    strengths = []
+
+            else:
+
+                strengths = strengths_raw
 
             if not isinstance(
                 strengths,
                 list
             ):
+
                 strengths = []
 
-            # ================================================
-            # PARSEAR GAPS
-            # ================================================
+            # =================================================
+            # GAPS
+            # =================================================
+
             gaps_raw = evaluation.get(
                 "gaps",
-                "[]"
+                []
             )
 
-            try:
+            if isinstance(
+                gaps_raw,
+                str
+            ):
 
-                gaps = json.loads(
-                    gaps_raw
-                )
+                try:
 
-            except Exception:
+                    gaps = json.loads(
+                        gaps_raw
+                    )
 
-                gaps = []
+                except Exception:
+
+                    gaps = []
+
+            else:
+
+                gaps = gaps_raw
 
             if not isinstance(
                 gaps,
                 list
             ):
+
                 gaps = []
 
-            # ================================================
-            # DATOS DE LA EVALUACIÓN
-            # ================================================
-            match_score = int(
-                evaluation.get(
-                    "match_score",
-                    0
-                )
-            )
-
-            evaluation_recommendation = evaluation.get(
-                "recommendation",
-                "LOW_MATCH"
-            )
-
-            # ================================================
-            # FILTRO POR SCORE
-            # ================================================
-            if match_score < min_score:
-                continue
-
-            # ================================================
-            # FILTRO POR RECOMMENDATION
-            # ================================================
-            if (
-                recommendation
-                and evaluation_recommendation != recommendation
-            ):
-                continue
-
-            # ================================================
+            # =================================================
             # AGREGAR CANDIDATO
-            # ================================================
+            # =================================================
+
             candidates.append(
                 {
                     "candidate_id": candidate_id,
+
                     "candidate_name": candidate.get(
                         "name",
-                        "Unknown"
+                        evaluation.get(
+                            "candidate_name",
+                            "Unknown"
+                        )
                     ),
+
                     "match_score": match_score,
-                    "recommendation": evaluation_recommendation,
+
+                    "recommendation":
+                        evaluation_recommendation,
+
                     "strengths": strengths,
+
                     "gaps": gaps
                 }
             )
@@ -2436,14 +4119,28 @@ def get_job_ranking(
         # ====================================================
         # ORDENAR
         # ====================================================
+
         candidates.sort(
-            key=lambda candidate:
-            candidate["match_score"],
+            key=lambda candidate: (
+                candidate["match_score"],
+                candidate["candidate_name"].lower()
+            ),
             reverse=True
         )
 
+        # ====================================================
+        # LIMIT
+        # ====================================================
+
         if limit is not None:
-            candidates = candidates[:limit]
+
+            candidates = candidates[
+                :limit
+            ]
+
+        # ====================================================
+        # TOTAL
+        # ====================================================
 
         total = len(
             candidates
@@ -2452,13 +4149,21 @@ def get_job_ranking(
         total_pages = (
             (total + page_size - 1)
             // page_size
+            if total > 0
+            else 0
         )
+
+        # ====================================================
+        # PAGINACIÓN DEL RESULTADO
+        # ====================================================
 
         start = (
             page - 1
         ) * page_size
 
-        end = start + page_size
+        end = (
+            start + page_size
+        )
 
         paginated_candidates = candidates[
             start:end
@@ -2467,32 +4172,43 @@ def get_job_ranking(
         # ====================================================
         # ASIGNAR RANK
         # ====================================================
+
         ranked_candidates = []
 
         for index, candidate in enumerate(
             paginated_candidates,
             start=start + 1
         ):
-            candidate["rank"] = index
 
             ranked_candidates.append(
                 CandidateRankingItem(
                     rank=index,
+
                     candidate_id=candidate[
                         "candidate_id"
                     ],
+
                     candidate_name=candidate[
                         "candidate_name"
                     ],
+
                     match_score=candidate[
                         "match_score"
                     ],
+
                     recommendation=candidate[
                         "recommendation"
                     ],
+
+                    status=candidate.get(
+                        "status",
+                        "COMPLETED"
+                    ),
+
                     strengths=candidate[
                         "strengths"
                     ],
+
                     gaps=candidate[
                         "gaps"
                     ]
@@ -2500,16 +4216,53 @@ def get_job_ranking(
             )
 
         # ====================================================
+        # LOG FINAL
+        # ====================================================
+
+        print(
+            f"RANKING COMPLETADO - "
+            f"job={job_id} "
+            f"total={total} "
+            f"page={page} "
+            f"page_size={page_size}"
+        )
+
+        # ====================================================
         # RESPONSE
         # ====================================================
+
+        ranking_metadata = get_ranking_metadata(job_id)
+
         return JobRankingResponse(
             job_id=job_id,
-            job_title=job["title"],
+
+            job_title=job.get(
+                "title",
+                ""
+            ),
+
             page=page,
+
             page_size=page_size,
+
             total=total,
+
             total_pages=total_pages,
-            candidates=paginated_candidates
+
+            pending_candidates=max(
+                0,
+                len(all_candidates) - len(evaluations_by_candidate)
+            ),
+
+            ranking_generated_at=ranking_metadata.get(
+                "ranking_generated_at"
+            ) if ranking_metadata else None,
+
+            ranking_version=ranking_metadata.get(
+                "ranking_version"
+            ) if ranking_metadata else None,
+
+            candidates=ranked_candidates
         )
 
     except HTTPException:
@@ -2529,13 +4282,13 @@ def get_job_ranking(
 # ============================================================
 # CANDIDATE JOB EVALUATION DETAIL
 # ============================================================
-@app.get(
-    "/jobs/{job_id}/candidates/{candidate_id}",
+@app.get("/api/jobs/{job_id}/candidates/{candidate_id}",
     response_model=CandidateJobEvaluationResponse
 )
 def get_candidate_job_evaluation(
     job_id: str,
-    candidate_id: str
+    candidate_id: str,
+    current_user: dict = Depends(get_current_user)
 ):
     try:
 
@@ -2552,6 +4305,11 @@ def get_candidate_job_evaluation(
                 detail="Vacante no encontrada."
             )
 
+        validate_job_owner(
+            job,
+            current_user
+        )
+
         # ====================================================
         # OBTENER CANDIDATO
         # ====================================================
@@ -2563,6 +4321,12 @@ def get_candidate_job_evaluation(
             raise HTTPException(
                 status_code=404,
                 detail="Candidato no encontrado."
+            )
+
+        if candidate.get("owner_id") != current_user["sub"]:
+            raise HTTPException(
+                status_code=403,
+                detail="No tienes permiso sobre este candidato."
             )
 
         # ====================================================
@@ -2710,12 +4474,12 @@ def get_candidate_job_evaluation(
 # ============================================================
 # JOB SUMMARY
 # ============================================================
-@app.get(
-    "/jobs/{job_id}/summary",
+@app.get("/api/jobs/{job_id}/summary",
     response_model=JobSummaryResponse
 )
 def get_job_summary(
-    job_id: str
+    job_id: str,
+    current_user: dict = Depends(get_current_user)
 ):
     try:
 
@@ -2731,6 +4495,11 @@ def get_job_summary(
                 status_code=404,
                 detail="Vacante no encontrada."
             )
+
+        validate_job_owner(
+            job,
+            current_user
+        )
 
         # ====================================================
         # OBTENER EVALUACIONES
@@ -2903,19 +4672,27 @@ def get_job_summary(
                 )
             )
 
-        # ====================================================
-        # TOTAL CANDIDATOS
-        # ====================================================
-        candidates_response = (
-            candidates_table.scan()
+        # Candidates are a user-owned pool; an evaluation associates one
+        # candidate with this job. Pending candidates must not be scored as 0.
+        owner_candidates = []
+        candidates_response = candidates_table.scan(
+            FilterExpression=Attr("owner_id").eq(current_user["sub"])
         )
-
-        total_candidates = len(
-            candidates_response.get(
-                "Items",
-                []
+        owner_candidates.extend(candidates_response.get("Items", []))
+        while candidates_response.get("LastEvaluatedKey"):
+            candidates_response = candidates_table.scan(
+                FilterExpression=Attr("owner_id").eq(current_user["sub"]),
+                ExclusiveStartKey=candidates_response["LastEvaluatedKey"],
             )
-        )
+            owner_candidates.extend(candidates_response.get("Items", []))
+
+        evaluated_ids = {
+            item.get("candidate_id")
+            for item in evaluations
+            if item.get("status", "COMPLETED") == "COMPLETED"
+        }
+        total_candidates = len(owner_candidates)
+        pending_candidates = max(0, total_candidates - len(evaluated_ids))
 
         # ====================================================
         # RESPONSE
@@ -2932,9 +4709,7 @@ def get_job_summary(
                 evaluated_candidates
             ),
 
-            pending_candidates=(
-                pending_candidates
-            ),
+            pending_candidates=pending_candidates,
 
             failed_candidates=(
                 failed_candidates
@@ -2979,15 +4754,15 @@ def get_job_summary(
 # ============================================================
 # JOB CANDIDATES
 # ============================================================
-@app.get(
-    "/jobs/{job_id}/candidates"
+@app.get("/api/jobs/{job_id}/candidates"
 )
 def get_job_candidates(
     job_id: str,
     min_score: int = 0,
     recommendation: str | None = None,
     page: int = 1,
-    page_size: int = 10
+    page_size: int = 10,
+    current_user: dict = Depends(get_current_user)
 ):
     try:
 
@@ -3003,6 +4778,11 @@ def get_job_candidates(
                 status_code=404,
                 detail="Vacante no encontrada."
             )
+
+        validate_job_owner(
+            job,
+            current_user
+        )
 
         # ====================================================
         # VALIDAR PAGINACIÓN
@@ -3249,12 +5029,12 @@ def get_job_candidates(
 # ============================================================
 # CANDIDATE EVALUATION EXPLANATION
 # ============================================================
-@app.get(
-    "/jobs/{job_id}/candidates/{candidate_id}/explanation"
+@app.get("/api/jobs/{job_id}/candidates/{candidate_id}/explanation"
 )
 def get_candidate_explanation(
     job_id: str,
-    candidate_id: str
+    candidate_id: str,
+    current_user: dict = Depends(get_current_user)
 ):
     try:
 
@@ -3271,6 +5051,11 @@ def get_candidate_explanation(
                 detail="Vacante no encontrada."
             )
 
+        validate_job_owner(
+            job,
+            current_user
+        )
+
         # ====================================================
         # VALIDAR CANDIDATO
         # ====================================================
@@ -3282,6 +5067,12 @@ def get_candidate_explanation(
             raise HTTPException(
                 status_code=404,
                 detail="Candidato no encontrado."
+            )
+
+        if candidate.get("owner_id") != current_user["sub"]:
+            raise HTTPException(
+                status_code=403,
+                detail="No tienes permiso sobre este candidato."
             )
 
         # ====================================================
@@ -3505,22 +5296,25 @@ def get_candidate_explanation(
             detail=str(e)
         )
 
+
 # ============================================================
 # COMPARE CANDIDATES
 # ============================================================
-@app.get(
-    "/jobs/{job_id}/compare",
+
+@app.get("/api/jobs/{job_id}/compare",
     response_model=CandidateComparisonResponse
 )
 def compare_candidates(
     job_id: str,
-    candidate_ids: str
+    candidate_ids: str,
+    current_user: dict = Depends(get_current_user)
 ):
     try:
 
         # ====================================================
         # BUSCAR VACANTE
         # ====================================================
+
         job = get_job_record(
             job_id
         )
@@ -3531,9 +5325,15 @@ def compare_candidates(
                 detail="Vacante no encontrada."
             )
 
+        validate_job_owner(
+            job,
+            current_user
+        )
+
         # ====================================================
         # CONVERTIR IDS
         # ====================================================
+
         ids = [
             candidate_id.strip()
             for candidate_id in candidate_ids.split(",")
@@ -3543,45 +5343,120 @@ def compare_candidates(
         if not ids:
             raise HTTPException(
                 status_code=400,
-                detail="Debe proporcionar al menos un candidate_id."
+                detail=(
+                    "Debe proporcionar al menos un candidate_id."
+                )
             )
+
+        # ====================================================
+        # VALIDAR CANTIDAD
+        # ====================================================
 
         if len(ids) > 5:
             raise HTTPException(
                 status_code=400,
-                detail="Máximo 5 candidatos por comparación."
+                detail=(
+                    "Máximo 5 candidatos por comparación."
+                )
             )
 
         # ====================================================
-        # OBTENER EVALUACIONES
+        # OBTENER CANDIDATOS
+        #
+        # IMPORTANTE:
+        # candidates_table tiene candidate_id como
+        # partition key, por lo que NO podemos hacer:
+        #
+        # query(Key("owner_id").eq(...))
+        #
+        # Usamos scan para filtrar por owner_id.
         # ====================================================
-        response = evaluations_table.query(
-            KeyConditionExpression=(
-                boto3.dynamodb.conditions.Key(
-                    "job_id"
-                ).eq(job_id)
+
+        candidates_response = candidates_table.scan(
+            FilterExpression=(
+                boto3.dynamodb.conditions.Attr(
+                    "owner_id"
+                ).eq(
+                    current_user["sub"]
+                )
             )
         )
 
-        evaluations = response.get(
+        all_candidates = candidates_response.get(
             "Items",
             []
         )
 
         # ====================================================
-        # INDEXAR EVALUACIONES
+        # INDEXAR CANDIDATOS POR ID
         # ====================================================
-        evaluations_by_candidate = {
-            evaluation["candidate_id"]: evaluation
-            for evaluation in evaluations
+
+        candidates_by_id = {
+            candidate.get("candidate_id"): candidate
+            for candidate in all_candidates
+            if candidate.get("candidate_id")
         }
 
-        candidates = []
+        # ====================================================
+        # OBTENER EVALUACIONES DE ESTA VACANTE
+        # ====================================================
+
+        evaluations_response = evaluations_table.query(
+            KeyConditionExpression=(
+                boto3.dynamodb.conditions.Key(
+                    "job_id"
+                ).eq(
+                    job_id
+                )
+            )
+        )
+
+        evaluations = evaluations_response.get(
+            "Items",
+            []
+        )
+
+        # ====================================================
+        # MAPEAR EVALUACIONES POR CANDIDATO
+        # ====================================================
+
+        evaluations_by_candidate = {}
+
+        for evaluation in evaluations:
+
+            candidate_id = evaluation.get(
+                "candidate_id"
+            )
+
+            if not candidate_id:
+                continue
+
+            evaluations_by_candidate[
+                candidate_id
+            ] = evaluation
 
         # ====================================================
         # CONSTRUIR COMPARACIÓN
         # ====================================================
+
+        candidates = []
+
         for candidate_id in ids:
+
+            # =================================================
+            # VERIFICAR CANDIDATO
+            # =================================================
+
+            candidate = candidates_by_id.get(
+                candidate_id
+            )
+
+            if not candidate:
+                continue
+
+            # =================================================
+            # VERIFICAR EVALUACIÓN
+            # =================================================
 
             evaluation = evaluations_by_candidate.get(
                 candidate_id
@@ -3590,46 +5465,101 @@ def compare_candidates(
             if not evaluation:
                 continue
 
-            candidate = get_candidate_record(
-                candidate_id
-            )
-
-            if not candidate:
-                continue
+            # =================================================
+            # PARSEAR STRENGTHS
+            # =================================================
 
             strengths_raw = evaluation.get(
                 "strengths",
-                "[]"
+                []
             )
+
+            if isinstance(
+                strengths_raw,
+                str
+            ):
+                try:
+                    strengths = json.loads(
+                        strengths_raw
+                    )
+                except Exception:
+                    strengths = []
+            else:
+                strengths = strengths_raw
+
+            if not isinstance(
+                strengths,
+                list
+            ):
+                strengths = []
+
+            # =================================================
+            # PARSEAR GAPS
+            # =================================================
 
             gaps_raw = evaluation.get(
                 "gaps",
-                "[]"
+                []
             )
 
-            try:
-                strengths = (
-                    json.loads(strengths_raw)
-                    if isinstance(
-                        strengths_raw,
-                        str
+            if isinstance(
+                gaps_raw,
+                str
+            ):
+                try:
+                    gaps = json.loads(
+                        gaps_raw
                     )
-                    else strengths_raw
-                )
-            except Exception:
-                strengths = []
+                except Exception:
+                    gaps = []
+            else:
+                gaps = gaps_raw
+
+            if not isinstance(
+                gaps,
+                list
+            ):
+                gaps = []
+
+            # =================================================
+            # SCORE
+            # =================================================
 
             try:
-                gaps = (
-                    json.loads(gaps_raw)
-                    if isinstance(
-                        gaps_raw,
-                        str
+
+                match_score = int(
+                    evaluation.get(
+                        "match_score",
+                        0
                     )
-                    else gaps_raw
                 )
-            except Exception:
-                gaps = []
+
+            except (
+                TypeError,
+                ValueError
+            ):
+
+                match_score = 0
+
+            # =================================================
+            # RECOMMENDATION
+            # =================================================
+
+            recommendation = evaluation.get(
+                "recommendation",
+                "LOW_MATCH"
+            )
+
+            if not recommendation:
+                recommendation = "LOW_MATCH"
+
+            recommendation = str(
+                recommendation
+            ).upper()
+
+            # =================================================
+            # AGREGAR
+            # =================================================
 
             candidates.append(
                 CandidateComparisonItem(
@@ -3640,17 +5570,9 @@ def compare_candidates(
                         "Unknown"
                     ),
 
-                    match_score=int(
-                        evaluation.get(
-                            "match_score",
-                            0
-                        )
-                    ),
+                    match_score=match_score,
 
-                    recommendation=evaluation.get(
-                        "recommendation",
-                        "LOW_MATCH"
-                    ),
+                    recommendation=recommendation,
 
                     strengths=strengths,
 
@@ -3659,40 +5581,83 @@ def compare_candidates(
             )
 
         # ====================================================
-        # ORDENAR
+        # VALIDAR RESULTADOS
         # ====================================================
+
+        if not candidates:
+
+            raise HTTPException(
+                status_code=404,
+                detail=(
+                    "No se encontraron evaluaciones "
+                    "para los candidatos indicados."
+                )
+            )
+
+        # ====================================================
+        # ORDENAR POR SCORE
+        # ====================================================
+
         candidates.sort(
-            key=lambda candidate:
-            candidate.match_score,
+            key=lambda candidate: (
+                candidate.match_score
+            ),
             reverse=True
         )
 
         # ====================================================
+        # ASIGNAR RANK
+        # ====================================================
+
+        for index, candidate in enumerate(
+            candidates,
+            start=1
+        ):
+
+            # CandidateComparisonItem probablemente
+            # no tiene rank, por eso no modificamos
+            # el modelo aquí.
+            pass
+
+        # ====================================================
         # GANADOR
         # ====================================================
-        winner = (
-            candidates[0]
-            if candidates
-            else None
-        )
+
+        winner = candidates[0]
 
         # ====================================================
         # RESPONSE
         # ====================================================
+
         return CandidateComparisonResponse(
             job_id=job_id,
-            job_title=job["title"],
+
+            job_title=job.get(
+                "title",
+                ""
+            ),
+
             candidates=candidates,
+
             winner=winner
         )
+
+    # ========================================================
+    # HTTP ERRORS
+    # ========================================================
 
     except HTTPException:
         raise
 
+    # ========================================================
+    # UNEXPECTED ERRORS
+    # ========================================================
+
     except Exception as e:
 
         print(
-            f"ERROR COMPARING CANDIDATES: {str(e)}"
+            "ERROR COMPARING CANDIDATES: "
+            f"{str(e)}"
         )
 
         raise HTTPException(
@@ -3703,13 +5668,13 @@ def compare_candidates(
 # ============================================================
 # CANDIDATE REQUIREMENTS
 # ============================================================
-@app.get(
-    "/jobs/{job_id}/candidates/{candidate_id}/requirements",
+@app.get("/api/jobs/{job_id}/candidates/{candidate_id}/requirements",
     response_model=CandidateRequirementsResponse
 )
 def get_candidate_requirements(
     job_id: str,
-    candidate_id: str
+    candidate_id: str,
+    current_user: dict = Depends(get_current_user)
 ):
     try:
 
@@ -3725,6 +5690,11 @@ def get_candidate_requirements(
                 status_code=404,
                 detail="Vacante no encontrada."
             )
+
+        validate_job_owner(
+            job,
+            current_user
+        )
 
         # ====================================================
         # BUSCAR CANDIDATO
@@ -3737,6 +5707,12 @@ def get_candidate_requirements(
             raise HTTPException(
                 status_code=404,
                 detail="Candidato no encontrado."
+            )
+
+        if candidate.get("owner_id") != current_user["sub"]:
+            raise HTTPException(
+                status_code=403,
+                detail="No tienes permiso sobre este candidato."
             )
 
         # ====================================================
@@ -3870,11 +5846,11 @@ def get_candidate_requirements(
 # ============================================================
 # DEBUG RETRIEVE
 # ============================================================
-@app.get(
-    "/debug/retrieve/{candidate_id}"
+@app.get("/api/debug/retrieve/{candidate_id}"
 )
 def debug_retrieve(
-    candidate_id: str
+    candidate_id: str,
+    current_user: dict = Depends(get_current_user)
 ):
     try:
         results = retrieve_candidate(
@@ -3899,4 +5875,29 @@ def debug_retrieve(
             status_code=500,
             detail=str(e)
         )
+# CI/CD trigger test
 
+# ============================================================
+# AUTH CONFIRMATION
+# ============================================================
+
+@app.post("/api/auth/confirm"
+)
+def confirm_registration(
+    email: str,
+    confirmation_code: str
+):
+
+    result = confirm_user(
+        email,
+        confirmation_code
+    )
+
+    if result.get("error"):
+
+        raise HTTPException(
+            status_code=400,
+            detail=result["error"]
+        )
+
+    return result
