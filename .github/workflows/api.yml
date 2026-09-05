@@ -69,9 +69,9 @@ jobs:
           IMAGE_TAG: ${{ github.sha }}
         run: |
           IMAGE_URI="$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG"
-          docker build --tag "$IMAGE_URI" --tag "$ECR_REPOSITORY:latest" .
+          docker build --tag "$IMAGE_URI" --tag "$ECR_REGISTRY/$ECR_REPOSITORY:latest" .
           docker push "$IMAGE_URI"
-          docker push "$ECR_REPOSITORY:latest"
+          docker push "$ECR_REGISTRY/$ECR_REPOSITORY:latest"
           echo "uri=$IMAGE_URI" >> "$GITHUB_OUTPUT"
       - name: Get ECR password and deploy to instance
         env:
