@@ -27,6 +27,7 @@ function Ranking() {
   const [maxScore, setMaxScore] = useState(100);
 
   const [recommendationFilter, setRecommendationFilter] = useState("");
+  const [rankingScope, setRankingScope] = useState("assigned");
 
   const [rankingInfo, setRankingInfo] = useState({
     total: 0,
@@ -100,6 +101,7 @@ function Ranking() {
         max_score: maxScore,
         page: 1,
         page_size: 100,
+        scope: rankingScope,
       };
 
       if (recommendationFilter) {
@@ -152,7 +154,9 @@ function Ranking() {
 
     try {
       setLoading(true);
-      const response = await api.post(`/jobs/${selectedJob}/ranking/recalculate`);
+      const response = await api.post(`/jobs/${selectedJob}/ranking/recalculate`, null, {
+        params: { scope: rankingScope },
+      });
       const totalCandidates = response.data.total_candidates || 0;
       const failed = response.data.failed || 0;
 
@@ -175,7 +179,7 @@ function Ranking() {
       loadRanking();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedJob]);
+  }, [selectedJob, rankingScope]);
 
   // ============================================================
   // OPEN ANALYSIS
@@ -379,6 +383,16 @@ function Ranking() {
                   {job.title}
                 </option>
               ))}
+            </select>
+          </div>
+
+          <div>
+            <label style={{ display: "block", marginBottom: "6px", fontWeight: "600" }}>
+              Fuente de candidatos
+            </label>
+            <select value={rankingScope} onChange={(e) => setRankingScope(e.target.value)} style={{ padding: "10px", minWidth: "220px" }}>
+              <option value="assigned">Solo esta vacante</option>
+              <option value="all">Todos mis candidatos</option>
             </select>
           </div>
 

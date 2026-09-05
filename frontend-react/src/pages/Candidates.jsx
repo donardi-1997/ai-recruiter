@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 
 import api from "../api/client";
 
@@ -9,6 +10,7 @@ function Candidates() {
 
   const [selectedJob, setSelectedJob] = useState({});
   const [uploadJob, setUploadJob] = useState("");
+  const [searchParams] = useSearchParams();
 
   const [loading, setLoading] = useState(false);
 
@@ -52,6 +54,10 @@ function Candidates() {
     e.preventDefault();
     if (!candidateFiles.length) {
       setFileError("Selecciona al menos un archivo PDF.");
+      return;
+    }
+    if (!uploadJob) {
+      setFileError("Debes iniciar la carga desde una vacante.");
       return;
     }
 
@@ -159,7 +165,12 @@ function Candidates() {
     // The initial request synchronizes this view with the API.
     // eslint-disable-next-line react-hooks/set-state-in-effect
     loadData();
-  }, []);
+    const jobId = searchParams.get("job_id");
+    if (jobId) {
+      setUploadJob(jobId);
+      setShowCreateModal(true);
+    }
+  }, [searchParams]);
 
   async function evaluate(candidateId) {
     const jobId = selectedJob[candidateId];
@@ -369,12 +380,6 @@ function Candidates() {
           <p>Gestión de CVs con Inteligencia Artificial</p>
         </div>
 
-        <button
-          className="btn btn-primary"
-          onClick={() => setShowCreateModal(true)}
-        >
-          + Agregar candidato
-        </button>
       </div>
 
       <div className="section-heading candidate-section-heading">
@@ -563,7 +568,7 @@ function Candidates() {
               <div className="form-group" style={{ marginBottom: "16px" }}>
                 <label htmlFor="upload-job">Asignar estos candidatos a una vacante (opcional)</label>
                 <select id="upload-job" className="select" value={uploadJob} onChange={(event) => setUploadJob(event.target.value)} disabled={creatingCandidate}>
-                  <option value="">Solo pool global</option>
+                  {!uploadJob && <option value="">Selecciona una vacante</option>}
                   {jobs.map((job) => <option key={job.job_id} value={job.job_id}>{job.title}</option>)}
                 </select>
                 <small className="muted">Solo los candidatos asignados aparecen en el ranking de esa vacante.</small>

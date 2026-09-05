@@ -834,6 +834,20 @@ def get_job_candidate_ids(job_id: str, owner_id: str) -> set[str]:
         if item.get("candidate_id")
     }
 
+def get_owned_candidate_ids(owner_id: str) -> set[str]:
+    ids = set()
+    scan_kwargs = {"FilterExpression": Attr("owner_id").eq(owner_id)}
+    while True:
+        response = candidates_table.scan(**scan_kwargs)
+        ids.update(
+            item["candidate_id"]
+            for item in response.get("Items", [])
+            if item.get("candidate_id")
+        )
+        if not response.get("LastEvaluatedKey"):
+            return ids
+        scan_kwargs["ExclusiveStartKey"] = response["LastEvaluatedKey"]
+
 def parse_json_field(value):
 
     if isinstance(value, str):
@@ -3117,6 +3131,7 @@ def evaluate_candidate_job(
 @app.post("/api/jobs/{job_id}/ranking/recalculate")
 def recalculate_job_ranking(
     job_id: str,
+    scope: str = "assigned",
     current_user: dict = Depends(get_current_user),
 ):
     """Reevaluate every current candidate owned by the authenticated user.
@@ -3130,6 +3145,8 @@ def recalculate_job_ranking(
     validate_job_owner(job, current_user)
 
     assigned_ids = get_job_candidate_ids(job_id, current_user["sub"])
+    if scope == "all":
+        assigned_ids = get_owned_candidate_ids(current_user["sub"])
     candidates = []
     scan_kwargs = {"FilterExpression": Attr("owner_id").eq(current_user["sub"])}
     while True:
@@ -3356,6 +3373,7 @@ def get_candidate_evaluations(
 )
 def get_job_ranking(
     job_id: str,
+    scope: str = "assigned",
     min_score: int = 0,
     max_score: int = 100,
     recommendation: str | None = None,
@@ -3464,6 +3482,8 @@ def get_job_ranking(
         owner_id = current_user["sub"]
 
         assigned_ids = get_job_candidate_ids(job_id, owner_id)
+        if scope == "all":
+            assigned_ids = get_owned_candidate_ids(owner_id)
         if not assigned_ids:
             legacy_evaluations = evaluations_table.query(
                 KeyConditionExpression=Key("job_id").eq(job_id)
