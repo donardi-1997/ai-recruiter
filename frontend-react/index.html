@@ -16,6 +16,13 @@
     <meta name="twitter:description" content="Talent intelligence, powered by AI." />
     <meta name="twitter:image" content="https://ai.adrianguerra.net/og.png" />
     <title>AI Recruiter | Talent Intelligence</title>
+    <script>
+      (function() {
+        var t = localStorage.getItem('theme');
+        if (!t) t = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+        document.documentElement.setAttribute('data-theme', t);
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>

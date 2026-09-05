@@ -13,6 +13,7 @@ import Layout from "./components/Layout";
 import Register from "./auth/Register";
 
 import api from "./api/client";
+import { ThemeProvider } from "./context/ThemeContext";
 
 // ============================================================
 // PROTECTED ROUTE
@@ -74,8 +75,9 @@ function ProtectedRoute({ children }) {
 
 function App() {
   return (
-    <BrowserRouter>
-      <Routes>
+    <ThemeProvider>
+      <BrowserRouter>
+        <Routes>
         {/* ================================================== */}
         {/* PUBLIC */}
         {/* ================================================== */}
@@ -149,6 +151,7 @@ function App() {
         <Route path="*" element={<Navigate to="/login" replace />} />
       </Routes>
     </BrowserRouter>
+    </ThemeProvider>
   );
 }
 

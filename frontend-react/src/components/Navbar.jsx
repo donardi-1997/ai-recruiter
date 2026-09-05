@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { NavLink, useNavigate } from "react-router-dom";
 import api from "../api/client";
+import ThemeToggle from "./ThemeToggle";
 
 const navItems = [
   { to: "/dashboard", label: "Resumen", icon: "⌁" },
@@ -92,10 +93,13 @@ function Navbar() {
             </div>
           </div>
 
-          <button className="navbar-logout" onClick={logout}>
-            <span aria-hidden="true">↪</span>
-            <span>Cerrar sesión</span>
-          </button>
+          <div style={{ display: "flex", gap: "8px", marginTop: "auto", marginBottom: "8px" }}>
+            <ThemeToggle />
+            <button className="navbar-logout" onClick={logout} style={{ flex: 1 }}>
+              <span aria-hidden="true">↪</span>
+              <span>Cerrar sesión</span>
+            </button>
+          </div>
         </div>
       </aside>
     </>
