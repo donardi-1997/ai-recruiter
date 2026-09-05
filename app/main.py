@@ -13,6 +13,7 @@ from sqlalchemy.orm import Session
 from app import crud
 from app.db import Base, get_engine
 from app.health import router as health_router
+from app.auth_routes import router as auth_router
 from app.deps import (
     acquire_job_lock,
     get_current_user,
@@ -49,6 +50,7 @@ app.add_middleware(
 )
 
 app.include_router(health_router)
+app.include_router(auth_router)
 
 
 @app.exception_handler(Exception)
