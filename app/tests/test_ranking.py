@@ -142,10 +142,10 @@ def test_advisory_lock_key_is_64bit_signed():
 # ============================================================
 
 def test_read_table_names():
-    assert Candidate.__tablename__  == "REEMPLAZAR_DB_TABLE_CANDIDATES"
-    assert Job.__tablename__        == "REEMPLAZAR_DB_TABLE_JOBS"
-    assert Ranking.__tablename__    == "REEMPLAZAR_DB_TABLE_RANKINGS"
-    assert RankingItem.__tablename__ == "REEMPLAZAR_DB_TABLE_RANKING_ITEMS"
+    assert Candidate.__tablename__  == "candidates"
+    assert Job.__tablename__        == "jobs"
+    assert Ranking.__tablename__    == "rankings"
+    assert RankingItem.__tablename__ == "ranking_items"
 
 
 # ============================================================
