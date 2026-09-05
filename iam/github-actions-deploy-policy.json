@@ -11,7 +11,10 @@
         "ecr:PutImage",
         "ecr:UploadLayerPart"
       ],
-      "Resource": "arn:aws:ecr:us-east-2:765761474007:repository/ai-recruiter"
+      "Resource": [
+        "arn:aws:ecr:us-east-2:765761474007:repository/ai-recruiter",
+        "arn:aws:ecr:us-east-2:765761474007:repository/ai-recruiter-api"
+      ]
     },
     {
       "Sid": "GetEcrAuthorizationToken",
@@ -68,6 +71,17 @@
       "Effect": "Allow",
       "Action": "cloudfront:CreateInvalidation",
       "Resource": "arn:aws:cloudfront::765761474007:distribution/E1IBIX4EWENEP7"
+    },
+    {
+      "Sid": "LightsailAccess",
+      "Effect": "Allow",
+      "Action": [
+        "lightsail:GetInstance",
+        "lightsail:DownloadDefaultKeyPair",
+        "lightsail:GetLoadBalancers",
+        "lightsail:GetLoadBalancer"
+      ],
+      "Resource": "*"
     }
   ]
 }
