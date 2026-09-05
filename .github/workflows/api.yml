@@ -90,7 +90,8 @@ jobs:
           aws lightsail download-default-key-pair \
             --region $AWS_REGION \
             --query "privateKeyBase64" \
-            --output text | base64 -d > "$KEY_FILE"
+            --output text > /tmp/key_b64.txt
+          base64 -d /tmp/key_b64.txt > "$KEY_FILE"
           chmod 600 "$KEY_FILE"
 
           # Pull and restart container
