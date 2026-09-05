@@ -83,12 +83,9 @@ jobs:
             --output text)
           echo "Instance IP: $INSTANCE_IP"
 
-          # Get SSH key
+          # Get SSH key from GitHub secret
           KEY_FILE="/tmp/lightsail-key.pem"
-          aws lightsail download-default-key-pair \
-            --region $AWS_REGION \
-            --query "privateKeyBase64" \
-            --output text > "$KEY_FILE"
+          echo "${{ secrets.LIGHTSAIL_SSH_KEY }}" > "$KEY_FILE"
           chmod 600 "$KEY_FILE"
 
           # Deploy to instance (ECR login runs on the instance itself)
