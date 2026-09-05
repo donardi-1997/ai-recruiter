@@ -91,15 +91,9 @@ jobs:
             --output text > "$KEY_FILE"
           chmod 600 "$KEY_FILE"
 
-          # Write ECR password to remote instance via SCP
-          echo "${{ steps.ecr-login.outputs.password }}" > /tmp/ecr-pass.txt
-          scp -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -i "$KEY_FILE" /tmp/ecr-pass.txt ubuntu@$INSTANCE_IP:/tmp/ecr-pass.txt
-          rm -f /tmp/ecr-pass.txt
-
-          # Deploy to instance
+          # Deploy to instance (printf avoids shell interpretation of ECR password)
           ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -i "$KEY_FILE" ubuntu@$INSTANCE_IP \
-            "cat /tmp/ecr-pass.txt | docker login --username AWS --password-stdin $ECR_REGISTRY && \
-             rm -f /tmp/ecr-pass.txt && \
+            "printf '%s' '${{ steps.ecr-login.outputs.password }}' | docker login --username AWS --password-stdin $ECR_REGISTRY && \
              docker pull $ECR_REGISTRY/$ECR_REPOSITORY:latest && \
              docker rm -f ai-recruiter 2>/dev/null; \
              docker run -d --name ai-recruiter --restart unless-stopped \
