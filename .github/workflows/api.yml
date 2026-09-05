@@ -93,9 +93,11 @@ jobs:
             --output text > "$KEY_FILE"
           chmod 600 "$KEY_FILE"
 
-          # Pull and restart container
+          # Deploy to instance
           ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -i "$KEY_FILE" ubuntu@$INSTANCE_IP \
-            "echo '${{ steps.ecr-login.outputs.password }}' | docker login --username AWS --password-stdin $ECR_REGISTRY && \
+            "echo '${{ steps.ecr-login.outputs.password }}' > /tmp/ecr-pass.txt && \
+             cat /tmp/ecr-pass.txt | docker login --username AWS --password-stdin $ECR_REGISTRY && \
+             rm -f /tmp/ecr-pass.txt && \
              docker pull $ECR_REGISTRY/$ECR_REPOSITORY:latest && \
              docker rm -f ai-recruiter 2>/dev/null; \
              docker run -d --name ai-recruiter --restart unless-stopped \
