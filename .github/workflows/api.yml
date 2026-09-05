@@ -73,9 +73,7 @@ jobs:
           docker push "$IMAGE_URI"
           docker push "$ECR_REGISTRY/$ECR_REPOSITORY:latest"
           echo "uri=$IMAGE_URI" >> "$GITHUB_OUTPUT"
-      - name: Get ECR password and deploy to instance
-        env:
-          ECR_PASSWORD: ${{ steps.ecr-login.outputs.password }}
+      - name: Deploy to instance
         run: |
           # Get instance IP
           INSTANCE_IP=$(aws lightsail get-instance \
@@ -93,10 +91,14 @@ jobs:
             --output text > "$KEY_FILE"
           chmod 600 "$KEY_FILE"
 
+          # Write ECR password to remote instance via SCP
+          echo "${{ steps.ecr-login.outputs.password }}" > /tmp/ecr-pass.txt
+          scp -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -i "$KEY_FILE" /tmp/ecr-pass.txt ubuntu@$INSTANCE_IP:/tmp/ecr-pass.txt
+          rm -f /tmp/ecr-pass.txt
+
           # Deploy to instance
           ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -i "$KEY_FILE" ubuntu@$INSTANCE_IP \
-            "echo '${{ steps.ecr-login.outputs.password }}' > /tmp/ecr-pass.txt && \
-             cat /tmp/ecr-pass.txt | docker login --username AWS --password-stdin $ECR_REGISTRY && \
+            "cat /tmp/ecr-pass.txt | docker login --username AWS --password-stdin $ECR_REGISTRY && \
              rm -f /tmp/ecr-pass.txt && \
              docker pull $ECR_REGISTRY/$ECR_REPOSITORY:latest && \
              docker rm -f ai-recruiter 2>/dev/null; \
