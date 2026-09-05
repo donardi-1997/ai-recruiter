@@ -9,7 +9,7 @@ on:
 
 env:
   PYTHON_VERSION: "3.10"
-  NODE_VERSION: "22"
+  NODE_VERSION: "24"
 
 jobs:
   # ─────────────────────────────────────────────────────────
@@ -91,10 +91,11 @@ jobs:
           pip install pytest alembic psycopg2-binary
 
       - name: Run Alembic migrations
+        working-directory: app
         env:
           DATABASE_URL: postgresql://postgres:postgres@localhost:5432/ai_recruiter_test
         run: |
-          alembic -c app/alembic.ini upgrade head
+          alembic -c alembic.ini upgrade head
 
       - name: Run tests against Postgres
         env:
