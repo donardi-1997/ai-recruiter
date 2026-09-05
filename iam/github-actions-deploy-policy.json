@@ -9,7 +9,9 @@
         "ecr:CompleteLayerUpload",
         "ecr:InitiateLayerUpload",
         "ecr:PutImage",
-        "ecr:UploadLayerPart"
+        "ecr:UploadLayerPart",
+        "ecr:BatchGetImage",
+        "ecr:GetDownloadUrlForLayer"
       ],
       "Resource": [
         "arn:aws:ecr:us-east-2:765761474007:repository/ai-recruiter",
