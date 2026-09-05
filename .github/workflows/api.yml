@@ -91,9 +91,9 @@ jobs:
             --output text > "$KEY_FILE"
           chmod 600 "$KEY_FILE"
 
-          # Deploy to instance (printf avoids shell interpretation of ECR password)
+          # Deploy to instance (ECR login runs on the instance itself)
           ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -i "$KEY_FILE" ubuntu@$INSTANCE_IP \
-            "printf '%s' '${{ steps.ecr-login.outputs.docker_password }}' | docker login --username AWS --password-stdin $ECR_REGISTRY && \
+            "aws ecr get-login-password --region $AWS_REGION | docker login --username AWS --password-stdin $ECR_REGISTRY && \
              docker pull $ECR_REGISTRY/$ECR_REPOSITORY:latest && \
              docker rm -f ai-recruiter 2>/dev/null; \
              docker run -d --name ai-recruiter --restart unless-stopped \
