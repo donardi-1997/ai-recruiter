@@ -13,7 +13,8 @@
       ],
       "Resource": [
         "arn:aws:ecr:us-east-2:765761474007:repository/ai-recruiter",
-        "arn:aws:ecr:us-east-2:765761474007:repository/ai-recruiter-api"
+        "arn:aws:ecr:us-east-2:765761474007:repository/ai-recruiter-api",
+        "arn:aws:ecr:us-east-2:765761474007:repository/ai-recruiter-frontend"
       ]
     },
     {

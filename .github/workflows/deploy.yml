@@ -1,0 +1,214 @@
+name: CI/CD — Tests & Deploy
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: production
+  cancel-in-progress: false
+
+env:
+  AWS_REGION: us-east-2
+  AWS_ACCOUNT_ID: "765761474007"
+  ECR_BACKEND_REPO: ai-recruiter-api
+  ECR_FRONTEND_REPO: ai-recruiter-frontend
+  LIGHTSAIL_INSTANCE: ai-recruiter-api-v3
+
+jobs:
+  # ─────────────────────────────────────────────────────────
+  # BACKEND TESTS
+  # ─────────────────────────────────────────────────────────
+  backend-tests:
+    name: Backend tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+          cache: pip
+
+      - name: Install deps
+        run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pytest
+
+      - name: Validate syntax
+        run: python -m py_compile app/main.py
+
+      - name: Run tests
+        env:
+          DATABASE_URL: "sqlite:///:memory:"
+        run: python -m pytest app/tests/ -v --tb=short
+
+  # ─────────────────────────────────────────────────────────
+  # FRONTEND TESTS
+  # ─────────────────────────────────────────────────────────
+  frontend-tests:
+    name: Frontend tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend-react/package-lock.json
+
+      - name: Install deps
+        working-directory: frontend-react
+        run: npm ci
+
+      - name: Lint
+        working-directory: frontend-react
+        run: npm run lint
+
+      - name: Test
+        working-directory: frontend-react
+        run: npm test
+
+      - name: Build
+        working-directory: frontend-react
+        env:
+          VITE_API_URL: /api
+        run: npm run build
+
+  # ─────────────────────────────────────────────────────────
+  # DEPLOY
+  # ─────────────────────────────────────────────────────────
+  deploy:
+    name: Deploy to Lightsail
+    if: github.event_name != 'pull_request'
+    needs: [backend-tests, frontend-tests]
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v5
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login ECR
+        id: ecr-login
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build and push backend image
+        env:
+          ECR_REGISTRY: ${{ steps.ecr-login.outputs.registry }}
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          IMAGE_URI="$ECR_REGISTRY/$ECR_BACKEND_REPO:$IMAGE_TAG"
+          docker build --tag "$IMAGE_URI" --tag "$ECR_REGISTRY/$ECR_BACKEND_REPO:latest" .
+          docker push "$IMAGE_URI"
+          docker push "$ECR_REGISTRY/$ECR_BACKEND_REPO:latest"
+
+      - name: Build and push frontend image
+        env:
+          ECR_REGISTRY: ${{ steps.ecr-login.outputs.registry }}
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          IMAGE_URI="$ECR_REGISTRY/$ECR_FRONTEND_REPO:$IMAGE_TAG"
+          docker build --tag "$IMAGE_URI" --tag "$ECR_REGISTRY/$ECR_FRONTEND_REPO:latest" ./frontend-react
+          docker push "$IMAGE_URI"
+          docker push "$ECR_REGISTRY/$ECR_FRONTEND_REPO:latest"
+
+      - name: Deploy via SSH
+        env:
+          ECR_REGISTRY: ${{ steps.ecr-login.outputs.registry }}
+        run: |
+          # Get instance IP
+          INSTANCE_IP=$(aws lightsail get-instance \
+            --instance-name $LIGHTSAIL_INSTANCE \
+            --region $AWS_REGION \
+            --query "instance.publicIpAddress" \
+            --output text)
+          echo "Instance IP: $INSTANCE_IP"
+
+          # Get SSH key from GitHub secret
+          KEY_FILE="/tmp/lightsail-key.pem"
+          echo "${{ secrets.LIGHTSAIL_SSH_KEY }}" > "$KEY_FILE"
+          chmod 600 "$KEY_FILE"
+
+          # Deploy via SSH
+          ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -i "$KEY_FILE" ubuntu@$INSTANCE_IP bash -s << 'REMOTE_SCRIPT'
+            set -e
+
+            # ECR login
+            aws ecr get-login-password --region ${{ env.AWS_REGION }} | \
+              sudo docker login --username AWS --password-stdin ${{ steps.ecr-login.outputs.registry }}
+
+            # Pull images
+            sudo docker pull ${{ steps.ecr-login.outputs.registry }}/${{ env.ECR_BACKEND_REPO }}:latest
+            sudo docker pull ${{ steps.ecr-login.outputs.registry }}/${{ env.ECR_FRONTEND_REPO }}:latest
+
+            # Stop old containers
+            sudo docker stop ai-recruiter-api ai-recruiter-web 2>/dev/null || true
+            sudo docker rm ai-recruiter-api ai-recruiter-web 2>/dev/null || true
+
+            # Create network
+            sudo docker network create ai-recruiter 2>/dev/null || true
+
+            # Start backend
+            sudo docker run -d \
+              --name ai-recruiter-api \
+              --network ai-recruiter \
+              --restart unless-stopped \
+              -e DATABASE_URL='${{ secrets.DATABASE_URL }}' \
+              -e AWS_REGION=${{ env.AWS_REGION }} \
+              -e COGNITO_USER_POOL_ID='${{ secrets.COGNITO_USER_POOL_ID }}' \
+              -e COGNITO_CLIENT_ID='${{ secrets.COGNITO_CLIENT_ID }}' \
+              ${{ steps.ecr-login.outputs.registry }}/${{ env.ECR_BACKEND_REPO }}:latest
+
+            # Wait for backend to be healthy
+            echo "Waiting for backend..."
+            for i in $(seq 1 30); do
+              if sudo docker exec ai-recruiter-api python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/health')" 2>/dev/null; then
+                echo "Backend healthy!"
+                break
+              fi
+              sleep 2
+            done
+
+            # Start frontend
+            sudo docker run -d \
+              --name ai-recruiter-web \
+              --network ai-recruiter \
+              --restart unless-stopped \
+              -p 80:80 \
+              ${{ steps.ecr-login.outputs.registry }}/${{ env.ECR_FRONTEND_REPO }}:latest
+
+            echo "Deployment complete"
+          REMOTE_SCRIPT
+
+      - name: Health check
+        run: |
+          sleep 10
+          INSTANCE_IP=$(aws lightsail get-instance \
+            --instance-name ${{ env.LIGHTSAIL_INSTANCE }} \
+            --region ${{ env.AWS_REGION }} \
+            --query "instance.publicIpAddress" \
+            --output text)
+          HTTP_CODE=$(curl -sf -o /dev/null -w "%{http_code}" http://$INSTANCE_IP/api/health || echo "000")
+          echo "Health check: HTTP $HTTP_CODE"
+          if [ "$HTTP_CODE" != "200" ]; then
+            echo "WARNING: Health check failed"
+          fi
