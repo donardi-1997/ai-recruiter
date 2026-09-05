@@ -91,11 +91,10 @@ jobs:
           pip install pytest alembic psycopg2-binary
 
       - name: Run Alembic migrations
-        working-directory: app
         env:
           DATABASE_URL: postgresql://postgres:postgres@localhost:5432/ai_recruiter_test
         run: |
-          PYTHONPATH=/home/runner/work/ai-recruiter/ai-recruiter alembic -c alembic.ini upgrade head
+          PYTHONPATH=. alembic -c app/alembic.ini upgrade head
 
       - name: Run tests against Postgres
         env:
