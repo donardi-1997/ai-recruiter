@@ -38,12 +38,22 @@ def login(body: LoginRequest):
             },
         )
         auth = response.get("AuthenticationResult", {})
-        return {
+        resp = JSONResponse({
             "access_token": auth.get("AccessToken"),
             "id_token": auth.get("IdToken"),
-            "refresh_token": auth.get("RefreshToken"),
             "expires_in": auth.get("ExpiresIn"),
-        }
+        })
+        if auth.get("RefreshToken"):
+            resp.set_cookie(
+                "ai_recruiter_refresh",
+                auth["RefreshToken"],
+                httponly=True,
+                secure=True,
+                samesite="none",
+                max_age=86400 * 30,
+                path="/",
+            )
+        return resp
     except ClientError as e:
         error_code = e.response["Error"].get("Code", "")
         logger.warning("Cognito login error: %s %s", error_code, e.response["Error"].get("Message"))
