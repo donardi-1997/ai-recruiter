@@ -95,7 +95,7 @@ jobs:
         env:
           DATABASE_URL: postgresql://postgres:postgres@localhost:5432/ai_recruiter_test
         run: |
-          alembic -c alembic.ini upgrade head
+          PYTHONPATH=/home/runner/work/ai-recruiter/ai-recruiter alembic -c alembic.ini upgrade head
 
       - name: Run tests against Postgres
         env:
