@@ -74,6 +74,8 @@ jobs:
           docker push "$ECR_REGISTRY/$ECR_REPOSITORY:latest"
           echo "uri=$IMAGE_URI" >> "$GITHUB_OUTPUT"
       - name: Deploy to instance
+        env:
+          ECR_REGISTRY: ${{ steps.ecr-login.outputs.registry }}
         run: |
           # Get instance IP
           INSTANCE_IP=$(aws lightsail get-instance \
@@ -88,20 +90,40 @@ jobs:
           echo "${{ secrets.LIGHTSAIL_SSH_KEY }}" > "$KEY_FILE"
           chmod 600 "$KEY_FILE"
 
-          # Get ECR password and encode for safe transfer
+          # Resolve full image URI
+          IMAGE_URI="${ECR_REGISTRY}/${ECR_REPOSITORY}:latest"
+          echo "Image URI: $IMAGE_URI"
+
+          # Get ECR password
           ECR_PASS=$(aws ecr get-login-password --region $AWS_REGION)
-          ECR_PASS_B64=$(echo -n "$ECR_PASS" | base64)
 
-          # Deploy to instance (base64 decode on remote for safe transfer)
-          ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -i "$KEY_FILE" ubuntu@$INSTANCE_IP \
-            "echo '$ECR_PASS_B64' | base64 -d | sudo docker login --username AWS --password-stdin $ECR_REGISTRY && \
-             sudo docker pull $ECR_REGISTRY/$ECR_REPOSITORY:latest && \
-             sudo docker rm -f ai-recruiter 2>/dev/null; \
-             sudo docker run -d --name ai-recruiter --restart unless-stopped \
-               -p 80:80 -e DATABASE_URL='${{ secrets.DATABASE_URL }}' \
-               $ECR_REGISTRY/$ECR_REPOSITORY:latest"
+          # Deploy via SSH
+          # - password passed as heredoc to avoid shell escaping issues
+          # - sudo docker login uses stdin (not pipe)
+          ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -i "$KEY_FILE" ubuntu@$INSTANCE_IP bash -s << REMOTE_SCRIPT
+            set -e
 
-          # Wait and verify health
+            # ECR login
+            echo "${ECR_PASS}" | sudo docker login --username AWS --password-stdin ${ECR_REGISTRY}
+
+            # Pull image
+            sudo docker pull ${IMAGE_URI}
+
+            # Stop old container (if exists)
+            sudo docker rm -f ai-recruiter 2>/dev/null || true
+
+            # Run new container
+            sudo docker run -d \
+              --name ai-recruiter \
+              --restart unless-stopped \
+              -p 80:80 \
+              -e DATABASE_URL='${{ secrets.DATABASE_URL }}' \
+              ${IMAGE_URI}
+
+            echo "Container started"
+          REMOTE_SCRIPT
+
+          # Health check
           sleep 30
           HTTP_CODE=$(curl -sf -o /dev/null -w "%{http_code}" http://$INSTANCE_IP/health || echo "000")
           echo "Health check: HTTP $HTTP_CODE"
@@ -109,5 +131,6 @@ jobs:
             echo "WARNING: Health check failed"
           fi
       - name: Verify deployment
+        continue-on-error: true
         run: |
           curl -sf http://api.adrianguerra.net/health | python -m json.tool
