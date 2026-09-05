@@ -25,7 +25,7 @@ env:
   AWS_REGION: us-east-2
   AWS_ACCOUNT_ID: "765761474007"
   ECR_REPOSITORY: ai-recruiter-api
-  LIGHTSAIL_INSTANCE: ai-recruiter-api-v2
+  LIGHTSAIL_INSTANCE: ai-recruiter-api-v3
 jobs:
   validate:
     name: Validate API
