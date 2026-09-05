@@ -89,11 +89,12 @@ jobs:
           KEY_FILE="/tmp/lightsail-key.pem"
           aws lightsail download-default-key-pair \
             --region $AWS_REGION \
-            --output text > "$KEY_FILE"
+            --query "privateKeyBase64" \
+            --output text | base64 -d > "$KEY_FILE"
           chmod 600 "$KEY_FILE"
 
           # Pull and restart container
-          ssh -o StrictHostKeyChecking=no -i "$KEY_FILE" ubuntu@$INSTANCE_IP \
+          ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -i "$KEY_FILE" ubuntu@$INSTANCE_IP \
             "echo '$ECR_PASSWORD' | docker login --username AWS --password-stdin $ECR_REGISTRY && \
              docker pull $ECR_REGISTRY/$ECR_REPOSITORY:latest && \
              docker rm -f ai-recruiter 2>/dev/null; \
