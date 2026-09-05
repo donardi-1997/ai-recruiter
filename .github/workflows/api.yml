@@ -1,19 +1,17 @@
-name: API CI/CD
+name: API CI/CD (Lightsail)
 on:
   pull_request:
     branches: [main]
     paths:
-      - "main.py"
+      - "app/**"
       - "Dockerfile"
-      - "api-task-definition.json"
       - "requirements.txt"
       - ".github/workflows/api.yml"
   push:
     branches: [main]
     paths:
-      - "main.py"
+      - "app/**"
       - "Dockerfile"
-      - "api-task-definition.json"
       - "requirements.txt"
       - ".github/workflows/api.yml"
   workflow_dispatch:
@@ -25,10 +23,9 @@ concurrency:
   cancel-in-progress: false
 env:
   AWS_REGION: us-east-2
-  ECR_REPOSITORY: ai-recruiter
-  ECS_CLUSTER: ai-recruiter-cluster
-  ECS_SERVICE: ai-recruiter-api-v2
-  ECS_CONTAINER: Main
+  AWS_ACCOUNT_ID: "765761474007"
+  ECR_REPOSITORY: ai-recruiter-api
+  LIGHTSAIL_INSTANCE: ai-recruiter-api-v2
 jobs:
   validate:
     name: Validate API
@@ -36,18 +33,21 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-      - name: Validate Python syntax
-        run: |
-          python -m py_compile main.py
-      - name: Validate ECS task definition JSON
-        run: |
-          python -m json.tool api-task-definition.json > /dev/null
-      - name: Docker build test
-        run: |
-          docker build \
-          --tag api-ci:${{ github.sha }} .
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+          cache: pip
+      - name: Install deps
+        run: pip install -r requirements.txt pytest
+      - name: Validate syntax
+        run: python -m py_compile app/main.py
+      - name: Run tests
+        env:
+          DATABASE_URL: "sqlite:///:memory:"
+        run: python -m pytest app/tests/ -v --tb=short
   deploy:
-    name: Deploy API
+    name: Deploy to Lightsail
     if: github.event_name != 'pull_request'
     needs: validate
     runs-on: ubuntu-latest
@@ -55,76 +55,59 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-      - name: Configure AWS credentials via OIDC
+      - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v5
         with:
           role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
-      - name: Login Amazon ECR
+      - name: Login ECR
         id: ecr-login
         uses: aws-actions/amazon-ecr-login@v2
       - name: Build and push image
-        id: image
         env:
           ECR_REGISTRY: ${{ steps.ecr-login.outputs.registry }}
           IMAGE_TAG: ${{ github.sha }}
         run: |
           IMAGE_URI="$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG"
-          docker build \
-            --file Dockerfile \
-            --tag "$IMAGE_URI" .
+          docker build --tag "$IMAGE_URI" --tag "$ECR_REPOSITORY:latest" .
           docker push "$IMAGE_URI"
+          docker push "$ECR_REPOSITORY:latest"
           echo "uri=$IMAGE_URI" >> "$GITHUB_OUTPUT"
-      - name: Render ECS Task Definition
-        id: task-def
+      - name: Get ECR password and deploy to instance
         env:
-          IMAGE_URI: ${{ steps.image.outputs.uri }}
+          ECR_PASSWORD: ${{ steps.ecr-login.outputs.password }}
         run: |
-
-          jq \
-          --arg IMAGE "$IMAGE_URI" \
-          --arg CONTAINER "$ECS_CONTAINER" \
-          '
-          .containerDefinitions |=
-          map(
-            if .name == $CONTAINER
-            then .image=$IMAGE
-            else .
-            end
-          )
-          ' \
-          api-task-definition.json \
-          > api-task-definition-rendered.json
-      - name: Register ECS task definition
-        id: register_task
-        run: |
-          TASK_DEFINITION=$(aws ecs register-task-definition \
-            --cli-input-json file://api-task-definition-rendered.json \
-            --region "$AWS_REGION" \
-            --query "taskDefinition.taskDefinitionArn" \
+          # Get instance IP
+          INSTANCE_IP=$(aws lightsail get-instance \
+            --instance-name $LIGHTSAIL_INSTANCE \
+            --region $AWS_REGION \
+            --query "instance.publicIpAddress" \
             --output text)
-          echo "task_definition=$TASK_DEFINITION" >> "$GITHUB_OUTPUT"
-      - name: Deploy ECS Service
-        run: |
+          echo "Instance IP: $INSTANCE_IP"
 
-          aws ecs update-service \
-          --cluster "$ECS_CLUSTER" \
-          --service "$ECS_SERVICE" \
-          --task-definition "${{ steps.register_task.outputs.task_definition }}" \
-          --region "$AWS_REGION"
-      - name: Wait ECS stable
-        run: |
+          # Get SSH key
+          KEY_FILE="/tmp/lightsail-key.pem"
+          aws lightsail download-default-key-pair \
+            --region $AWS_REGION \
+            --output text > "$KEY_FILE"
+          chmod 600 "$KEY_FILE"
 
-          aws ecs wait services-stable \
-          --cluster "$ECS_CLUSTER" \
-          --services "$ECS_SERVICE" \
-          --region "$AWS_REGION"
+          # Pull and restart container
+          ssh -o StrictHostKeyChecking=no -i "$KEY_FILE" ubuntu@$INSTANCE_IP \
+            "echo '$ECR_PASSWORD' | docker login --username AWS --password-stdin $ECR_REGISTRY && \
+             docker pull $ECR_REGISTRY/$ECR_REPOSITORY:latest && \
+             docker rm -f ai-recruiter 2>/dev/null; \
+             docker run -d --name ai-recruiter --restart unless-stopped \
+               -p 80:80 -e DATABASE_URL='${{ secrets.DATABASE_URL }}' \
+               $ECR_REGISTRY/$ECR_REPOSITORY:latest"
+
+          # Wait and verify health
+          sleep 30
+          HTTP_CODE=$(curl -sf -o /dev/null -w "%{http_code}" http://$INSTANCE_IP/health || echo "000")
+          echo "Health check: HTTP $HTTP_CODE"
+          if [ "$HTTP_CODE" != "200" ]; then
+            echo "WARNING: Health check failed"
+          fi
       - name: Verify deployment
         run: |
-
-          aws ecs describe-services \
-          --cluster "$ECS_CLUSTER" \
-          --services "$ECS_SERVICE" \
-          --region "$AWS_REGION" \
-          --query "services[0].deployments[*].{Status:status,Running:runningCount,Task:taskDefinition}" \
-          --output table
+          curl -sf http://api.adrianguerra.net/health | python -m json.tool

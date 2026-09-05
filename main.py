@@ -1,4 +1,5 @@
 import json
+import logging
 import os
 import re
 import uuid
@@ -7,6 +8,7 @@ from io import BytesIO
 from typing import Any
 
 import boto3
+import botocore.exceptions
 from boto3.dynamodb.conditions import Key, Attr
 import requests
 
@@ -51,6 +53,18 @@ from auth import LoginRequest, login_user, refresh_user
 
 load_dotenv()
 
+# ============================================================
+# LOGGING
+# ============================================================
+
+logger = logging.getLogger(__name__)
+
+if not logging.getLogger().handlers:
+    logging.basicConfig(
+        level=os.getenv("LOG_LEVEL", "INFO"),
+        format="%(asctime)s %(levelname)s %(name)s - %(message)s"
+    )
+
 
 # ============================================================
 # AWS CONFIGURATION
@@ -59,6 +73,11 @@ load_dotenv()
 AWS_REGION = os.getenv(
     "AWS_REGION",
     "us-east-2"
+)
+
+AWS_ENDPOINT = os.getenv(
+    "AWS_ENDPOINT",
+    ""
 )
 
 KNOWLEDGE_BASE_ID = os.getenv("KNOWLEDGE_BASE_ID", "VUGNMJQAEN")
@@ -315,6 +334,7 @@ JOB_CANDIDATES_TABLE = os.getenv(
     "JOB_CANDIDATES_TABLE",
     "ai-recruiter-job-candidates"
 )
+RANKINGS_TABLE = "ai-recruiter-rankings"
 
 # ============================================================
 # FASTAPI
@@ -472,6 +492,120 @@ evaluations_table = dynamodb.Table(
 job_candidates_table = dynamodb.Table(
     JOB_CANDIDATES_TABLE
 )
+rankings_table = dynamodb.Table(
+    RANKINGS_TABLE
+)
+
+# ============================================================
+# RANKINGS TABLE - CLIENTE Y PROVISIONAMIENTO
+# ============================================================
+
+def get_rankings_dynamodb_client():
+    """Boto3 client for the rankings table.
+
+    Reads AWS_REGION / AWS_ENDPOINT from env vars (optional endpoint
+    is useful for DynamoDB Local or integration testing).
+    """
+    client_kwargs = {
+        "region_name": AWS_REGION,
+    }
+    if AWS_ENDPOINT:
+        client_kwargs["endpoint_url"] = AWS_ENDPOINT
+    return boto3.client("dynamodb", **client_kwargs)
+
+def get_rankings_dynamodb_resource():
+    """Boto3 resource for the rankings table (same config as client)."""
+    resource_kwargs = {
+        "region_name": AWS_REGION,
+    }
+    if AWS_ENDPOINT:
+        resource_kwargs["endpoint_url"] = AWS_ENDPOINT
+    return boto3.resource("dynamodb", **resource_kwargs)
+
+# Minimum IAM policy required by this module to read/write the
+# rankings table and (optionally) create it on first run.
+RANKINGS_MIN_IAM_POLICY = {
+    "Version": "2012-10-17",
+    "Statement": [
+        {
+            "Sid": "RankingsTableCRUD",
+            "Effect": "Allow",
+            "Action": [
+                "dynamodb:GetItem",
+                "dynamodb:PutItem",
+                "dynamodb:UpdateItem",
+                "dynamodb:DeleteItem",
+                "dynamodb:Query",
+            ],
+            "Resource": "arn:aws:dynamodb:*:*:table/ai-recruiter-rankings",
+        },
+        {
+            "Sid": "RankingsTableCreate",
+            "Effect": "Allow",
+            "Action": [
+                "dynamodb:DescribeTable",
+                "dynamodb:CreateTable",
+            ],
+            "Resource": "arn:aws:dynamodb:*:*:table/ai-recruiter-rankings",
+        },
+    ],
+}
+
+def ensure_rankings_table_exists() -> bool:
+    """Create the rankings table (PK: job_id) if it does not exist.
+
+    Optional bootstrap helper; in production prefer CloudFormation /
+    Terraform. Requires the actions documented in
+    RANKINGS_MIN_IAM_POLICY. Returns True when the table is ready
+    (existing or newly created), False on error.
+    """
+    client = get_rankings_dynamodb_client()
+    try:
+        client.describe_table(TableName=RANKINGS_TABLE)
+        logger.info(
+            "Rankings table already exists: %s",
+            RANKINGS_TABLE,
+        )
+        return True
+    except botocore.exceptions.ClientError as error:
+        error_code = error.response.get("Error", {}).get("Code")
+        if error_code != "ResourceNotFoundException":
+            logger.exception(
+                "Error verifying rankings table '%s': %s",
+                RANKINGS_TABLE,
+                error,
+            )
+            return False
+
+    try:
+        logger.info("Creating rankings table: %s", RANKINGS_TABLE)
+        client.create_table(
+            TableName=RANKINGS_TABLE,
+            KeySchema=[
+                {
+                    "AttributeName": "job_id",
+                    "KeyType": "HASH",
+                }
+            ],
+            AttributeDefinitions=[
+                {
+                    "AttributeName": "job_id",
+                    "AttributeType": "S",
+                }
+            ],
+            BillingMode="PAY_PER_REQUEST",
+        )
+        waiter = client.get_waiter("table_exists")
+        waiter.wait(TableName=RANKINGS_TABLE)
+        logger.info("Rankings table created: %s", RANKINGS_TABLE)
+        return True
+    except botocore.exceptions.ClientError as error:
+        logger.exception(
+            "Error creating rankings table '%s': %s",
+            RANKINGS_TABLE,
+            error,
+        )
+        return False
 
 # ============================================================
 # LLM
@@ -586,6 +720,8 @@ class JobRankingResponse(BaseModel):
     total: int
     total_pages: int
     pending_candidates: int = 0
+    ranking_generated_at: str | None = None
+    ranking_version: int | None = None
     candidates: list[
         CandidateRankingItem
     ]
@@ -847,6 +983,72 @@ def get_owned_candidate_ids(owner_id: str) -> set[str]:
         if not response.get("LastEvaluatedKey"):
             return ids
         scan_kwargs["ExclusiveStartKey"] = response["LastEvaluatedKey"]
+
+# ============================================================
+# RANKING METADATA
+# ============================================================
+
+def get_ranking_metadata(job_id: str) -> dict | None:
+    try:
+        response = rankings_table.get_item(
+            Key={"job_id": job_id}
+        )
+        return response.get("Item")
+    except Exception as error:
+        logger.exception(
+            "ERROR GETTING RANKING METADATA job_id=%s: %s",
+            job_id,
+            error,
+        )
+        raise HTTPException(
+            status_code=500,
+            detail=(
+                "Error al leer los metadatos del "
+                "ranking."
+            )
+        )
+
+def save_ranking_metadata(job_id: str, version: int):
+    now = datetime.now(timezone.utc).isoformat()
+    try:
+        rankings_table.put_item(
+            Item={
+                "job_id": job_id,
+                "ranking_generated_at": now,
+                "ranking_version": version,
+            }
+        )
+    except Exception as error:
+        logger.exception(
+            "ERROR SAVING RANKING METADATA job_id=%s: %s",
+            job_id,
+            error,
+        )
+        raise HTTPException(
+            status_code=500,
+            detail=(
+                "Error al guardar los metadatos del "
+                "ranking."
+            )
+        )
+
+def get_new_candidate_ids(
+    job_id: str,
+    owner_id: str,
+    since: str,
+) -> set[str]:
+    response = job_candidates_table.query(
+        KeyConditionExpression=Key("job_id").eq(job_id),
+        FilterExpression=(
+            Attr("owner_id").eq(owner_id)
+            & Attr("assigned_at").gt(since)
+        ),
+    )
+    return {
+        item["candidate_id"]
+        for item in response.get("Items", [])
+        if item.get("candidate_id")
+    }
 
 def parse_json_field(value):
 
@@ -3131,24 +3333,56 @@ def evaluate_candidate_job(
 @app.post("/api/jobs/{job_id}/ranking/recalculate")
 def recalculate_job_ranking(
     job_id: str,
+    mode: str = "full",
     scope: str = "assigned",
     current_user: dict = Depends(get_current_user),
 ):
-    """Reevaluate every current candidate owned by the authenticated user.
+    """Reevaluate candidates for a job.
 
-    The candidate pool is the source of truth here; existing evaluations are
-    only overwritten as each candidate is processed.
+    mode="full"      – reevaluate every assigned candidate.
+    mode="incremental" – evaluate only candidates assigned since the
+                         last ranking run (assigned_at > ranking_generated_at).
     """
+    if mode not in ("full", "incremental"):
+        raise HTTPException(
+            status_code=400,
+            detail="mode debe ser 'full' o 'incremental'.",
+        )
+
     job = get_job_record(job_id)
     if not job:
         raise HTTPException(status_code=404, detail="Vacante no encontrada.")
     validate_job_owner(job, current_user)
 
-    assigned_ids = get_job_candidate_ids(job_id, current_user["sub"])
+    owner_id = current_user["sub"]
+
+    # ------------------------------------------------------------------
+    # Determine which candidate ids to evaluate
+    # ------------------------------------------------------------------
+    if mode == "incremental":
+        metadata = get_ranking_metadata(job_id)
+        since = metadata.get("ranking_generated_at") if metadata else None
+        if since:
+            assigned_ids = get_new_candidate_ids(job_id, owner_id, since)
+        else:
+            # No previous ranking – evaluate everything (first run).
+            assigned_ids = get_job_candidate_ids(job_id, owner_id)
+    else:
+        assigned_ids = get_job_candidate_ids(job_id, owner_id)
+
     if scope == "all":
-        assigned_ids = get_owned_candidate_ids(current_user["sub"])
+        if mode == "incremental":
+            # When scope=all + incremental, fall back to full on owned pool.
+            # (no per-owner assigned_at tracking for "all" scope)
+            assigned_ids = get_owned_candidate_ids(owner_id)
+        else:
+            assigned_ids = get_owned_candidate_ids(owner_id)
+
+    # ------------------------------------------------------------------
+    # Fetch candidate records
+    # ------------------------------------------------------------------
     candidates = []
-    scan_kwargs = {"FilterExpression": Attr("owner_id").eq(current_user["sub"])}
+    scan_kwargs = {"FilterExpression": Attr("owner_id").eq(owner_id)}
     while True:
         response = candidates_table.scan(**scan_kwargs)
         candidates.extend(
@@ -3160,6 +3394,9 @@ def recalculate_job_ranking(
             break
         scan_kwargs["ExclusiveStartKey"] = last_key
 
+    # ------------------------------------------------------------------
+    # Evaluate
+    # ------------------------------------------------------------------
     evaluated = 0
     failures = []
     for candidate in candidates:
@@ -3176,12 +3413,22 @@ def recalculate_job_ranking(
                 "error": error.detail,
             })
 
+    # ------------------------------------------------------------------
+    # Update ranking metadata
+    # ------------------------------------------------------------------
+    prev_metadata = get_ranking_metadata(job_id)
+    prev_version = prev_metadata.get("ranking_version", 0) if prev_metadata else 0
+    new_version = prev_version + 1
+    save_ranking_metadata(job_id, new_version)
+
     return {
         "job_id": job_id,
+        "mode": mode,
         "total_candidates": len(candidates),
         "evaluated": evaluated,
         "failed": len(failures),
         "failures": failures,
+        "ranking_version": new_version,
     }
 
 # ============================================================
@@ -3984,6 +4231,8 @@ def get_job_ranking(
         # RESPONSE
         # ====================================================
 
+        ranking_metadata = get_ranking_metadata(job_id)
+
         return JobRankingResponse(
             job_id=job_id,
 
@@ -4004,6 +4253,14 @@ def get_job_ranking(
                 0,
                 len(all_candidates) - len(evaluations_by_candidate)
             ),
+
+            ranking_generated_at=ranking_metadata.get(
+                "ranking_generated_at"
+            ) if ranking_metadata else None,
+
+            ranking_version=ranking_metadata.get(
+                "ranking_version"
+            ) if ranking_metadata else None,
 
             candidates=ranked_candidates
         )

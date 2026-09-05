@@ -1,3 +1,5 @@
+// eslint-disable-next-line no-unused-vars
+import React from "react";
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 
@@ -28,6 +30,14 @@ function Ranking() {
 
   const [recommendationFilter, setRecommendationFilter] = useState("");
   const [rankingScope, setRankingScope] = useState("assigned");
+
+  const [showModeModal, setShowModeModal] = useState(false);
+
+  const [rankingGeneratedAt, setRankingGeneratedAt] = useState(null);
+
+  const [rankingVersion, setRankingVersion] = useState(null);
+
+  const [isRecalculating, setIsRecalculating] = useState(false);
 
   const [rankingInfo, setRankingInfo] = useState({
     total: 0,
@@ -120,6 +130,9 @@ function Ranking() {
 
       setRanking(candidates);
 
+      setRankingGeneratedAt(data.ranking_generated_at || null);
+      setRankingVersion(data.ranking_version ?? null);
+
       const allScores = candidates.map((candidate) =>
         Number(candidate.match_score || 0),
       );
@@ -142,33 +155,32 @@ function Ranking() {
 
   }
 
-  async function recalculateRanking() {
+  async function recalculateRanking(mode) {
     if (!selectedJob) {
       alert("Seleccione una vacante");
       return;
     }
 
-    if (!window.confirm("¿Recalcular el ranking de todos los candidatos para esta vacante?")) {
+    setShowModeModal(false);
+
+    const label = mode === "incremental"
+      ? "Solo nuevos candidatos"
+      : "Recalcular todo";
+
+    if (!window.confirm(`¿${label}?`)) {
       return;
     }
 
     try {
-      setLoading(true);
-      const response = await api.post(`/jobs/${selectedJob}/ranking/recalculate`, null, {
-        params: { scope: rankingScope },
+      setIsRecalculating(true);
+      await api.post(`/jobs/${selectedJob}/ranking/recalculate`, null, {
+        params: { mode, scope: rankingScope },
       });
-      const totalCandidates = response.data.total_candidates || 0;
-      const failed = response.data.failed || 0;
-
-      if (failed > 0) {
-        alert(`Se procesaron ${totalCandidates} candidatos actuales, incluidos los nuevos. ${failed} no pudo${failed === 1 ? "" : "ieron"} evaluarse.`);
-      }
-
       await loadRanking();
     } catch (error) {
       alert(error.response?.data?.detail || "No fue posible recalcular el ranking");
     } finally {
-      setLoading(false);
+      setIsRecalculating(false);
     }
   }
 
@@ -483,14 +495,14 @@ function Ranking() {
 
           <button
             className="btn btn-primary"
-            onClick={hasRanking ? recalculateRanking : loadRanking}
-            disabled={loading}
+            onClick={hasRanking ? () => setShowModeModal(true) : loadRanking}
+            disabled={loading || isRecalculating}
             style={{
               padding: "10px 18px",
-              cursor: loading ? "not-allowed" : "pointer",
+              cursor: loading || isRecalculating ? "not-allowed" : "pointer",
             }}
           >
-            {loading ? "Analizando..." : hasRanking ? "Recalcular ranking" : "Ver ranking"}
+            {loading ? "Cargando..." : isRecalculating ? "Recalculando..." : hasRanking ? "Actualizar ranking" : "Ver ranking"}
           </button>
         </div>
       </div>
@@ -498,6 +510,12 @@ function Ranking() {
       {selectedJob && rankingInfo.pending > 0 && (
         <p className="muted" style={{ marginTop: "16px" }}>
           {rankingInfo.pending} candidato{rankingInfo.pending === 1 ? "" : "s"} pendiente{rankingInfo.pending === 1 ? "" : "s"} de evaluación.
+        </p>
+      )}
+
+      {hasRanking && rankingGeneratedAt && (
+        <p className="muted" style={{ marginTop: "8px", fontSize: "13px", color: "#64748b" }}>
+          Último ranking: v{rankingVersion} — {new Date(rankingGeneratedAt).toLocaleString("es-ES")}
         </p>
       )}
 
@@ -684,6 +702,95 @@ function Ranking() {
           </div>
         ))}
       </div>
+
+      {/* ========================================================
+          MODE MODAL
+      ======================================================== */}
+
+      {showModeModal && (
+        <div
+          className="modal-overlay"
+          onClick={() => setShowModeModal(false)}
+          style={{
+            position: "fixed",
+            top: 0,
+            left: 0,
+            right: 0,
+            bottom: 0,
+            background: "rgba(0,0,0,0.5)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            zIndex: 1000,
+            padding: "20px",
+          }}
+        >
+          <div
+            className="modal"
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              background: "white",
+              padding: "30px",
+              borderRadius: "15px",
+              width: "400px",
+              maxWidth: "100%",
+              boxShadow: "0 10px 40px rgba(0,0,0,0.2)",
+            }}
+          >
+            <h2 style={{ marginTop: 0, marginBottom: "10px" }}>Actualizar ranking</h2>
+            <p style={{ marginBottom: "20px", color: "#64748b" }}>
+              ¿Cómo quieres actualizar el ranking?
+            </p>
+            <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
+              <button
+                className="btn btn-primary"
+                onClick={() => recalculateRanking("incremental")}
+                disabled={isRecalculating}
+                style={{
+                  padding: "12px 18px",
+                  cursor: isRecalculating ? "not-allowed" : "pointer",
+                  textAlign: "left",
+                }}
+              >
+                <strong>Solo nuevos candidatos</strong>
+                <br />
+                <span style={{ fontSize: "13px", fontWeight: "normal", opacity: 0.8 }}>
+                  Evalúa solo candidatos asignados desde el último ranking
+                </span>
+              </button>
+              <button
+                className="btn btn-secondary"
+                onClick={() => recalculateRanking("full")}
+                disabled={isRecalculating}
+                style={{
+                  padding: "12px 18px",
+                  cursor: isRecalculating ? "not-allowed" : "pointer",
+                  textAlign: "left",
+                }}
+              >
+                <strong>Recalcular todo</strong>
+                <br />
+                <span style={{ fontSize: "13px", fontWeight: "normal", opacity: 0.8 }}>
+                  Re-evalúa todos los candidatos (más lento)
+                </span>
+              </button>
+            </div>
+            <button
+              className="btn btn-close"
+              onClick={() => setShowModeModal(false)}
+              disabled={isRecalculating}
+              style={{
+                marginTop: "16px",
+                padding: "10px 20px",
+                cursor: "pointer",
+                width: "100%",
+              }}
+            >
+              Cancelar
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* ========================================================
           MODAL

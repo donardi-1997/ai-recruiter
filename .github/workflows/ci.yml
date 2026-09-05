@@ -1,0 +1,138 @@
+name: CI — Tests & Build
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+env:
+  PYTHON_VERSION: "3.10"
+  NODE_VERSION: "22"
+
+jobs:
+  # ─────────────────────────────────────────────────────────
+  # BACKEND TESTS
+  # ─────────────────────────────────────────────────────────
+  backend-tests:
+    name: Backend tests (pytest)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+
+      - name: Install backend deps
+        run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pytest alembic psycopg2-binary
+
+      - name: Validate Python syntax
+        run: |
+          python -m py_compile app/main.py
+          python -m py_compile app/models.py
+          python -m py_compile app/crud.py
+          python -m py_compile app/deps.py
+
+      - name: Run pytest (SQLite)
+        env:
+          DATABASE_URL: "sqlite:///:memory:"
+        run: |
+          python -m pytest app/tests/ -v --tb=short
+
+      - name: Run contract tests
+        env:
+          DATABASE_URL: "sqlite:///:memory:"
+        run: |
+          python -m pytest app/tests/test_contract.py -v --tb=short
+
+  # ─────────────────────────────────────────────────────────
+  # BACKEND SMOKE TEST (against real Postgres)
+  # ─────────────────────────────────────────────────────────
+  backend-smoke:
+    name: Backend smoke (Postgres)
+    runs-on: ubuntu-latest
+    needs: backend-tests
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: ai_recruiter_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+
+      - name: Install deps
+        run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pytest alembic psycopg2-binary
+
+      - name: Run Alembic migrations
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/ai_recruiter_test
+        run: |
+          alembic -c app/alembic.ini upgrade head
+
+      - name: Run tests against Postgres
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/ai_recruiter_test
+        run: |
+          python -m pytest app/tests/test_contract.py -v --tb=short
+
+  # ─────────────────────────────────────────────────────────
+  # FRONTEND LINT & BUILD
+  # ─────────────────────────────────────────────────────────
+  frontend:
+    name: Frontend (lint + build + test)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: frontend-react/package-lock.json
+
+      - name: Install frontend deps
+        working-directory: frontend-react
+        run: npm ci
+
+      - name: Lint
+        working-directory: frontend-react
+        run: npm run lint
+
+      - name: Run frontend tests
+        working-directory: frontend-react
+        run: npm test
+
+      - name: Build
+        working-directory: frontend-react
+        env:
+          VITE_API_URL: /api
+        run: npm run build
