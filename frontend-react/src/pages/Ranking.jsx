@@ -159,6 +159,54 @@ function Ranking() {
 
   }
 
+  async function viewRanking() {
+    if (!selectedJob) {
+      alert("Seleccione una vacante");
+      return;
+    }
+
+    try {
+      setIsRecalculating(true);
+
+      console.log(
+        "GENERATING RANKING:",
+        selectedJob,
+        rankingScope,
+      );
+
+      const response = await api.post(
+        `/jobs/${selectedJob}/ranking/recalculate`,
+        null,
+        {
+          params: {
+            mode: "incremental",
+            scope: rankingScope,
+          },
+        },
+      );
+
+      console.log(
+        "RANKING RECALCULATE RESPONSE:",
+        response.data,
+      );
+
+      await loadRanking();
+    } catch (error) {
+      console.error(
+        "ERROR GENERATING RANKING:",
+        error.response?.data || error,
+      );
+
+      alert(
+        error.response?.data?.detail ||
+          "No fue posible generar el ranking",
+      );
+    } finally {
+      setIsRecalculating(false);
+    }
+  }
+
+
   async function recalculateRanking(mode) {
     if (!selectedJob) {
       alert("Seleccione una vacante");
@@ -528,14 +576,26 @@ function Ranking() {
 
           <button
             className="btn btn-primary"
-            onClick={hasRanking ? () => setShowModeModal(true) : loadRanking}
+            onClick={
+              hasRanking
+                ? () => setShowModeModal(true)
+                : viewRanking
+            }
             disabled={loading || isRecalculating}
             style={{
               padding: "10px 18px",
               cursor: loading || isRecalculating ? "not-allowed" : "pointer",
             }}
           >
-            {loading ? "Cargando..." : isRecalculating ? "Recalculando..." : hasRanking ? "Actualizar ranking" : "Ver ranking"}
+            {loading
+              ? "Cargando..."
+              : isRecalculating
+                ? hasRanking
+                  ? "Recalculando..."
+                  : "Generando ranking..."
+                : hasRanking
+                  ? "Actualizar ranking"
+                  : "Ver ranking"}
           </button>
         </div>
       </div>
