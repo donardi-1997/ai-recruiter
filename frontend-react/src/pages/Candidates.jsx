@@ -51,6 +51,20 @@ function Candidates() {
     }
   }
 
+  function openCreateCandidateModal() {
+    setFileError("");
+    setUploadSummary(null);
+    setUploadProgress(null);
+    setShowAllFiles(false);
+
+    // UX: si solo hay una vacante, preseleccionarla.
+    if (!uploadJob && jobs.length === 1) {
+      setUploadJob(jobs[0].job_id);
+    }
+
+    setShowCreateModal(true);
+  }
+
   async function createCandidate(e) {
     e.preventDefault();
     if (!candidateFiles.length) {
@@ -392,7 +406,7 @@ function Candidates() {
       "EVALUATION_FAILED";
 
   return (
-    <div className="page">
+    <div className="page candidate-page">
       <div
         className="page-header"
         style={{
@@ -409,6 +423,14 @@ function Candidates() {
           <p>Gestión de CVs con Inteligencia Artificial</p>
         </div>
 
+        <button
+          type="button"
+          className="btn btn-primary candidate-add-button"
+          onClick={openCreateCandidateModal}
+        >
+          Agregar candidato
+          <span aria-hidden="true">＋</span>
+        </button>
       </div>
 
       <div className="section-heading candidate-section-heading">
@@ -595,7 +617,7 @@ function Candidates() {
 
             <form onSubmit={createCandidate}>
               <div className="form-group" style={{ marginBottom: "16px" }}>
-                <label htmlFor="upload-job">Asignar estos candidatos a una vacante (opcional)</label>
+                <label htmlFor="upload-job">Asignar estos candidatos a una vacante</label>
                 <select id="upload-job" className="select" value={uploadJob} onChange={(event) => setUploadJob(event.target.value)} disabled={creatingCandidate}>
                   {!uploadJob && <option value="">Selecciona una vacante</option>}
                   {jobs.map((job) => <option key={job.job_id} value={job.job_id}>{job.title}</option>)}

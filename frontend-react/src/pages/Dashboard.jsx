@@ -57,8 +57,7 @@ function Dashboard() {
           <h1>{greeting}, equipo.</h1>
           <p>Así avanza tu proceso de selección hoy.</p>
         </div>
-        <Link className="btn btn-primary" to="/candidates">Agregar candidato <span aria-hidden="true">＋</span></Link>
-      </header>
+       </header>
 
       <section className="metrics-grid" aria-label="Indicadores principales">
         <MetricCard icon="▤" label="Vacantes activas" value={jobs.length} detail="Procesos en seguimiento" tone="blue" />

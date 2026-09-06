@@ -184,4 +184,27 @@ describe("Candidates evaluation", () => {
       screen.queryByText("Sin clasificación"),
     ).not.toBeInTheDocument();
   });
+
+  it("shows Agregar candidato on Candidates page and opens the upload modal", async () => {
+    renderCandidates();
+
+    await screen.findByText("Ana Test");
+
+    const addButton = screen.getByRole(
+      "button",
+      { name: /Agregar candidato/i },
+    );
+
+    expect(addButton).toBeInTheDocument();
+
+    fireEvent.click(addButton);
+
+    expect(
+      await screen.findByRole(
+        "heading",
+        { name: "Agregar candidatos" },
+      ),
+    ).toBeInTheDocument();
+  });
+
 });
