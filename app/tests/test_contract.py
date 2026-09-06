@@ -248,3 +248,191 @@ class TestAdvisoryLock:
         from app.deps import _advisory_lock_key
         key = _advisory_lock_key("test")
         assert -(2**63) <= key < 2**63
+
+
+
+# ============================================================
+# CANDIDATE EVALUATION CONTRACT
+# ============================================================
+
+def test_evaluate_candidate_completed_has_status_and_long_summary(
+    client,
+    db_session,
+    monkeypatch,
+):
+    import app.evaluation as evaluation_module
+    from app.models import Candidate
+
+    job = _seed_job(db_session)
+
+    candidate = Candidate(
+        id=_uuid(),
+        name="Ana Test",
+    )
+    db_session.add(candidate)
+    db_session.commit()
+
+    monkeypatch.setattr(
+        evaluation_module,
+        "retrieve_candidate",
+        lambda **kwargs: [
+            {
+                "content": {
+                    "text": "Python APIs REST AWS experiencia backend."
+                }
+            }
+        ],
+    )
+
+    summary = (
+        "La candidata presenta experiencia relevante para la vacante, "
+        "con evidencia concreta en Python y desarrollo de APIs REST. "
+        "Su perfil cubre varios requisitos técnicos y mantiene algunas "
+        "brechas que deben validarse durante una entrevista técnica."
+    )
+
+    monkeypatch.setattr(
+        evaluation_module,
+        "evaluate_candidate",
+        lambda **kwargs: {
+            "status": "COMPLETED",
+            "match_score": 70,
+            "recommendation": "PARTIAL_MATCH",
+            "summary": summary,
+            "strengths": ["Python", "APIs REST"],
+            "gaps": ["Kubernetes"],
+        },
+    )
+
+    response = client.post(
+        f"/api/candidates/{candidate.id}/evaluate-job",
+        json={"job_id": job.id},
+    )
+
+    assert response.status_code == 200
+
+    data = response.json()
+
+    assert data["status"] == "COMPLETED"
+    assert data["match_score"] == 70
+    assert data["recommendation"] == "PARTIAL_MATCH"
+    assert len(data["summary"].strip()) >= 100
+    assert data["error_message"] is None
+
+
+def test_evaluate_candidate_failure_does_not_expose_aws_error(
+    client,
+    db_session,
+    monkeypatch,
+):
+    import app.evaluation as evaluation_module
+    from app.models import Candidate, Evaluation
+
+    job = _seed_job(db_session)
+
+    candidate = Candidate(
+        id=_uuid(),
+        name="Failure Test",
+    )
+    db_session.add(candidate)
+    db_session.commit()
+
+    raw_error = (
+        "AccessDeniedException User "
+        "arn:aws:sts::022499043430:"
+        "assumed-role/AmazonLightsailInstanceRole/test "
+        "is not authorized to perform bedrock:Retrieve"
+    )
+
+    def _raise(**kwargs):
+        raise RuntimeError(raw_error)
+
+    monkeypatch.setattr(
+        evaluation_module,
+        "retrieve_candidate",
+        _raise,
+    )
+
+    response = client.post(
+        f"/api/candidates/{candidate.id}/evaluate-job",
+        json={"job_id": job.id},
+    )
+
+    assert response.status_code == 200
+
+    data = response.json()
+
+    assert data["status"] == "FAILED"
+    assert data["match_score"] is None
+    assert data["recommendation"] == "EVALUATION_FAILED"
+    assert "arn:aws" not in data["summary"]
+    assert "AccessDeniedException" not in data["summary"]
+    assert "arn:aws" not in data["error_message"]
+    assert "AccessDeniedException" not in data["error_message"]
+
+    db_session.expire_all()
+
+    stored = (
+        db_session.query(Evaluation)
+        .filter(
+            Evaluation.candidate_id == candidate.id,
+            Evaluation.job_id == job.id,
+        )
+        .first()
+    )
+
+    assert stored is not None
+    assert stored.status == "FAILED"
+    assert raw_error in stored.error_message
+
+
+def test_evaluate_candidate_rejects_short_completed_summary(
+    client,
+    db_session,
+    monkeypatch,
+):
+    import app.evaluation as evaluation_module
+    from app.models import Candidate
+
+    job = _seed_job(db_session)
+
+    candidate = Candidate(
+        id=_uuid(),
+        name="Short Summary Test",
+    )
+    db_session.add(candidate)
+    db_session.commit()
+
+    monkeypatch.setattr(
+        evaluation_module,
+        "retrieve_candidate",
+        lambda **kwargs: [
+            {"content": {"text": "CV de prueba"}}
+        ],
+    )
+
+    monkeypatch.setattr(
+        evaluation_module,
+        "evaluate_candidate",
+        lambda **kwargs: {
+            "status": "COMPLETED",
+            "match_score": 80,
+            "recommendation": "STRONG_MATCH",
+            "summary": "Resumen demasiado corto.",
+            "strengths": ["Python"],
+            "gaps": [],
+        },
+    )
+
+    response = client.post(
+        f"/api/candidates/{candidate.id}/evaluate-job",
+        json={"job_id": job.id},
+    )
+
+    assert response.status_code == 200
+
+    data = response.json()
+
+    assert data["status"] == "FAILED"
+    assert data["match_score"] is None
+    assert data["recommendation"] == "EVALUATION_FAILED"

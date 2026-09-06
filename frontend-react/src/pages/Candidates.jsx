@@ -334,8 +334,20 @@ function Candidates() {
       return "Buena coincidencia";
     }
 
+    if (recommendation === "PARTIAL_MATCH") {
+      return "Coincidencia parcial";
+    }
+
     if (recommendation === "LOW_MATCH") {
       return "Baja coincidencia";
+    }
+
+    if (recommendation === "EVALUATION_FAILED") {
+      return "Evaluación fallida";
+    }
+
+    if (recommendation === "PENDING") {
+      return "Pendiente";
     }
 
     return "Sin clasificación";
@@ -349,10 +361,21 @@ function Candidates() {
       };
     }
 
-    if (recommendation === "GOOD_MATCH") {
+    if (
+      recommendation === "GOOD_MATCH" ||
+      recommendation === "PARTIAL_MATCH"
+    ) {
       return {
         background: "#fef3c7",
         color: "#92400e",
+      };
+    }
+
+    if (recommendation === "EVALUATION_FAILED") {
+      return {
+        background: "#fef2f2",
+        color: "#991b1b",
+        border: "1px solid #fecaca",
       };
     }
 
@@ -361,6 +384,11 @@ function Candidates() {
       color: "#991b1b",
     };
   }
+
+  const selectedEvaluationFailed =
+    selectedEvaluation?.evaluation?.status === "FAILED" ||
+    selectedEvaluation?.evaluation?.recommendation ===
+      "EVALUATION_FAILED";
 
   return (
     <div className="page">
@@ -719,43 +747,65 @@ function Candidates() {
               </button>
             </div>
 
-            <div
-              style={{
-                textAlign: "center",
-                padding: "20px 0",
-              }}
-            >
-              <div className="score">
-                {selectedEvaluation.evaluation.match_score}%
-              </div>
-
+            {selectedEvaluationFailed ? (
               <div
-                className="score-bar"
                 style={{
-                  maxWidth: "400px",
-                  margin: "0 auto",
+                  textAlign: "center",
+                  padding: "20px 0",
                 }}
               >
                 <div
-                  className="score-fill"
+                  className="badge"
                   style={{
-                    width: `${selectedEvaluation.evaluation.match_score}%`,
+                    display: "inline-block",
+                    padding: "10px 18px",
+                    ...badgeStyle("EVALUATION_FAILED"),
                   }}
-                />
+                >
+                  Evaluación fallida
+                </div>
               </div>
-
+            ) : (
               <div
-                className="badge"
                 style={{
-                  marginTop: "18px",
-                  ...badgeStyle(selectedEvaluation.evaluation.recommendation),
+                  textAlign: "center",
+                  padding: "20px 0",
                 }}
               >
-                {getRecommendationLabel(
-                  selectedEvaluation.evaluation.recommendation,
-                )}
+                <div className="score">
+                  {selectedEvaluation.evaluation.match_score}%
+                </div>
+
+                <div
+                  className="score-bar"
+                  style={{
+                    maxWidth: "400px",
+                    margin: "0 auto",
+                  }}
+                >
+                  <div
+                    className="score-fill"
+                    style={{
+                      width: `${selectedEvaluation.evaluation.match_score}%`,
+                    }}
+                  />
+                </div>
+
+                <div
+                  className="badge"
+                  style={{
+                    marginTop: "18px",
+                    ...badgeStyle(
+                      selectedEvaluation.evaluation.recommendation,
+                    ),
+                  }}
+                >
+                  {getRecommendationLabel(
+                    selectedEvaluation.evaluation.recommendation,
+                  )}
+                </div>
               </div>
-            </div>
+            )}
 
             <div className="result">
               <h3>Resumen</h3>
