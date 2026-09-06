@@ -317,7 +317,7 @@ def evaluate_candidate_for_job(
     db: Session = Depends(get_db),
     _user: dict = Depends(get_current_user),
 ):
-    from evaluation import evaluate_candidate as llm_evaluate, retrieve_candidate
+    from app.evaluation import evaluate_candidate as llm_evaluate, retrieve_candidate
 
     candidate = _require_candidate(db, candidate_id)
     job = _require_job(db, body.job_id)
@@ -521,7 +521,7 @@ def recalculate_ranking(
         raise HTTPException(status_code=409, detail="Otro proceso esta recalculando el ranking.")
 
     try:
-        from evaluation import evaluate_candidate as llm_evaluate, retrieve_candidate
+        from app.evaluation import evaluate_candidate as llm_evaluate, retrieve_candidate
 
         job = crud.get_job(db, job_id)
         meta = crud.get_ranking_metadata(db, job_id)
