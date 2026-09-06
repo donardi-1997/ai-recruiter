@@ -791,7 +791,7 @@ def get_latest_ranking(
                 "status": "FAILED",
                 "strengths": [],
                 "gaps": [],
-                "error_message": evaluation.error_message or "Evaluacion fallida",
+                "error_message": crud._sanitize_error_message(evaluation.error_message) or "Evaluacion fallida",
             })
         else:
             candidates.append({

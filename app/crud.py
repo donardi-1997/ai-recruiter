@@ -12,6 +12,33 @@ from app.models import Candidate, Evaluation, Job, JobCandidate, Ranking, Rankin
 logger = logging.getLogger(__name__)
 
 
+def _sanitize_error_message(error_message: str | None) -> str | None:
+    """Sanitize error messages for public API consumption.
+
+    Technical AWS details (ARNs, account IDs, exception names) are preserved
+    internally but replaced with user-friendly messages in API responses.
+    """
+    if not error_message:
+        return None
+
+    # If it contains AWS technical details, return generic message
+    aws_indicators = [
+        "AccessDeniedException",
+        "arn:aws",
+        "assumed-role",
+        "AmazonLightsailInstanceRole",
+        "knowledge-base/",
+        "bedrock:Retrieve",
+        "bedrock:InvokeModel",
+        "is not authorized to perform",
+    ]
+    for indicator in aws_indicators:
+        if indicator in error_message:
+            return "No fue posible completar la evaluación. Intente recalcular el ranking."
+
+    return error_message
+
+
 # ============================================================
 # JOBS
 # ============================================================
@@ -425,7 +452,7 @@ def build_ranking_response(
                     "status": "FAILED",
                     "strengths": [],
                     "gaps": [],
-                    "error_message": evaluation.error_message or "Evaluacion fallida",
+                    "error_message": _sanitize_error_message(evaluation.error_message) or "Evaluacion fallida",
                 })
             else:
                 # No evaluation or incomplete — should not happen after recalculate
