@@ -1,6 +1,6 @@
 // eslint-disable-next-line no-unused-vars
 import React from "react";
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import Ranking from "../pages/Ranking";
@@ -105,4 +105,205 @@ describe("Ranking page", () => {
       expect(screen.getByText(/Último ranking: v3/)).toBeInTheDocument();
     });
   });
+
+  it("automatically recalculates before showing a new ranking", async () => {
+    let rankingRequests = 0;
+
+    api.get.mockImplementation((url) => {
+      if (url === "/jobs") {
+        return Promise.resolve({
+          data: [
+            {
+              job_id: "job-1",
+              title: "Dev Python",
+            },
+          ],
+        });
+      }
+
+      if (url.includes("/ranking")) {
+        rankingRequests += 1;
+
+        if (rankingRequests === 1) {
+          return Promise.resolve({
+            data: {
+              candidates: [],
+              ranking_generated_at: null,
+              ranking_version: null,
+              ranking_scope: "assigned",
+              ranking_total: 0,
+              total: 0,
+              total_pages: 0,
+              page: 1,
+              page_size: 10,
+              pending_candidates: 0,
+            },
+          });
+        }
+
+        return Promise.resolve({
+          data: {
+            candidates: [
+              {
+                candidate_id: "candidate-1",
+                candidate_name: "Ana Test",
+                position: 1,
+                status: "COMPLETED",
+                match_score: 85,
+                recommendation: "GOOD_MATCH",
+                strengths: [],
+                gaps: [],
+              },
+            ],
+            ranking_generated_at:
+              "2026-09-06T12:00:00Z",
+            ranking_version: 1,
+            ranking_scope: "assigned",
+            ranking_total: 1,
+            total: 1,
+            total_pages: 1,
+            page: 1,
+            page_size: 10,
+            pending_candidates: 0,
+            score_min: 85,
+            score_max: 85,
+          },
+        });
+      }
+
+      return Promise.resolve({ data: [] });
+    });
+
+    api.post.mockResolvedValueOnce({
+      data: {
+        job_id: "job-1",
+        mode: "full",
+        scope: "assigned",
+        total_candidates: 1,
+        evaluated: 1,
+        failed: 0,
+        ranking_version: 1,
+      },
+    });
+
+    renderRanking();
+
+    await waitFor(() => {
+      expect(
+        screen.getByText("Ver ranking"),
+      ).toBeInTheDocument();
+    });
+
+    fireEvent.click(
+      screen.getByText("Ver ranking"),
+    );
+
+    await waitFor(() => {
+      expect(api.post).toHaveBeenCalledWith(
+        "/jobs/job-1/ranking/recalculate",
+        null,
+        {
+          params: {
+            mode: "incremental",
+            scope: "assigned",
+          },
+        },
+      );
+    });
+
+    await waitFor(() => {
+      expect(
+        screen.getByText("85%"),
+      ).toBeInTheDocument();
+    });
+  });
+
+
+  it("requests the next ranking page from the backend", async () => {
+    api.get.mockImplementation(
+      (url, config = {}) => {
+        if (url === "/jobs") {
+          return Promise.resolve({
+            data: [
+              {
+                job_id: "job-1",
+                title: "Dev Python",
+              },
+            ],
+          });
+        }
+
+        if (url.includes("/ranking")) {
+          const requestedPage =
+            config.params?.page || 1;
+
+          return Promise.resolve({
+            data: {
+              candidates: [
+                {
+                  candidate_id:
+                    `candidate-${requestedPage}`,
+                  candidate_name:
+                    `Page ${requestedPage}`,
+                  position:
+                    requestedPage === 1
+                      ? 1
+                      : 11,
+                  status: "COMPLETED",
+                  match_score:
+                    requestedPage === 1
+                      ? 90
+                      : 80,
+                  recommendation:
+                    "GOOD_MATCH",
+                  strengths: [],
+                  gaps: [],
+                },
+              ],
+              ranking_generated_at:
+                "2026-09-06T12:00:00Z",
+              ranking_version: 2,
+              ranking_scope: "assigned",
+              ranking_total: 25,
+              total: 25,
+              total_pages: 3,
+              page: requestedPage,
+              page_size: 10,
+              pending_candidates: 0,
+              score_min: 10,
+              score_max: 90,
+            },
+          });
+        }
+
+        return Promise.resolve({
+          data: [],
+        });
+      },
+    );
+
+    renderRanking();
+
+    await waitFor(() => {
+      expect(
+        screen.getByText("Siguiente"),
+      ).toBeInTheDocument();
+    });
+
+    fireEvent.click(
+      screen.getByText("Siguiente"),
+    );
+
+    await waitFor(() => {
+      expect(
+        api.get.mock.calls.some(
+          ([url, config]) =>
+            url ===
+              "/jobs/job-1/ranking" &&
+            config?.params?.page === 2,
+        ),
+      ).toBe(true);
+    });
+  });
+
 });

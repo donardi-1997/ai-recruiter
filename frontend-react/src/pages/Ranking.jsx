@@ -39,6 +39,13 @@ function Ranking() {
 
   const [isRecalculating, setIsRecalculating] = useState(false);
 
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(10);
+  const [totalPages, setTotalPages] = useState(0);
+  const [rankingBaseTotal, setRankingBaseTotal] = useState(0);
+  const [rankingLoadedScope, setRankingLoadedScope] = useState(null);
+  const [rankingMessage, setRankingMessage] = useState("");
+
   const [rankingInfo, setRankingInfo] = useState({
     total: 0,
     pending: 0,
@@ -46,7 +53,10 @@ function Ranking() {
     maximum: 0,
   });
 
-  const hasRanking = rankingInfo.total > 0;
+  const hasRanking =
+    rankingVersion != null &&
+    rankingLoadedScope === rankingScope &&
+    rankingBaseTotal > 0;
 
   // ============================================================
   // LOAD JOBS
@@ -82,24 +92,32 @@ function Ranking() {
   // LOAD RANKING
   // ============================================================
 
-  async function loadRanking() {
+  async function loadRanking(
+    targetPage = page,
+    targetPageSize = pageSize,
+  ) {
     if (!selectedJob) {
-      alert("Seleccione una vacante");
       return;
     }
 
     if (minScore < 0 || minScore > 100) {
-      alert("El puntaje mínimo debe estar entre 0 y 100");
+      alert(
+        "El puntaje mínimo debe estar entre 0 y 100",
+      );
       return;
     }
 
     if (maxScore < 0 || maxScore > 100) {
-      alert("El puntaje máximo debe estar entre 0 y 100");
+      alert(
+        "El puntaje máximo debe estar entre 0 y 100",
+      );
       return;
     }
 
     if (minScore > maxScore) {
-      alert("El puntaje mínimo no puede ser mayor que el puntaje máximo");
+      alert(
+        "El puntaje mínimo no puede ser mayor que el puntaje máximo",
+      );
       return;
     }
 
@@ -109,55 +127,121 @@ function Ranking() {
       const params = {
         min_score: minScore,
         max_score: maxScore,
-        page: 1,
-        page_size: 100,
+        page: targetPage,
+        page_size: targetPageSize,
         scope: rankingScope,
       };
 
       if (recommendationFilter) {
-        params.recommendation = recommendationFilter;
+        params.recommendation =
+          recommendationFilter;
       }
 
-      const response = await api.get(`/jobs/${selectedJob}/ranking`, {
-        params,
-      });
+      const response = await api.get(
+        `/jobs/${selectedJob}/ranking`,
+        { params },
+      );
 
-      console.log("RANKING RESPONSE:", response.data);
+      console.log(
+        "RANKING RESPONSE:",
+        response.data,
+      );
 
       const data = response.data;
 
-      const candidates = data.candidates || data.ranking || data.items || [];
+      const candidates =
+        data.candidates ||
+        data.ranking ||
+        data.items ||
+        [];
 
       setRanking(candidates);
 
-      setRankingGeneratedAt(data.ranking_generated_at || null);
-      setRankingVersion(data.ranking_version ?? null);
+      setRankingGeneratedAt(
+        data.ranking_generated_at || null,
+      );
 
-      // Only use COMPLETED evaluations for statistics
-      const completedCandidates = candidates.filter(
-        (c) => c.status === "COMPLETED" && c.match_score != null,
+      setRankingVersion(
+        data.ranking_version ?? null,
       );
-      const allScores = completedCandidates.map((c) =>
-        Number(c.match_score),
+
+      setRankingLoadedScope(
+        data.ranking_scope ?? rankingScope,
       );
+
+      setRankingBaseTotal(
+        data.ranking_total ??
+          data.total ??
+          candidates.length,
+      );
+
+      setPage(
+        data.page ?? targetPage,
+      );
+
+      setTotalPages(
+        data.total_pages ?? 0,
+      );
+
+      const completedCandidates =
+        candidates.filter(
+          (candidate) =>
+            candidate.status === "COMPLETED" &&
+            candidate.match_score != null,
+        );
+
+      const visibleScores =
+        completedCandidates.map(
+          (candidate) =>
+            Number(candidate.match_score),
+        );
 
       setRankingInfo({
-        total: data.total ?? candidates.length,
-        pending: data.pending_candidates ?? 0,
+        total:
+          data.total ??
+          candidates.length,
 
-        minimum: allScores.length > 0 ? Math.min(...allScores) : null,
+        pending:
+          data.pending_candidates ??
+          0,
 
-        maximum: allScores.length > 0 ? Math.max(...allScores) : null,
+        minimum:
+          data.score_min ??
+          (
+            visibleScores.length > 0
+              ? Math.min(...visibleScores)
+              : null
+          ),
+
+        maximum:
+          data.score_max ??
+          (
+            visibleScores.length > 0
+              ? Math.max(...visibleScores)
+              : null
+          ),
       });
-    } catch (error) {
-      console.error("ERROR LOADING RANKING:", error.response?.data || error);
 
-      alert(error.response?.data?.detail || "No fue posible cargar el ranking");
+      if (candidates.length > 0) {
+        setRankingMessage("");
+      }
+
+    } catch (error) {
+      console.error(
+        "ERROR LOADING RANKING:",
+        error.response?.data || error,
+      );
+
+      alert(
+        error.response?.data?.detail ||
+          "No fue posible cargar el ranking",
+      );
+
     } finally {
       setLoading(false);
     }
-
   }
+
 
   async function viewRanking() {
     if (!selectedJob) {
@@ -165,14 +249,13 @@ function Ranking() {
       return;
     }
 
+    if (isRecalculating) {
+      return;
+    }
+
     try {
       setIsRecalculating(true);
-
-      console.log(
-        "GENERATING RANKING:",
-        selectedJob,
-        rankingScope,
-      );
+      setRankingMessage("");
 
       const response = await api.post(
         `/jobs/${selectedJob}/ranking/recalculate`,
@@ -185,12 +268,25 @@ function Ranking() {
         },
       );
 
-      console.log(
-        "RANKING RECALCULATE RESPONSE:",
-        response.data,
+      const result = response.data;
+
+      await loadRanking(
+        1,
+        pageSize,
       );
 
-      await loadRanking();
+      setPage(1);
+
+      if (
+        result.total_candidates === 0
+      ) {
+        setRankingMessage(
+          rankingScope === "assigned"
+            ? "No hay candidatos asignados a esta vacante."
+            : "No hay candidatos disponibles para evaluar.",
+        );
+      }
+
     } catch (error) {
       console.error(
         "ERROR GENERATING RANKING:",
@@ -201,6 +297,7 @@ function Ranking() {
         error.response?.data?.detail ||
           "No fue posible generar el ranking",
       );
+
     } finally {
       setIsRecalculating(false);
     }
@@ -215,9 +312,10 @@ function Ranking() {
 
     setShowModeModal(false);
 
-    const label = mode === "incremental"
-      ? "Solo nuevos candidatos"
-      : "Recalcular todo";
+    const label =
+      mode === "incremental"
+        ? "Solo nuevos candidatos"
+        : "Recalcular todo";
 
     if (!window.confirm(`¿${label}?`)) {
       return;
@@ -225,23 +323,90 @@ function Ranking() {
 
     try {
       setIsRecalculating(true);
-      await api.post(`/jobs/${selectedJob}/ranking/recalculate`, null, {
-        params: { mode, scope: rankingScope },
-      });
-      await loadRanking();
+
+      await api.post(
+        `/jobs/${selectedJob}/ranking/recalculate`,
+        null,
+        {
+          params: {
+            mode,
+            scope: rankingScope,
+          },
+        },
+      );
+
+      setPage(1);
+
+      await loadRanking(
+        1,
+        pageSize,
+      );
+
     } catch (error) {
-      alert(error.response?.data?.detail || "No fue posible recalcular el ranking");
+      alert(
+        error.response?.data?.detail ||
+          "No fue posible recalcular el ranking",
+      );
+
     } finally {
       setIsRecalculating(false);
     }
   }
 
+
+  async function changePage(nextPage) {
+    if (
+      nextPage < 1 ||
+      nextPage > totalPages ||
+      nextPage === page
+    ) {
+      return;
+    }
+
+    setPage(nextPage);
+
+    await loadRanking(
+      nextPage,
+      pageSize,
+    );
+  }
+
+
+  async function changePageSize(event) {
+    const nextPageSize =
+      Number(event.target.value);
+
+    setPageSize(nextPageSize);
+    setPage(1);
+
+    await loadRanking(
+      1,
+      nextPageSize,
+    );
+  }
+
+
+  async function applyFilters() {
+    setPage(1);
+
+    await loadRanking(
+      1,
+      pageSize,
+    );
+  }
+
+
   useEffect(() => {
     if (selectedJob) {
-      // Load the selected vacancy ranking when the page initializes.
-      // eslint-disable-next-line react-hooks/set-state-in-effect
-      loadRanking();
+      setPage(1);
+      setRankingMessage("");
+
+      loadRanking(
+        1,
+        pageSize,
+      );
     }
+
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedJob, rankingScope]);
 
@@ -572,6 +737,21 @@ function Ranking() {
             </select>
           </div>
 
+          <button
+            className="btn btn-secondary"
+            onClick={applyFilters}
+            disabled={
+              !hasRanking ||
+              loading ||
+              isRecalculating
+            }
+            style={{
+              padding: "10px 18px",
+            }}
+          >
+            Aplicar filtros
+          </button>
+
           {/* BUTTON */}
 
           <button
@@ -660,9 +840,12 @@ function Ranking() {
               borderRadius: "12px",
             }}
           >
-            <p>{rankingInfo.pending > 0
-              ? "No hay candidatos evaluados para esta vacante."
-              : "No hay candidatos que cumplan con los filtros seleccionados."}</p>
+            <p>
+              {rankingMessage ||
+                (rankingInfo.pending > 0
+                  ? "No hay candidatos evaluados para esta vacante."
+                  : "No hay candidatos que cumplan con los filtros seleccionados.")}
+            </p>
           </div>
         )}
 
@@ -685,7 +868,9 @@ function Ranking() {
             }}
           >
             <h2>
-              #{index + 1} {candidate.candidate_name}
+              #{candidate.position ??
+                ((page - 1) * pageSize + index + 1)}{" "}
+              {candidate.candidate_name}
             </h2>
 
             <strong>Puntaje de coincidencia</strong>
@@ -810,6 +995,96 @@ function Ranking() {
           </div>
         ))}
       </div>
+
+      {rankingInfo.total > 0 && (
+        <div
+          className="ranking-pagination"
+          style={{
+            display: "flex",
+            justifyContent: "space-between",
+            alignItems: "center",
+            gap: "16px",
+            flexWrap: "wrap",
+            marginTop: "24px",
+            padding: "16px 0",
+          }}
+        >
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: "10px",
+            }}
+          >
+            <span>Mostrar</span>
+
+            <select
+              value={pageSize}
+              onChange={changePageSize}
+              style={{
+                padding: "8px 10px",
+              }}
+            >
+              <option value={10}>10</option>
+              <option value={25}>25</option>
+              <option value={50}>50</option>
+              <option value={100}>100</option>
+            </select>
+
+            <span>por página</span>
+          </div>
+
+          <span className="muted">
+            Mostrando{" "}
+            {(page - 1) * pageSize + 1}
+            –
+            {Math.min(
+              page * pageSize,
+              rankingInfo.total,
+            )}{" "}
+            de {rankingInfo.total}
+          </span>
+
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: "10px",
+            }}
+          >
+            <button
+              className="btn btn-secondary"
+              onClick={() =>
+                changePage(page - 1)
+              }
+              disabled={
+                page <= 1 ||
+                loading
+              }
+            >
+              Anterior
+            </button>
+
+            <span>
+              Página {page} de{" "}
+              {Math.max(totalPages, 1)}
+            </span>
+
+            <button
+              className="btn btn-secondary"
+              onClick={() =>
+                changePage(page + 1)
+              }
+              disabled={
+                page >= totalPages ||
+                loading
+              }
+            >
+              Siguiente
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* ========================================================
           MODE MODAL

@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from sqlalchemy import func
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 
 from app.models import Candidate, Evaluation, Job, JobCandidate, Ranking, RankingItem
 
@@ -343,25 +343,30 @@ def upsert_ranking_metadata(
     job_id: str,
     version: int,
     mode: str = "full",
+    scope: str = "assigned",
 ) -> Ranking:
     now = datetime.now(timezone.utc)
+
     existing = get_ranking_metadata(db, job_id)
 
     if existing:
         existing.generated_at = now
         existing.ranking_version = version
         existing.mode = mode
+        existing.notes = f"scope:{scope}"
     else:
         existing = Ranking(
             job_id=job_id,
             ranking_version=version,
             generated_at=now,
             mode=mode,
+            notes=f"scope:{scope}",
         )
         db.add(existing)
 
     db.commit()
     db.refresh(existing)
+
     return existing
 
 
@@ -408,88 +413,282 @@ def build_ranking_response(
     *,
     page: int = 1,
     page_size: int = 10,
+    min_score: float = 0,
+    max_score: float = 100,
+    recommendation: str | None = None,
+    scope: str | None = None,
 ) -> dict[str, Any]:
+    """Return the current ranking sorted and paginated correctly.
+
+    Sorting is global and deterministic:
+    COMPLETED first, highest score first, then candidate name.
+    FAILED and PENDING are placed after valid evaluations.
+
+    Filtering happens before pagination.
+    """
+
     job = get_job(db, job_id)
     meta = get_ranking_metadata(db, job_id)
 
-    if meta:
-        items_query = (
-            db.query(RankingItem)
-            .filter(RankingItem.ranking_id == meta.id)
-        )
-        total = items_query.count() or 0
-        total_pages = (total + page_size - 1) // page_size if total > 0 else 0
+    if not meta:
+        requested_scope = scope or "assigned"
 
-        items = (
-            items_query
-            .order_by(RankingItem.position)
-            .offset((page - 1) * page_size)
-            .limit(page_size)
+        return {
+            "job_id": job_id,
+            "job_title": job.title if job else "",
+            "ranking_generated_at": None,
+            "ranking_version": None,
+            "ranking_scope": requested_scope,
+            "scope_mismatch": False,
+            "ranking_total": 0,
+            "total": 0,
+            "total_pages": 0,
+            "page": page,
+            "page_size": page_size,
+            "pending_candidates": 0,
+            "score_min": None,
+            "score_max": None,
+            "candidates": [],
+        }
+
+    ranking_scope = "assigned"
+
+    if meta.notes and meta.notes.startswith("scope:"):
+        candidate_scope = meta.notes.split(":", 1)[1].strip()
+
+        if candidate_scope in {"assigned", "all"}:
+            ranking_scope = candidate_scope
+
+    # A ranking generated for "all" must never be silently returned
+    # as though it belonged to "assigned", and vice versa.
+    if scope is not None and scope != ranking_scope:
+        return {
+            "job_id": job_id,
+            "job_title": job.title if job else "",
+            "ranking_generated_at": (
+                meta.generated_at.isoformat()
+                if meta.generated_at
+                else None
+            ),
+            "ranking_version": meta.ranking_version,
+            "ranking_scope": ranking_scope,
+            "scope_mismatch": True,
+            "ranking_total": 0,
+            "total": 0,
+            "total_pages": 0,
+            "page": page,
+            "page_size": page_size,
+            "pending_candidates": 0,
+            "score_min": None,
+            "score_max": None,
+            "candidates": [],
+        }
+
+    items = (
+        db.query(RankingItem)
+        .options(joinedload(RankingItem.candidate))
+        .filter(RankingItem.ranking_id == meta.id)
+        .all()
+    )
+
+    candidate_ids = [
+        item.candidate_id
+        for item in items
+    ]
+
+    latest_evaluation_by_candidate = {}
+
+    if candidate_ids:
+        evaluations = (
+            db.query(Evaluation)
+            .filter(
+                Evaluation.job_id == job_id,
+                Evaluation.candidate_id.in_(candidate_ids),
+            )
+            .order_by(Evaluation.created_at.desc())
             .all()
         )
 
-        candidates = []
-        for item in items:
-            evaluation = get_evaluation_for_job_candidate(db, job_id, item.candidate_id)
+        for evaluation in evaluations:
+            latest_evaluation_by_candidate.setdefault(
+                evaluation.candidate_id,
+                evaluation,
+            )
 
-            if is_evaluation_complete(evaluation):
-                # Valid completed evaluation
-                candidates.append({
-                    "position": item.position,
-                    "candidate_id": item.candidate_id,
-                    "match_score": evaluation.match_score,
-                    "candidate_name": item.candidate.name if item.candidate else "",
-                    "recommendation": evaluation.recommendation,
-                    "status": "COMPLETED",
-                    "strengths": evaluation.strengths or [],
-                    "gaps": evaluation.gaps or [],
-                    "error_message": None,
-                })
-            elif evaluation and evaluation.status == "FAILED":
-                # Explicitly failed evaluation
-                candidates.append({
-                    "position": item.position,
-                    "candidate_id": item.candidate_id,
-                    "match_score": None,
-                    "candidate_name": item.candidate.name if item.candidate else "",
-                    "recommendation": "EVALUATION_FAILED",
-                    "status": "FAILED",
-                    "strengths": [],
-                    "gaps": [],
-                    "error_message": _sanitize_error_message(evaluation.error_message) or "Evaluacion fallida",
-                })
-            else:
-                # No evaluation or incomplete — should not happen after recalculate
-                # but handle gracefully
-                candidates.append({
-                    "position": item.position,
-                    "candidate_id": item.candidate_id,
-                    "match_score": None,
-                    "candidate_name": item.candidate.name if item.candidate else "",
-                    "recommendation": "PENDING",
-                    "status": "PENDING",
-                    "strengths": [],
-                    "gaps": [],
-                    "error_message": "Evaluacion pendiente",
-                })
-    else:
-        total = 0
-        total_pages = 0
-        candidates = []
+    candidates = []
+
+    for item in items:
+        evaluation = latest_evaluation_by_candidate.get(
+            item.candidate_id
+        )
+
+        candidate_name = (
+            item.candidate.name
+            if item.candidate
+            else ""
+        )
+
+        if is_evaluation_complete(evaluation):
+            candidates.append({
+                "position": 0,
+                "candidate_id": item.candidate_id,
+                "match_score": evaluation.match_score,
+                "candidate_name": candidate_name,
+                "recommendation": evaluation.recommendation,
+                "status": "COMPLETED",
+                "strengths": evaluation.strengths or [],
+                "gaps": evaluation.gaps or [],
+                "error_message": None,
+            })
+
+        elif evaluation and evaluation.status == "FAILED":
+            candidates.append({
+                "position": 0,
+                "candidate_id": item.candidate_id,
+                "match_score": None,
+                "candidate_name": candidate_name,
+                "recommendation": "EVALUATION_FAILED",
+                "status": "FAILED",
+                "strengths": [],
+                "gaps": [],
+                "error_message": (
+                    _sanitize_error_message(
+                        evaluation.error_message
+                    )
+                    or "Evaluacion fallida"
+                ),
+            })
+
+        else:
+            candidates.append({
+                "position": 0,
+                "candidate_id": item.candidate_id,
+                "match_score": None,
+                "candidate_name": candidate_name,
+                "recommendation": "PENDING",
+                "status": "PENDING",
+                "strengths": [],
+                "gaps": [],
+                "error_message": "Evaluacion pendiente",
+            })
+
+    status_order = {
+        "COMPLETED": 0,
+        "FAILED": 1,
+        "PENDING": 2,
+    }
+
+    def sort_key(candidate):
+        score = candidate.get("match_score")
+
+        numeric_score = (
+            float(score)
+            if score is not None
+            else -1.0
+        )
+
+        return (
+            status_order.get(
+                candidate.get("status"),
+                99,
+            ),
+            -numeric_score,
+            (candidate.get("candidate_name") or "").lower(),
+            candidate.get("candidate_id") or "",
+        )
+
+    # Highest score first.
+    candidates.sort(key=sort_key)
+
+    # Position belongs to the complete ranking,
+    # not to the current page.
+    for position, candidate in enumerate(
+        candidates,
+        start=1,
+    ):
+        candidate["position"] = position
+
+    ranking_total = len(candidates)
+
+    filtered = candidates
+
+    if recommendation:
+        filtered = [
+            candidate
+            for candidate in filtered
+            if candidate.get("recommendation")
+            == recommendation
+        ]
+
+    # When score filtering is active, rows without a valid
+    # score do not belong in the filtered score result.
+    if min_score > 0 or max_score < 100:
+        filtered = [
+            candidate
+            for candidate in filtered
+            if (
+                candidate.get("status") == "COMPLETED"
+                and candidate.get("match_score") is not None
+                and min_score
+                <= float(candidate["match_score"])
+                <= max_score
+            )
+        ]
+
+    total = len(filtered)
+
+    total_pages = (
+        (total + page_size - 1) // page_size
+        if total > 0
+        else 0
+    )
+
+    start = (page - 1) * page_size
+    end = start + page_size
+
+    page_candidates = filtered[start:end]
+
+    completed_scores = [
+        float(candidate["match_score"])
+        for candidate in filtered
+        if (
+            candidate.get("status") == "COMPLETED"
+            and candidate.get("match_score") is not None
+        )
+    ]
+
+    pending_candidates = sum(
+        1
+        for candidate in filtered
+        if candidate.get("status") == "PENDING"
+    )
 
     return {
         "job_id": job_id,
         "job_title": job.title if job else "",
         "ranking_generated_at": (
             meta.generated_at.isoformat()
-            if meta and meta.generated_at
+            if meta.generated_at
             else None
         ),
-        "ranking_version": (meta.ranking_version if meta else None),
+        "ranking_version": meta.ranking_version,
+        "ranking_scope": ranking_scope,
+        "scope_mismatch": False,
+        "ranking_total": ranking_total,
         "total": total,
         "total_pages": total_pages,
         "page": page,
         "page_size": page_size,
-        "pending_candidates": 0,
-        "candidates": candidates,
+        "pending_candidates": pending_candidates,
+        "score_min": (
+            min(completed_scores)
+            if completed_scores
+            else None
+        ),
+        "score_max": (
+            max(completed_scores)
+            if completed_scores
+            else None
+        ),
+        "candidates": page_candidates,
     }

@@ -687,7 +687,10 @@ def get_job_ranking(
     max_score: float = Query(100, ge=0, le=100),
     page: int = Query(1, ge=1),
     page_size: int = Query(10, ge=1, le=100),
-    scope: str = Query("assigned"),
+    scope: str = Query(
+        "assigned",
+        pattern=r"^(assigned|all)$",
+    ),
     recommendation: str | None = Query(None),
     db: Session = Depends(get_db),
     _user: dict = Depends(get_current_user),
@@ -695,146 +698,336 @@ def get_job_ranking(
     _require_job(db, job_id)
 
     if min_score > max_score:
-        raise HTTPException(status_code=400, detail="min_score no puede ser mayor que max_score.")
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "min_score no puede ser mayor "
+                "que max_score."
+            ),
+        )
 
-    result = crud.build_ranking_response(db, job_id, page=page, page_size=page_size)
-
-    candidates = result["candidates"]
-    if min_score > 0:
-        candidates = [c for c in candidates if c.get("match_score", 0) >= min_score]
-    if max_score < 100:
-        candidates = [c for c in candidates if c.get("match_score", 0) <= max_score]
-
-    result["candidates"] = candidates
-    result["total"] = len(candidates)
-    result["total_pages"] = (len(candidates) + page_size - 1) // page_size if candidates else 0
-
-    return result
+    return crud.build_ranking_response(
+        db,
+        job_id,
+        page=page,
+        page_size=page_size,
+        min_score=min_score,
+        max_score=max_score,
+        recommendation=recommendation,
+        scope=scope,
+    )
 
 
 @app.post("/api/jobs/{job_id}/ranking/recalculate")
 def recalculate_ranking(
     job_id: str,
-    mode: str = Query("full", pattern=r"^(full|incremental)$"),
-    scope: str = Query("assigned"),
+    mode: str = Query(
+        "full",
+        pattern=r"^(full|incremental)$",
+    ),
+    scope: str = Query(
+        "assigned",
+        pattern=r"^(assigned|all)$",
+    ),
     db: Session = Depends(get_db),
     _user: dict = Depends(get_current_user),
 ):
     _require_job(db, job_id)
 
     acquired = acquire_job_lock(db, job_id)
+
     if not acquired:
-        raise HTTPException(status_code=409, detail="Otro proceso esta recalculando el ranking.")
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "Otro proceso esta recalculando "
+                "el ranking."
+            ),
+        )
 
     try:
-        from app.evaluation import evaluate_candidate as llm_evaluate, retrieve_candidate
+        from app.evaluation import (
+            evaluate_candidate as llm_evaluate,
+            retrieve_candidate,
+        )
 
         job = crud.get_job(db, job_id)
-        meta = crud.get_ranking_metadata(db, job_id)
-        prev_version = (meta.ranking_version if meta else 0) or 0
+
+        meta = crud.get_ranking_metadata(
+            db,
+            job_id,
+        )
+
+        prev_version = (
+            meta.ranking_version
+            if meta
+            else 0
+        ) or 0
+
         new_version = prev_version + 1
 
         effective_mode = mode
-        if mode == "incremental" and (not meta or not meta.generated_at):
+
+        if (
+            mode == "incremental"
+            and (
+                not meta
+                or not meta.generated_at
+            )
+        ):
             effective_mode = "full"
 
-        ranking = crud.upsert_ranking_metadata(db, job_id, new_version, mode=effective_mode)
+        ranking = crud.upsert_ranking_metadata(
+            db,
+            job_id,
+            new_version,
+            mode=effective_mode,
+            scope=scope,
+        )
 
-        assigned_candidates = crud.list_candidates_for_job(db, job_id, page=1, page_size=1000)[0]
+        if scope == "all":
+            ranking_candidates = crud.list_candidates(db)
+        else:
+            ranking_candidates = (
+                crud.list_candidates_for_job(
+                    db,
+                    job_id,
+                    page=1,
+                    page_size=100000,
+                )[0]
+            )
 
         evaluated_count = 0
         failed_count = 0
         failures = []
 
         all_items: list[dict] = []
-        for position, candidate in enumerate(assigned_candidates, start=1):
-            evaluation = crud.get_evaluation_for_job_candidate(db, job_id, candidate.id)
 
-            if crud.needs_evaluation(evaluation, force=(effective_mode == "full")):
+        for candidate in ranking_candidates:
+            evaluation = (
+                crud.get_evaluation_for_job_candidate(
+                    db,
+                    job_id,
+                    candidate.id,
+                )
+            )
+
+            if crud.needs_evaluation(
+                evaluation,
+                force=(effective_mode == "full"),
+            ):
                 try:
                     results = retrieve_candidate(
                         candidate_id=candidate.id,
-                        question=job.description or job.title,
+                        question=(
+                            job.description
+                            or job.title
+                        ),
                     )
+
                     llm_result = llm_evaluate(
                         candidate_id=candidate.id,
-                        job_description=job.description or job.title,
+                        job_description=(
+                            job.description
+                            or job.title
+                        ),
                         results=results,
                     )
 
-                    # Check if evaluation actually succeeded
-                    eval_status = llm_result.get("status", "COMPLETED")
+                    eval_status = llm_result.get(
+                        "status",
+                        "COMPLETED",
+                    )
+
                     if eval_status == "FAILED":
                         evaluation = crud.create_evaluation(
                             db,
                             candidate_id=candidate.id,
                             job_id=job_id,
-                            match_score=0,
-                            recommendation=llm_result.get("recommendation", "EVALUATION_FAILED"),
-                            summary=llm_result.get("summary", ""),
+                            match_score=0.0,
+                            recommendation=(
+                                llm_result.get(
+                                    "recommendation",
+                                    "EVALUATION_FAILED",
+                                )
+                            ),
+                            summary=(
+                                llm_result.get(
+                                    "summary",
+                                    "",
+                                )
+                            ),
                             strengths=[],
                             gaps=[],
                             status="FAILED",
-                            error_message=llm_result.get("error_message", "EVALUATION_FAILED"),
+                            error_message=(
+                                llm_result.get(
+                                    "error_message",
+                                    "EVALUATION_FAILED",
+                                )
+                            ),
                         )
+
                         failed_count += 1
+
                         failures.append({
                             "candidate_id": candidate.id,
-                            "error": llm_result.get("error_message", "EVALUATION_FAILED"),
+                            "error": llm_result.get(
+                                "error_message",
+                                "EVALUATION_FAILED",
+                            ),
                         })
+
                     else:
                         evaluation = crud.create_evaluation(
                             db,
                             candidate_id=candidate.id,
                             job_id=job_id,
-                            match_score=llm_result.get("match_score", 0),
-                            recommendation=llm_result.get("recommendation", "LOW_MATCH"),
-                            summary=llm_result.get("summary", ""),
-                            strengths=llm_result.get("strengths", []),
-                            gaps=llm_result.get("gaps", []),
+                            match_score=llm_result.get(
+                                "match_score",
+                                0,
+                            ),
+                            recommendation=(
+                                llm_result.get(
+                                    "recommendation",
+                                    "LOW_MATCH",
+                                )
+                            ),
+                            summary=llm_result.get(
+                                "summary",
+                                "",
+                            ),
+                            strengths=llm_result.get(
+                                "strengths",
+                                [],
+                            ),
+                            gaps=llm_result.get(
+                                "gaps",
+                                [],
+                            ),
                             status="COMPLETED",
+                            error_message=None,
                         )
+
                         evaluated_count += 1
+
                 except Exception as exc:
-                    logger.error("Evaluation failed for candidate %s: %s", candidate.id, exc, exc_info=True)
+                    logger.error(
+                        "Evaluation failed for "
+                        "candidate %s: %s",
+                        candidate.id,
+                        exc,
+                        exc_info=True,
+                    )
+
                     failed_count += 1
-                    failures.append({"candidate_id": candidate.id, "error": str(exc)})
+
+                    failures.append({
+                        "candidate_id": candidate.id,
+                        "error": str(exc),
+                    })
+
                     evaluation = crud.create_evaluation(
                         db,
                         candidate_id=candidate.id,
                         job_id=job_id,
                         match_score=0.0,
-                        recommendation="EVALUATION_FAILED",
+                        recommendation=(
+                            "EVALUATION_FAILED"
+                        ),
                         summary="Evaluacion fallida.",
                         strengths=[],
                         gaps=[],
                         status="FAILED",
                         error_message=str(exc),
                     )
+
             else:
                 evaluated_count += 1
 
-            score = evaluation.match_score if evaluation else 0.0
+            if crud.is_evaluation_complete(evaluation):
+                effective_status = "COMPLETED"
+                score = float(
+                    evaluation.match_score
+                )
+            elif (
+                evaluation
+                and evaluation.status == "FAILED"
+            ):
+                effective_status = "FAILED"
+                score = 0.0
+            else:
+                effective_status = "PENDING"
+                score = 0.0
+
             all_items.append({
                 "candidate_id": candidate.id,
+                "candidate_name": (
+                    candidate.name or ""
+                ),
                 "score": score,
-                "position": position,
+                "status": effective_status,
             })
 
+        status_order = {
+            "COMPLETED": 0,
+            "FAILED": 1,
+            "PENDING": 2,
+        }
+
+        # Persist ranking items already ordered:
+        # highest percentage first.
+        all_items.sort(
+            key=lambda item: (
+                status_order.get(
+                    item["status"],
+                    99,
+                ),
+                -float(item["score"]),
+                item["candidate_name"].lower(),
+                item["candidate_id"],
+            )
+        )
+
+        for position, item in enumerate(
+            all_items,
+            start=1,
+        ):
+            item["position"] = position
+
         if all_items:
-            crud.insert_ranking_items(db, ranking_id=ranking.id, items=all_items)
+            crud.insert_ranking_items(
+                db,
+                ranking_id=ranking.id,
+                items=all_items,
+            )
+        else:
+            # Important when changing from a populated
+            # scope to an empty one.
+            crud.insert_ranking_items(
+                db,
+                ranking_id=ranking.id,
+                items=[],
+            )
 
         return {
             "job_id": job_id,
             "mode": effective_mode,
-            "total_candidates": len(assigned_candidates),
+            "scope": scope,
+            "total_candidates": len(
+                ranking_candidates
+            ),
             "evaluated": evaluated_count,
             "failed": failed_count,
             "failures": failures,
             "ranking_version": new_version,
         }
+
     finally:
-        release_job_lock(db, job_id)
+        release_job_lock(
+            db,
+            job_id,
+        )
 
 
 @app.get("/api/jobs/{job_id}/ranking/latest")

@@ -19,8 +19,8 @@ from sqlalchemy.orm import sessionmaker
 from app.db import Base
 from app.deps import acquire_job_lock, _advisory_lock_key, get_current_user, get_db
 from app.main import app
-from app.models import Candidate, Job, Ranking, RankingItem
-from app.crud import get_ranking_metadata, get_ranking_items
+from app.models import Candidate, Evaluation, Job, JobCandidate, Ranking, RankingItem
+from app.crud import build_ranking_response, get_ranking_metadata, get_ranking_items
 
 
 # ============================================================
@@ -319,3 +319,273 @@ def test_concurrent_recalculate_returns_409(client, db_session):
         assert resp.status_code == 200  # lock is no-op
     else:
         assert resp.status_code == 409  # lock held
+
+
+
+# ============================================================
+# TESTS — RANKING ORDER / PAGINATION / SCOPE
+# ============================================================
+
+def test_ranking_orders_by_match_score_and_paginates(
+    db_session,
+):
+    job = _seed_job(db_session)
+
+    ranking = Ranking(
+        id=_uuid(),
+        job_id=job.id,
+        ranking_version=1,
+        mode="full",
+        notes="scope:assigned",
+    )
+
+    db_session.add(ranking)
+    db_session.commit()
+
+    long_summary = (
+        "El candidato presenta evidencia suficiente para realizar "
+        "una evaluación completa frente a los requisitos técnicos "
+        "y profesionales definidos para esta vacante específica."
+    )
+
+    expected_scores = []
+
+    for index in range(25):
+        candidate = _seed_candidate(
+            db_session,
+            name=f"Candidato {index:02d}",
+        )
+
+        score = float(index)
+
+        expected_scores.append(score)
+
+        db_session.add(
+            Evaluation(
+                candidate_id=candidate.id,
+                job_id=job.id,
+                status="COMPLETED",
+                match_score=score,
+                recommendation=(
+                    "LOW_MATCH"
+                    if score < 60
+                    else "GOOD_MATCH"
+                ),
+                summary=long_summary,
+                strengths=[],
+                gaps=[],
+            )
+        )
+
+        # Deliberately use the wrong stored position
+        # to prove API ordering is based on score.
+        db_session.add(
+            RankingItem(
+                ranking_id=ranking.id,
+                candidate_id=candidate.id,
+                score=score,
+                position=25 - index,
+            )
+        )
+
+    db_session.commit()
+
+    first_page = build_ranking_response(
+        db_session,
+        job.id,
+        page=1,
+        page_size=10,
+        scope="assigned",
+    )
+
+    assert first_page["total"] == 25
+    assert first_page["ranking_total"] == 25
+    assert first_page["total_pages"] == 3
+
+    scores = [
+        candidate["match_score"]
+        for candidate
+        in first_page["candidates"]
+    ]
+
+    assert scores == list(
+        reversed(expected_scores)
+    )[:10]
+
+    assert [
+        candidate["position"]
+        for candidate
+        in first_page["candidates"]
+    ] == list(range(1, 11))
+
+    second_page = build_ranking_response(
+        db_session,
+        job.id,
+        page=2,
+        page_size=10,
+        scope="assigned",
+    )
+
+    assert second_page["candidates"][0][
+        "position"
+    ] == 11
+
+    assert second_page["candidates"][0][
+        "match_score"
+    ] == 14.0
+
+
+def test_ranking_filters_before_pagination(
+    db_session,
+):
+    job = _seed_job(db_session)
+
+    ranking = Ranking(
+        id=_uuid(),
+        job_id=job.id,
+        ranking_version=1,
+        mode="full",
+        notes="scope:assigned",
+    )
+
+    db_session.add(ranking)
+    db_session.commit()
+
+    summary = (
+        "Esta evaluación contiene información suficiente y "
+        "detallada para cumplir correctamente con la longitud "
+        "mínima exigida por el contrato de evaluación."
+    )
+
+    for score in range(30):
+        candidate = _seed_candidate(
+            db_session,
+            name=f"Filtro {score}",
+        )
+
+        db_session.add(
+            Evaluation(
+                candidate_id=candidate.id,
+                job_id=job.id,
+                status="COMPLETED",
+                match_score=score,
+                recommendation="LOW_MATCH",
+                summary=summary,
+                strengths=[],
+                gaps=[],
+            )
+        )
+
+        db_session.add(
+            RankingItem(
+                ranking_id=ranking.id,
+                candidate_id=candidate.id,
+                score=score,
+                position=score + 1,
+            )
+        )
+
+    db_session.commit()
+
+    result = build_ranking_response(
+        db_session,
+        job.id,
+        min_score=20,
+        max_score=29,
+        page=1,
+        page_size=5,
+        scope="assigned",
+    )
+
+    assert result["total"] == 10
+    assert result["total_pages"] == 2
+    assert len(result["candidates"]) == 5
+    assert result["candidates"][0][
+        "match_score"
+    ] == 29.0
+
+
+def test_recalculate_scope_all_includes_unassigned(
+    client,
+    db_session,
+    monkeypatch,
+):
+    import app.evaluation as evaluation_module
+
+    job = _seed_job(db_session)
+
+    assigned = _seed_candidate(
+        db_session,
+        name="Asignado",
+    )
+
+    unassigned = _seed_candidate(
+        db_session,
+        name="No asignado",
+    )
+
+    db_session.add(
+        JobCandidate(
+            job_id=job.id,
+            candidate_id=assigned.id,
+        )
+    )
+
+    db_session.commit()
+
+    monkeypatch.setattr(
+        evaluation_module,
+        "retrieve_candidate",
+        lambda **kwargs: [
+            {
+                "content": {
+                    "text": "CV de prueba"
+                }
+            }
+        ],
+    )
+
+    long_summary = (
+        "El candidato presenta experiencia suficiente para "
+        "realizar una evaluación completa de su ajuste frente "
+        "a los requisitos técnicos de esta vacante."
+    )
+
+    monkeypatch.setattr(
+        evaluation_module,
+        "evaluate_candidate",
+        lambda **kwargs: {
+            "status": "COMPLETED",
+            "match_score": 50,
+            "recommendation": "LOW_MATCH",
+            "summary": long_summary,
+            "strengths": [],
+            "gaps": [],
+        },
+    )
+
+    all_response = client.post(
+        f"/api/jobs/{job.id}/ranking/recalculate",
+        params={
+            "mode": "full",
+            "scope": "all",
+        },
+    )
+
+    assert all_response.status_code == 200
+    assert all_response.json()[
+        "total_candidates"
+    ] == 2
+
+    assigned_response = client.post(
+        f"/api/jobs/{job.id}/ranking/recalculate",
+        params={
+            "mode": "full",
+            "scope": "assigned",
+        },
+    )
+
+    assert assigned_response.status_code == 200
+    assert assigned_response.json()[
+        "total_candidates"
+    ] == 1
