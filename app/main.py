@@ -507,11 +507,21 @@ def recalculate_ranking(
         if mode == "incremental" and (not meta or not meta.generated_at):
             effective_mode = "full"
 
-        candidate_ids: list[str] = []
-
         ranking = crud.upsert_ranking_metadata(db, job_id, new_version, mode=effective_mode)
 
+        # Get candidates assigned to this job
+        assigned_candidates = crud.list_candidates_for_job(db, job_id, page=1, page_size=1000)[0]
+
         all_items: list[dict] = []
+        for position, candidate in enumerate(assigned_candidates, start=1):
+            # Get evaluation for this candidate-job pair
+            evaluation = crud.get_evaluation_for_job_candidate(db, job_id, candidate.id)
+            score = evaluation.match_score if evaluation else 0.0
+            all_items.append({
+                "candidate_id": candidate.id,
+                "score": score,
+                "position": position,
+            })
 
         if all_items:
             crud.insert_ranking_items(db, ranking_id=ranking.id, items=all_items)
@@ -519,8 +529,8 @@ def recalculate_ranking(
         return {
             "job_id": job_id,
             "mode": effective_mode,
-            "total_candidates": len(candidate_ids),
-            "evaluated": 0,
+            "total_candidates": len(assigned_candidates),
+            "evaluated": len([i for i in all_items if i["score"] > 0]),
             "failed": 0,
             "ranking_version": new_version,
         }

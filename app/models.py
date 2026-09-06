@@ -35,8 +35,8 @@ class Candidate(Base):
     )
     metadata_ = Column("metadata", JSON, nullable=True, default=dict)
 
-    rankings = relationship("RankingItem", back_populates="candidate")
-    jobs = relationship("JobCandidate", back_populates="candidate")
+    rankings = relationship("RankingItem", back_populates="candidate", cascade="all, delete-orphan")
+    jobs = relationship("JobCandidate", back_populates="candidate", cascade="all, delete-orphan")
 
 
 class Job(Base):
@@ -55,8 +55,8 @@ class Job(Base):
         default=lambda: datetime.now(timezone.utc),
     )
 
-    rankings = relationship("Ranking", back_populates="job")
-    candidates = relationship("JobCandidate", back_populates="job")
+    rankings = relationship("Ranking", back_populates="job", cascade="all, delete-orphan")
+    candidates = relationship("JobCandidate", back_populates="job", cascade="all, delete-orphan")
 
 
 class JobCandidate(Base):
@@ -144,6 +144,7 @@ class Ranking(Base):
         "RankingItem",
         back_populates="ranking",
         order_by="RankingItem.position",
+        cascade="all, delete-orphan",
     )
 
 
