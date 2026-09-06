@@ -457,9 +457,6 @@ function Ranking() {
 
   useEffect(() => {
     if (selectedJob) {
-      setPage(1);
-      setRankingMessage("");
-
       loadRanking(
         1,
         pageSize,
@@ -685,7 +682,11 @@ function Ranking() {
 
             <select
               value={selectedJob}
-              onChange={(e) => setSelectedJob(e.target.value)}
+              onChange={(e) => {
+                setSelectedJob(e.target.value);
+                setPage(1);
+                setRankingMessage("");
+              }}
               style={{
                 padding: "10px",
                 minWidth: "250px",
@@ -705,7 +706,15 @@ function Ranking() {
             <label style={{ display: "block", marginBottom: "6px", fontWeight: "600" }}>
               Fuente de candidatos
             </label>
-            <select value={rankingScope} onChange={(e) => setRankingScope(e.target.value)} style={{ padding: "10px", minWidth: "220px" }}>
+            <select
+              value={rankingScope}
+              onChange={(e) => {
+                setRankingScope(e.target.value);
+                setPage(1);
+                setRankingMessage("");
+              }}
+              style={{ padding: "10px", minWidth: "220px" }}
+            >
               <option value="assigned">Solo esta vacante</option>
               <option value="all">Todos mis candidatos</option>
             </select>
