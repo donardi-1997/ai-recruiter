@@ -4,42 +4,30 @@ import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 
 import api from "../api/client";
+import "./Ranking.css";
 
 function Ranking() {
   const [jobs, setJobs] = useState([]);
-
   const [selectedJob, setSelectedJob] = useState("");
-
   const [ranking, setRanking] = useState([]);
-
   const [loading, setLoading] = useState(false);
-
   const [selectedCandidate, setSelectedCandidate] = useState(null);
-
   const [analysis, setAnalysis] = useState(null);
-
   const [requirements, setRequirements] = useState([]);
-
   const [analysisLoading, setAnalysisLoading] = useState(false);
-
   const [requirementsLoading, setRequirementsLoading] = useState(false);
 
   const [minScore, setMinScore] = useState(0);
-
   const [maxScore, setMaxScore] = useState(100);
-
   const [recommendationFilter, setRecommendationFilter] = useState("");
   const [rankingScope, setRankingScope] = useState("assigned");
 
   const [showModeModal, setShowModeModal] = useState(false);
-
   const [rankingGeneratedAt, setRankingGeneratedAt] = useState(null);
-
   const [rankingVersion, setRankingVersion] = useState(null);
-
   const [isRecalculating, setIsRecalculating] = useState(false);
-
-  const [isEvaluatingCandidates, setIsEvaluatingCandidates] = useState(false);
+  const [isCalculatingEvaluations, setIsCalculatingEvaluations] = useState(false);
+  const [actionFeedback, setActionFeedback] = useState(null);
 
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(10);
@@ -60,6 +48,8 @@ function Ranking() {
     rankingLoadedScope === rankingScope &&
     rankingBaseTotal > 0;
 
+  const evaluatedCount = Math.max(rankingInfo.total - rankingInfo.pending, 0);
+
   // ============================================================
   // LOAD JOBS
   // ============================================================
@@ -67,42 +57,23 @@ function Ranking() {
   async function loadJobs() {
     try {
       const response = await api.get("/jobs");
-
       const data = response.data;
-
-      const loadedJobs =
-        Array.isArray(data)
-          ? data
-          : data.jobs || [];
-
+      const loadedJobs = Array.isArray(data) ? data : data.jobs || [];
       setJobs(loadedJobs);
 
       if (!selectedJob && loadedJobs.length > 0) {
-        const firstJobId =
-          loadedJobs[0].job_id;
-
+        const firstJobId = loadedJobs[0].job_id;
         setSelectedJob(firstJobId);
-
-        await loadRanking(
-          1,
-          pageSize,
-          firstJobId,
-          rankingScope,
-        );
+        await loadRanking(1, pageSize, firstJobId, rankingScope);
       }
     } catch (error) {
-      console.error(
-        "ERROR LOADING JOBS:",
-        error.response?.data || error,
-      );
+      console.error("ERROR LOADING JOBS:", error.response?.data || error);
     }
   }
 
   useEffect(() => {
-    // Initial API synchronization on mount.
     // eslint-disable-next-line react-hooks/set-state-in-effect
     loadJobs();
-
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -116,34 +87,23 @@ function Ranking() {
     targetJob = selectedJob,
     targetScope = rankingScope,
   ) {
-    if (!targetJob) {
-      return;
-    }
+    if (!targetJob) return;
 
     if (minScore < 0 || minScore > 100) {
-      alert(
-        "El puntaje mínimo debe estar entre 0 y 100",
-      );
+      alert("El puntaje mínimo debe estar entre 0 y 100");
       return;
     }
-
     if (maxScore < 0 || maxScore > 100) {
-      alert(
-        "El puntaje máximo debe estar entre 0 y 100",
-      );
+      alert("El puntaje máximo debe estar entre 0 y 100");
       return;
     }
-
     if (minScore > maxScore) {
-      alert(
-        "El puntaje mínimo no puede ser mayor que el puntaje máximo",
-      );
+      alert("El puntaje mínimo no puede ser mayor que el puntaje máximo");
       return;
     }
 
     try {
       setLoading(true);
-
       const params = {
         min_score: minScore,
         max_score: maxScore,
@@ -151,213 +111,115 @@ function Ranking() {
         page_size: targetPageSize,
         scope: targetScope,
       };
+      if (recommendationFilter) params.recommendation = recommendationFilter;
 
-      if (recommendationFilter) {
-        params.recommendation =
-          recommendationFilter;
-      }
-
-      const response = await api.get(
-        `/jobs/${targetJob}/ranking`,
-        { params },
-      );
-
-      console.log(
-        "RANKING RESPONSE:",
-        response.data,
-      );
-
+      const response = await api.get(`/jobs/${targetJob}/ranking`, { params });
       const data = response.data;
-
-      const candidates =
-        data.candidates ||
-        data.ranking ||
-        data.items ||
-        [];
+      const candidates = data.candidates || data.ranking || data.items || [];
 
       setRanking(candidates);
+      setRankingGeneratedAt(data.ranking_generated_at || null);
+      setRankingVersion(data.ranking_version ?? null);
+      setRankingLoadedScope(data.ranking_scope ?? targetScope);
+      setRankingBaseTotal(data.ranking_total ?? data.total ?? candidates.length);
+      setPage(data.page ?? targetPage);
+      setTotalPages(data.total_pages ?? 0);
 
-      setRankingGeneratedAt(
-        data.ranking_generated_at || null,
+      const completedCandidates = candidates.filter(
+        (c) => c.status === "COMPLETED" && c.match_score != null,
       );
-
-      setRankingVersion(
-        data.ranking_version ?? null,
-      );
-
-      setRankingLoadedScope(
-        data.ranking_scope ?? targetScope,
-      );
-
-      setRankingBaseTotal(
-        data.ranking_total ??
-          data.total ??
-          candidates.length,
-      );
-
-      setPage(
-        data.page ?? targetPage,
-      );
-
-      setTotalPages(
-        data.total_pages ?? 0,
-      );
-
-      const completedCandidates =
-        candidates.filter(
-          (candidate) =>
-            candidate.status === "COMPLETED" &&
-            candidate.match_score != null,
-        );
-
-      const visibleScores =
-        completedCandidates.map(
-          (candidate) =>
-            Number(candidate.match_score),
-        );
+      const visibleScores = completedCandidates.map((c) => Number(c.match_score));
 
       setRankingInfo({
-        total:
-          data.total ??
-          candidates.length,
-
-        pending:
-          data.pending_candidates ??
-          0,
-
+        total: data.total ?? candidates.length,
+        pending: data.pending_candidates ?? 0,
         minimum:
           data.score_min ??
-          (
-            visibleScores.length > 0
-              ? Math.min(...visibleScores)
-              : null
-          ),
-
+          (visibleScores.length > 0 ? Math.min(...visibleScores) : null),
         maximum:
           data.score_max ??
-          (
-            visibleScores.length > 0
-              ? Math.max(...visibleScores)
-              : null
-          ),
+          (visibleScores.length > 0 ? Math.max(...visibleScores) : null),
       });
 
-      if (candidates.length > 0) {
-        setRankingMessage("");
-      }
-
+      if (candidates.length > 0) setRankingMessage("");
     } catch (error) {
-      console.error(
-        "ERROR LOADING RANKING:",
-        error.response?.data || error,
-      );
-
-      alert(
-        error.response?.data?.detail ||
-          "No fue posible cargar el ranking",
-      );
-
+      console.error("ERROR LOADING RANKING:", error.response?.data || error);
+      alert(error.response?.data?.detail || "No fue posible cargar el ranking");
     } finally {
       setLoading(false);
     }
   }
 
+  // ============================================================
+  // CALCULAR EVALUACIONES (primary CTA)
+  // ============================================================
 
-  async function viewRanking() {
+  async function calculateJobEvaluations() {
     if (!selectedJob) {
       alert("Seleccione una vacante");
       return;
     }
+    if (isCalculatingEvaluations) return;
 
-    if (isRecalculating) {
-      return;
+    try {
+      setIsCalculatingEvaluations(true);
+      setActionFeedback(null);
+      setRankingMessage("");
+
+      const response = await api.post(
+        `/jobs/${selectedJob}/ranking/recalculate`,
+        null,
+        { params: { mode: "incremental", scope: "assigned" } },
+      );
+
+      const result = response.data;
+
+      setPage(1);
+      await loadRanking(1, pageSize);
+
+      if (result.total_candidates === 0) {
+        setActionFeedback({ type: "info", message: "No hay evaluaciones pendientes para esta vacante." });
+      } else if (result.failed > 0) {
+        setActionFeedback({
+          type: "error",
+          message: `Evaluaciones procesadas: ${result.evaluated} completadas, ${result.failed} no pudo evaluarse.`,
+        });
+      } else {
+        setActionFeedback({
+          type: "success",
+          message: `Evaluaciones actualizadas: ${result.evaluated} completadas.`,
+        });
+      }
+    } catch (error) {
+      console.error("ERROR CALCULATING EVALUATIONS:", error.response?.data || error);
+      setActionFeedback({
+        type: "error",
+        message: error.response?.data?.detail || "No fue posible calcular las evaluaciones. Intenta nuevamente.",
+      });
+    } finally {
+      setIsCalculatingEvaluations(false);
     }
+  }
+
+  // ============================================================
+  // VIEW / RECALCULATE RANKING
+  // ============================================================
+
+  async function viewRanking() {
+    if (!selectedJob) { alert("Seleccione una vacante"); return; }
+    if (isRecalculating) return;
 
     try {
       setIsRecalculating(true);
       setRankingMessage("");
-
       const response = await api.post(
         `/jobs/${selectedJob}/ranking/recalculate`,
         null,
-        {
-          params: {
-            mode: "incremental",
-            scope: rankingScope,
-          },
-        },
+        { params: { mode: "incremental", scope: rankingScope } },
       );
-
       const result = response.data;
-
-      await loadRanking(
-        1,
-        pageSize,
-      );
-
+      await loadRanking(1, pageSize);
       setPage(1);
-
-      if (
-        result.total_candidates === 0
-      ) {
-        setRankingMessage(
-          rankingScope === "assigned"
-            ? "No hay candidatos asignados a esta vacante."
-            : "No hay candidatos disponibles para evaluar.",
-        );
-      }
-
-    } catch (error) {
-      console.error(
-        "ERROR GENERATING RANKING:",
-        error.response?.data || error,
-      );
-
-      alert(
-        error.response?.data?.detail ||
-          "No fue posible generar el ranking",
-      );
-
-    } finally {
-      setIsRecalculating(false);
-    }
-  }
-
-
-  async function evaluateCandidates() {
-    if (!selectedJob) {
-      alert("Seleccione una vacante");
-      return;
-    }
-
-    if (isEvaluatingCandidates) {
-      return;
-    }
-
-    try {
-      setIsEvaluatingCandidates(true);
-      setRankingMessage("");
-
-      const response = await api.post(
-        `/jobs/${selectedJob}/ranking/recalculate`,
-        null,
-        {
-          params: {
-            mode: "incremental",
-            scope: rankingScope,
-          },
-        },
-      );
-
-      const result = response.data;
-
-      setPage(1);
-
-      await loadRanking(
-        1,
-        pageSize,
-      );
-
       if (result.total_candidates === 0) {
         setRankingMessage(
           rankingScope === "assigned"
@@ -366,120 +228,64 @@ function Ranking() {
         );
       }
     } catch (error) {
-      console.error(
-        "ERROR EVALUATING CANDIDATES:",
-        error.response?.data || error,
-      );
-
-      alert(
-        error.response?.data?.detail ||
-          "No fue posible evaluar los candidatos",
-      );
-    } finally {
-      setIsEvaluatingCandidates(false);
-    }
-  }
-
-
-  async function recalculateRanking(mode) {
-    if (!selectedJob) {
-      alert("Seleccione una vacante");
-      return;
-    }
-
-    setShowModeModal(false);
-
-    const label =
-      mode === "incremental"
-        ? "Solo nuevos candidatos"
-        : "Recalcular todo";
-
-    if (!window.confirm(`¿${label}?`)) {
-      return;
-    }
-
-    try {
-      setIsRecalculating(true);
-
-      await api.post(
-        `/jobs/${selectedJob}/ranking/recalculate`,
-        null,
-        {
-          params: {
-            mode,
-            scope: rankingScope,
-          },
-        },
-      );
-
-      setPage(1);
-
-      await loadRanking(
-        1,
-        pageSize,
-      );
-
-    } catch (error) {
-      alert(
-        error.response?.data?.detail ||
-          "No fue posible recalcular el ranking",
-      );
-
+      console.error("ERROR GENERATING RANKING:", error.response?.data || error);
+      alert(error.response?.data?.detail || "No fue posible generar el ranking");
     } finally {
       setIsRecalculating(false);
     }
   }
 
+  async function recalculateRanking(mode) {
+    if (!selectedJob) { alert("Seleccione una vacante"); return; }
+    setShowModeModal(false);
+
+    const label = mode === "incremental" ? "Solo nuevos candidatos" : "Recalcular todo";
+    if (!window.confirm(`¿${label}?`)) return;
+
+    try {
+      setIsRecalculating(true);
+      await api.post(
+        `/jobs/${selectedJob}/ranking/recalculate`,
+        null,
+        { params: { mode, scope: rankingScope } },
+      );
+      setPage(1);
+      await loadRanking(1, pageSize);
+    } catch (error) {
+      alert(error.response?.data?.detail || "No fue posible recalcular el ranking");
+    } finally {
+      setIsRecalculating(false);
+    }
+  }
+
+  // ============================================================
+  // PAGINATION / FILTERS
+  // ============================================================
 
   async function changePage(nextPage) {
-    if (
-      nextPage < 1 ||
-      nextPage > totalPages ||
-      nextPage === page
-    ) {
-      return;
-    }
-
+    if (nextPage < 1 || nextPage > totalPages || nextPage === page) return;
     setPage(nextPage);
-
-    await loadRanking(
-      nextPage,
-      pageSize,
-    );
+    await loadRanking(nextPage, pageSize);
   }
-
 
   async function changePageSize(event) {
-    const nextPageSize =
-      Number(event.target.value);
-
+    const nextPageSize = Number(event.target.value);
     setPageSize(nextPageSize);
     setPage(1);
-
-    await loadRanking(
-      1,
-      nextPageSize,
-    );
+    await loadRanking(1, nextPageSize);
   }
-
 
   async function applyFilters() {
     setPage(1);
-
-    await loadRanking(
-      1,
-      pageSize,
-    );
+    await loadRanking(1, pageSize);
   }
 
-
   async function handleJobChange(event) {
-    const nextJob =
-      event.target.value;
-
+    const nextJob = event.target.value;
     setSelectedJob(nextJob);
     setPage(1);
     setRankingMessage("");
+    setActionFeedback(null);
 
     if (!nextJob) {
       setRanking([]);
@@ -488,64 +294,36 @@ function Ranking() {
       setRankingLoadedScope(null);
       setRankingBaseTotal(0);
       setTotalPages(0);
-
-      setRankingInfo({
-        total: 0,
-        pending: 0,
-        minimum: 0,
-        maximum: 0,
-      });
-
+      setRankingInfo({ total: 0, pending: 0, minimum: 0, maximum: 0 });
       return;
     }
 
-    await loadRanking(
-      1,
-      pageSize,
-      nextJob,
-      rankingScope,
-    );
+    await loadRanking(1, pageSize, nextJob, rankingScope);
   }
 
-
   async function handleScopeChange(event) {
-    const nextScope =
-      event.target.value;
-
+    const nextScope = event.target.value;
     setRankingScope(nextScope);
     setPage(1);
     setRankingMessage("");
-
-    if (!selectedJob) {
-      return;
-    }
-
-    await loadRanking(
-      1,
-      pageSize,
-      selectedJob,
-      nextScope,
-    );
+    if (!selectedJob) return;
+    await loadRanking(1, pageSize, selectedJob, nextScope);
   }
 
   // ============================================================
-  // OPEN ANALYSIS
+  // ANALYSIS MODAL
   // ============================================================
 
   async function openAnalysis(candidate) {
     setSelectedCandidate(candidate);
-
     setAnalysis(null);
-
     setRequirements([]);
 
     try {
       setAnalysisLoading(true);
-
       const analysisResponse = await api.get(
         `/jobs/${selectedJob}/candidates/${candidate.candidate_id}/explanation`,
       );
-
       setAnalysis(analysisResponse.data);
     } catch (error) {
       console.error("ERROR ANALYSIS:", error.response?.data || error);
@@ -555,11 +333,9 @@ function Ranking() {
 
     try {
       setRequirementsLoading(true);
-
       const requirementsResponse = await api.get(
         `/jobs/${selectedJob}/candidates/${candidate.candidate_id}/requirements`,
       );
-
       setRequirements(requirementsResponse.data.requirements || []);
     } catch (error) {
       console.error("ERROR REQUIREMENTS:", error.response?.data || error);
@@ -568,129 +344,47 @@ function Ranking() {
     }
   }
 
-  // ============================================================
-  // CLOSE MODAL
-  // ============================================================
-
   function closeModal() {
     setSelectedCandidate(null);
-
     setAnalysis(null);
-
     setRequirements([]);
   }
 
   // ============================================================
-  // RECOMMENDATION LABEL
+  // HELPERS
   // ============================================================
 
   function getRecommendationLabel(recommendation) {
-    if (recommendation === "STRONG_MATCH") {
-      return "Excelente coincidencia";
-    }
-
-    if (recommendation === "GOOD_MATCH") {
-      return "Buena coincidencia";
-    }
-
-    if (recommendation === "PARTIAL_MATCH") {
-      return "Coincidencia parcial";
-    }
-
-    if (recommendation === "LOW_MATCH") {
-      return "Baja coincidencia";
-    }
-
-    if (recommendation === "EVALUATION_FAILED") {
-      return "Evaluación fallida";
-    }
-
-    if (recommendation === "PENDING") {
-      return "Pendiente";
-    }
-
+    if (recommendation === "STRONG_MATCH") return "Excelente coincidencia";
+    if (recommendation === "GOOD_MATCH") return "Buena coincidencia";
+    if (recommendation === "PARTIAL_MATCH") return "Coincidencia parcial";
+    if (recommendation === "LOW_MATCH") return "Baja coincidencia";
+    if (recommendation === "EVALUATION_FAILED") return "Evaluación fallida";
+    if (recommendation === "PENDING") return "Pendiente";
     return "Sin clasificación";
   }
 
-  // ============================================================
-  // BADGE STYLE
-  // ============================================================
-
-  function badgeStyle(recommendation) {
-    if (recommendation === "STRONG_MATCH") {
-      return {
-        background: "#dcfce7",
-        color: "#166534",
-      };
-    }
-
-    if (recommendation === "GOOD_MATCH" || recommendation === "PARTIAL_MATCH") {
-      return {
-        background: "#fef3c7",
-        color: "#92400e",
-      };
-    }
-
-    if (recommendation === "EVALUATION_FAILED") {
-      return {
-        background: "#fef2f2",
-        color: "#991b1b",
-        border: "1px solid #fecaca",
-      };
-    }
-
-    if (recommendation === "PENDING") {
-      return {
-        background: "#f1f5f9",
-        color: "#475569",
-      };
-    }
-
-    return {
-      background: "#fee2e2",
-      color: "#991b1b",
-    };
+  function getRecommendationClass(recommendation) {
+    if (recommendation === "STRONG_MATCH") return "ranking-badge--strong";
+    if (recommendation === "GOOD_MATCH") return "ranking-badge--good";
+    if (recommendation === "PARTIAL_MATCH") return "ranking-badge--partial";
+    if (recommendation === "LOW_MATCH") return "ranking-badge--low";
+    if (recommendation === "EVALUATION_FAILED") return "ranking-badge--failed";
+    if (recommendation === "PENDING") return "ranking-badge--pending";
+    return "ranking-badge--low";
   }
 
-  // ============================================================
-  // REQUIREMENT STATUS
-  // ============================================================
-
   function getRequirementLabel(status) {
-    if (status === "MATCH") {
-      return "Cumple";
-    }
-
-    if (status === "PARTIAL") {
-      return "Cumple parcialmente";
-    }
-
-    if (status === "MISSING") {
-      return "No cumple";
-    }
-
+    if (status === "MATCH") return "Cumple";
+    if (status === "PARTIAL") return "Cumple parcialmente";
+    if (status === "MISSING") return "No cumple";
     return status || "Sin evaluar";
   }
 
-  function getRequirementStyle(status) {
-    if (status === "MATCH") {
-      return {
-        background: "#dcfce7",
-        color: "#166534",
-      };
-    }
-
-    if (status === "PARTIAL") {
-      return {
-        background: "#fef3c7",
-        color: "#92400e",
-      };
-    }
-
-    return {
-      background: "#fee2e2",
-      color: "#991b1b",
-    };
+  function getRequirementClass(status) {
+    if (status === "MATCH") return "ranking-badge--strong";
+    if (status === "PARTIAL") return "ranking-badge--partial";
+    return "ranking-badge--failed";
   }
 
   // ============================================================
@@ -698,544 +392,295 @@ function Ranking() {
   // ============================================================
 
   return (
-    <div
-      className="page ranking-page"
-      style={{
-        padding: "40px",
-      }}
-    >
-      <header className="page-header"><span className="eyebrow">Decisiones asistidas por IA</span><h1>Ranking de candidatos</h1><p>Prioriza el talento con mayor afinidad para cada vacante.</p></header>
+    <div className="page ranking-page">
 
-      {/* ========================================================
-          CONTROLES
-      ======================================================== */}
+      {/* 1. HEADER */}
+      <header className="ranking-header">
+        <div className="ranking-header-text">
+          <span className="eyebrow">Decisiones asistidas por IA</span>
+          <h1>Ranking de candidatos</h1>
+          <p>Compara, evalúa y prioriza candidatos para cada vacante.</p>
+        </div>
+      </header>
 
-      <div
-        className="ranking-filters panel"
-        style={{
-          marginTop: "30px",
-          padding: "20px",
-          border: "1px solid #ddd",
-          borderRadius: "12px",
-          background: "#fff",
-        }}
-      >
-        <div
-          className="ranking-filter-grid"
-          style={{
-            display: "flex",
-            gap: "15px",
-            flexWrap: "wrap",
-            alignItems: "end",
-          }}
-        >
-          {/* VACANTE */}
-
-          <div>
-            <label
-              style={{
-                display: "block",
-                marginBottom: "6px",
-                fontWeight: "600",
-              }}
-            >
-              Vacante
-            </label>
-
-            <select
-              value={selectedJob}
-              onChange={handleJobChange}
-              style={{
-                padding: "10px",
-                minWidth: "250px",
-              }}
-            >
-              <option value="">Seleccione vacante</option>
-
-              {jobs.map((job) => (
-                <option key={job.job_id} value={job.job_id}>
-                  {job.title}
-                </option>
-              ))}
-            </select>
-          </div>
-
-          <div>
-            <label style={{ display: "block", marginBottom: "6px", fontWeight: "600" }}>
-              Fuente de candidatos
-            </label>
-            <select
-              value={rankingScope}
-              onChange={handleScopeChange}
-              style={{ padding: "10px", minWidth: "220px" }}
-            >
-              <option value="assigned">Solo esta vacante</option>
-              <option value="all">Todos mis candidatos</option>
-            </select>
-          </div>
-
-          {/* MIN SCORE */}
-
-          <div>
-            <label
-              style={{
-                display: "block",
-                marginBottom: "6px",
-                fontWeight: "600",
-              }}
-            >
-              Puntaje mínimo
-            </label>
-
-            <input
-              type="number"
-              min="0"
-              max="100"
-              value={minScore}
-              onChange={(e) => setMinScore(Number(e.target.value))}
-              style={{
-                padding: "10px",
-                width: "120px",
-              }}
-            />
-          </div>
-
-          {/* MAX SCORE */}
-
-          <div>
-            <label
-              style={{
-                display: "block",
-                marginBottom: "6px",
-                fontWeight: "600",
-              }}
-            >
-              Puntaje máximo
-            </label>
-
-            <input
-              type="number"
-              min="0"
-              max="100"
-              value={maxScore}
-              onChange={(e) => setMaxScore(Number(e.target.value))}
-              style={{
-                padding: "10px",
-                width: "120px",
-              }}
-            />
-          </div>
-
-          {/* RECOMMENDATION */}
-
-          <div>
-            <label
-              style={{
-                display: "block",
-                marginBottom: "6px",
-                fontWeight: "600",
-              }}
-            >
-              Clasificación
-            </label>
-
-            <select
-              value={recommendationFilter}
-              onChange={(e) => setRecommendationFilter(e.target.value)}
-              style={{
-                padding: "10px",
-                minWidth: "190px",
-              }}
-            >
-              <option value="">Todas</option>
-
-              <option value="STRONG_MATCH">Excelente coincidencia</option>
-
-              <option value="GOOD_MATCH">Buena coincidencia</option>
-
-              <option value="PARTIAL_MATCH">Coincidencia parcial</option>
-
-              <option value="LOW_MATCH">Baja coincidencia</option>
-            </select>
-          </div>
-
-          <button
-            className="btn btn-secondary"
-            onClick={applyFilters}
-            disabled={
-              !hasRanking ||
-              loading ||
-              isRecalculating
-            }
-            style={{
-              padding: "10px 18px",
-            }}
+      {/* 2. JOB PANEL + PRIMARY CTA */}
+      <div className="ranking-job-panel">
+        <div className="ranking-job-panel-left">
+          <span className="ranking-job-label">Vacante activa</span>
+          <select
+            className="ranking-job-select"
+            value={selectedJob}
+            onChange={handleJobChange}
           >
-            Aplicar filtros
-          </button>
-
-          <button
-            className="btn btn-secondary"
-            onClick={evaluateCandidates}
-            disabled={
-              !selectedJob ||
-              loading ||
-              isEvaluatingCandidates ||
-              isRecalculating
-            }
-            style={{
-              padding: "10px 18px",
-              cursor:
-                !selectedJob ||
-                loading ||
-                isEvaluatingCandidates ||
-                isRecalculating
-                  ? "not-allowed"
-                  : "pointer",
-            }}
-          >
-            {isEvaluatingCandidates
-              ? "Evaluando candidatos..."
-              : "Evaluar candidatos"}
-          </button>
-
-          {/* BUTTON */}
-
+            <option value="">Seleccione vacante</option>
+            {jobs.map((job) => (
+              <option key={job.job_id} value={job.job_id}>{job.title}</option>
+            ))}
+          </select>
+          <p className="ranking-job-hint">
+            {selectedJob
+              ? "Ranking y evaluaciones de esta vacante"
+              : "Selecciona una vacante para comenzar"}
+          </p>
+        </div>
+        <div className="ranking-job-panel-right">
+          {selectedJob && rankingInfo.pending > 0 && (
+            <span className="ranking-pending-badge ranking-pending-badge--warning">
+              {rankingInfo.pending} pendiente{rankingInfo.pending === 1 ? "" : "s"}
+            </span>
+          )}
+          {selectedJob && rankingInfo.pending === 0 && rankingInfo.total > 0 && (
+            <span className="ranking-pending-badge ranking-pending-badge--success">
+              Evaluaciones al día
+            </span>
+          )}
           <button
             className="btn btn-primary"
-            onClick={
-              hasRanking
-                ? () => setShowModeModal(true)
-                : viewRanking
-            }
-            disabled={
-              !selectedJob ||
-              loading ||
-              isRecalculating
-            }
-            style={{
-              padding: "10px 18px",
-              cursor:
-                !selectedJob ||
-                loading ||
-                isRecalculating
-                  ? "not-allowed"
-                  : "pointer",
-            }}
+            onClick={calculateJobEvaluations}
+            disabled={!selectedJob || loading || isCalculatingEvaluations || isRecalculating}
+          >
+            {isCalculatingEvaluations && <span className="ranking-spinner" />}
+            {isCalculatingEvaluations ? "Calculando evaluaciones..." : "Calcular evaluaciones"}
+          </button>
+        </div>
+      </div>
+
+      {/* 3. METRICS */}
+      {selectedJob && rankingInfo.total > 0 && (
+        <div className="ranking-metrics">
+          <div className="ranking-metric">
+            <span className="ranking-metric-label">Candidatos</span>
+            <span className="ranking-metric-value">{rankingInfo.total}</span>
+          </div>
+          <div className="ranking-metric">
+            <span className="ranking-metric-label">Evaluados</span>
+            <span className="ranking-metric-value">{evaluatedCount}</span>
+          </div>
+          <div className="ranking-metric">
+            <span className="ranking-metric-label">Pendientes</span>
+            <span className="ranking-metric-value">{rankingInfo.pending}</span>
+          </div>
+          <div className="ranking-metric">
+            <span className="ranking-metric-label">Rango de puntuación</span>
+            <span className="ranking-metric-value">
+              {rankingInfo.minimum != null && rankingInfo.maximum != null
+                ? `${rankingInfo.minimum}% – ${rankingInfo.maximum}%`
+                : "—"}
+            </span>
+          </div>
+        </div>
+      )}
+
+      {/* 4. FILTERS */}
+      {selectedJob && (
+        <div className="ranking-filter-panel">
+          <div className="ranking-filter-header">
+            <h3>Filtros del ranking</h3>
+            <p>Ajusta los resultados sin modificar las evaluaciones.</p>
+          </div>
+          <div className="ranking-filter-grid">
+            <div>
+              <label>Fuente de candidatos</label>
+              <select value={rankingScope} onChange={handleScopeChange}>
+                <option value="assigned">Solo esta vacante</option>
+                <option value="all">Todos mis candidatos</option>
+              </select>
+            </div>
+            <div>
+              <label>Puntaje mínimo</label>
+              <input type="number" min="0" max="100" value={minScore} onChange={(e) => setMinScore(Number(e.target.value))} />
+            </div>
+            <div>
+              <label>Puntaje máximo</label>
+              <input type="number" min="0" max="100" value={maxScore} onChange={(e) => setMaxScore(Number(e.target.value))} />
+            </div>
+            <div>
+              <label>Clasificación</label>
+              <select value={recommendationFilter} onChange={(e) => setRecommendationFilter(e.target.value)}>
+                <option value="">Todas</option>
+                <option value="STRONG_MATCH">Excelente coincidencia</option>
+                <option value="GOOD_MATCH">Buena coincidencia</option>
+                <option value="PARTIAL_MATCH">Coincidencia parcial</option>
+                <option value="LOW_MATCH">Baja coincidencia</option>
+              </select>
+            </div>
+            <div className="ranking-filter-actions">
+              <button
+                className="btn btn-secondary"
+                onClick={applyFilters}
+                disabled={!hasRanking || loading || isRecalculating}
+              >
+                Aplicar filtros
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 5. FEEDBACK */}
+      {actionFeedback && (
+        <div className={`ranking-feedback ranking-feedback--${actionFeedback.type}`} role="status" aria-live="polite">
+          {actionFeedback.message}
+        </div>
+      )}
+
+      {/* 6. RANKING METADATA + UPDATE */}
+      {selectedJob && (
+        <div className="ranking-meta">
+          <div className="ranking-meta-info">
+            {hasRanking && rankingGeneratedAt
+              ? `Último ranking · v${rankingVersion} · ${new Date(rankingGeneratedAt).toLocaleString("es-ES")}`
+              : "\u00A0"}
+          </div>
+          <button
+            className="btn btn-secondary"
+            onClick={hasRanking ? () => setShowModeModal(true) : viewRanking}
+            disabled={!selectedJob || loading || isRecalculating}
           >
             {loading
               ? "Cargando..."
               : isRecalculating
-                ? hasRanking
-                  ? "Recalculando..."
-                  : "Generando ranking..."
+                ? "Recalculando..."
                 : hasRanking
                   ? "Actualizar ranking"
-                  : "Ver ranking"}
+                  : "Generar ranking"}
           </button>
         </div>
-      </div>
-
-      {selectedJob && rankingInfo.pending > 0 && (
-        <p className="muted" style={{ marginTop: "16px" }}>
-          {rankingInfo.pending} candidato{rankingInfo.pending === 1 ? "" : "s"} pendiente{rankingInfo.pending === 1 ? "" : "s"} de evaluación.
-        </p>
       )}
 
-      {hasRanking && rankingGeneratedAt && (
-        <p className="muted" style={{ marginTop: "8px", fontSize: "13px", color: "#64748b" }}>
-          Último ranking: v{rankingVersion} — {new Date(rankingGeneratedAt).toLocaleString("es-ES")}
-        </p>
-      )}
-
-      {/* ========================================================
-          SUMMARY
-      ======================================================== */}
-
-      {ranking.length > 0 && (
-        <div
-          className="summary-grid"
-          style={{
-            display: "flex",
-            gap: "20px",
-            flexWrap: "wrap",
-            marginTop: "25px",
-            justifyContent: "center",
-          }}
-        >
-          <SummaryCard title="Candidatos" value={rankingInfo.total} />
-
-          <SummaryCard
-            title="Puntaje mínimo"
-            value={rankingInfo.minimum != null ? `${rankingInfo.minimum}%` : "—"}
-          />
-
-          <SummaryCard
-            title="Puntaje máximo"
-            value={rankingInfo.maximum != null ? `${rankingInfo.maximum}%` : "—"}
-          />
+      {/* 7. LOADING STATE */}
+      {loading && ranking.length === 0 && (
+        <div className="ranking-skeleton">
+          {[1, 2, 3].map((i) => (
+            <div className="ranking-skeleton-card" key={i}>
+              <div className="ranking-skeleton-line ranking-skeleton-line--medium" />
+              <div className="ranking-skeleton-line ranking-skeleton-line--short" style={{ marginTop: 10 }} />
+              <div className="ranking-skeleton-line ranking-skeleton-line--bar" />
+            </div>
+          ))}
         </div>
       )}
 
-      {/* ========================================================
-          RANKING
-      ======================================================== */}
+      {/* 9. EMPTY STATES */}
+      {!loading && selectedJob && ranking.length === 0 && (
+        <div className="ranking-empty">
+          <div className="ranking-empty-icon">📋</div>
+          {rankingInfo.pending > 0 ? (
+            <>
+              <h3>Hay candidatos pendientes de evaluación</h3>
+              <p>Usa "Calcular evaluaciones" para procesar los candidatos asignados a esta vacante.</p>
+            </>
+          ) : (
+            <>
+              <h3>No hay candidatos con estos filtros</h3>
+              <p>{rankingMessage || "Ajusta los filtros o cambia la fuente de candidatos para ver resultados."}</p>
+            </>
+          )}
+        </div>
+      )}
 
-      <div
-        className="ranking-results"
-        style={{
-          marginTop: "30px",
-        }}
-      >
-        {!loading && selectedJob && ranking.length === 0 && (
-          <div
-            className="empty-state"
-            style={{
-              padding: "25px",
-              border: "1px solid #ddd",
-              borderRadius: "12px",
-            }}
-          >
-            <p>
-              {rankingMessage ||
-                (rankingInfo.pending > 0
-                  ? "No hay candidatos evaluados para esta vacante."
-                  : "No hay candidatos que cumplan con los filtros seleccionados.")}
-            </p>
-          </div>
-        )}
+      {/* 9. CANDIDATE LIST */}
+      {!loading && ranking.length > 0 && (
+        <div className="ranking-candidates">
+          {ranking.map((candidate, index) => {
+            const isFailed = candidate.status === "FAILED";
+            const isPending = candidate.status === "PENDING";
+            const position = candidate.position ?? ((page - 1) * pageSize + index + 1);
 
-        {ranking.map((candidate, index) => (
-          <div
-            key={candidate.candidate_id}
-            className="ranking-card"
-            style={{
-              border: "1px solid #ddd",
-
-              padding: "25px",
-
-              marginBottom: "20px",
-
-              borderRadius: "12px",
-
-              boxShadow: "0 2px 8px rgba(0,0,0,0.08)",
-
-              background: "#fff",
-            }}
-          >
-            <h2>
-              #{candidate.position ??
-                ((page - 1) * pageSize + index + 1)}{" "}
-              {candidate.candidate_name}
-            </h2>
-
-            <strong>Puntaje de coincidencia</strong>
-
-            {candidate.status === "FAILED" || candidate.status === "PENDING" ? (
-              <div style={{ marginTop: "10px" }}>
-                <h1 style={{ color: "#991b1b", fontSize: "24px" }}>
-                  {candidate.status === "FAILED" ? "Evaluación fallida" : "Evaluación pendiente"}
-                </h1>
-                {candidate.error_message && (
-                  <p style={{ color: "#64748b", fontSize: "13px", marginTop: "5px" }}>
-                    {candidate.error_message}
-                  </p>
-                )}
-              </div>
-            ) : (
-              <>
-                <h1>{candidate.match_score}%</h1>
-
-                {/* SCORE BAR */}
-
-                <div
-                  className="ranking-score-bar"
-                  style={{
-                    height: "12px",
-                    background: "#eee",
-                    borderRadius: "10px",
-                    overflow: "hidden",
-                  }}
-                >
-                  <div
-                    className="ranking-score-fill"
-                    style={{
-                      width: `${candidate.match_score}%`,
-                      height: "100%",
-                      background: "#4f46e5",
-                    }}
-                  />
+            return (
+              <div key={candidate.candidate_id} className="ranking-candidate-card">
+                <div className="ranking-candidate-header">
+                  <div className="ranking-candidate-header-left">
+                    <span className="ranking-candidate-position">#{position}</span>
+                    <span className="ranking-candidate-name">{candidate.candidate_name}</span>
+                    <span className="ranking-candidate-status">
+                      <span className={`ranking-badge ${getRecommendationClass(candidate.recommendation)}`}>
+                        {getRecommendationLabel(candidate.recommendation)}
+                      </span>
+                    </span>
+                  </div>
+                  <div className="ranking-candidate-score">
+                    {isFailed || isPending ? (
+                      <span className={isFailed ? "ranking-candidate-failed" : "ranking-candidate-pending-label"}>
+                        {isFailed ? "Evaluación fallida" : "Pendiente de evaluación"}
+                      </span>
+                    ) : (
+                      <span className="ranking-candidate-score-value">{candidate.match_score}%</span>
+                    )}
+                  </div>
                 </div>
-              </>
-            )}
 
-            {/* RECOMMENDATION */}
-
-            <div
-              className="ranking-columns"
-              style={{
-                display: "inline-block",
-
-                marginTop: "20px",
-
-                padding: "8px 15px",
-
-                borderRadius: "20px",
-
-                fontWeight: "bold",
-
-                ...badgeStyle(candidate.recommendation),
-              }}
-            >
-              {getRecommendationLabel(candidate.recommendation)}
-            </div>
-
-            {/* STRENGTHS / GAPS */}
-
-            <div
-              style={{
-                display: "flex",
-                gap: "40px",
-                marginTop: "25px",
-                flexWrap: "wrap",
-              }}
-            >
-              <div
-                style={{
-                  flex: 1,
-                }}
-              >
-                <h3>✅ Fortalezas</h3>
-
-                {candidate.strengths?.length ? (
-                  <ul>
-                    {candidate.strengths.map((item, i) => (
-                      <li key={i}>{item}</li>
-                    ))}
-                  </ul>
-                ) : (
-                  <p>Sin datos</p>
+                {/* Score bar */}
+                {!isFailed && !isPending && (
+                  <div className="ranking-score-track">
+                    <div className="ranking-score-fill" style={{ width: `${candidate.match_score}%` }} />
+                  </div>
                 )}
+
+                {/* Strengths */}
+                <div className="ranking-chips-section">
+                  <span className="ranking-chips-label">Fortalezas</span>
+                  {candidate.strengths?.length ? (
+                    <div className="ranking-chips">
+                      {candidate.strengths.map((item, i) => (
+                        <span key={i} className="ranking-chip ranking-strength-chip">{item}</span>
+                      ))}
+                    </div>
+                  ) : (
+                    <span className="ranking-chips-empty">Sin fortalezas registradas</span>
+                  )}
+                </div>
+
+                {/* Gaps */}
+                <div className="ranking-chips-section">
+                  <span className="ranking-chips-label">Brechas</span>
+                  {candidate.gaps?.length ? (
+                    <div className="ranking-chips">
+                      {candidate.gaps.map((item, i) => (
+                        <span key={i} className="ranking-chip ranking-gap-chip">{item}</span>
+                      ))}
+                    </div>
+                  ) : (
+                    <span className="ranking-chips-empty">Sin brechas relevantes</span>
+                  )}
+                </div>
+
+                <button
+                  className="btn btn-secondary ranking-analysis-btn"
+                  onClick={() => openAnalysis(candidate)}
+                >
+                  Ver análisis
+                </button>
               </div>
+            );
+          })}
+        </div>
+      )}
 
-              <div
-                style={{
-                  flex: 1,
-                }}
-              >
-                <h3>❌ Brechas</h3>
-
-                {candidate.gaps?.length ? (
-                  <ul>
-                    {candidate.gaps.map((item, i) => (
-                      <li key={i}>{item}</li>
-                    ))}
-                  </ul>
-                ) : (
-                  <p>Sin brechas</p>
-                )}
-              </div>
-            </div>
-
-            <button
-              className="btn btn-secondary"
-              onClick={() => openAnalysis(candidate)}
-              style={{
-                marginTop: "20px",
-                padding: "10px 15px",
-                cursor: "pointer",
-              }}
-            >
-              Ver análisis completo
-            </button>
-          </div>
-        ))}
-      </div>
-
+      {/* 10. PAGINATION */}
       {rankingInfo.total > 0 && (
-        <div
-          className="ranking-pagination"
-          style={{
-            display: "flex",
-            justifyContent: "space-between",
-            alignItems: "center",
-            gap: "16px",
-            flexWrap: "wrap",
-            marginTop: "24px",
-            padding: "16px 0",
-          }}
-        >
-          <div
-            style={{
-              display: "flex",
-              alignItems: "center",
-              gap: "10px",
-            }}
-          >
+        <div className="ranking-pagination">
+          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
             <span>Mostrar</span>
-
-            <select
-              value={pageSize}
-              onChange={changePageSize}
-              style={{
-                padding: "8px 10px",
-              }}
-            >
+            <select value={pageSize} onChange={changePageSize}>
               <option value={10}>10</option>
               <option value={25}>25</option>
               <option value={50}>50</option>
               <option value={100}>100</option>
             </select>
-
             <span>por página</span>
           </div>
-
-          <span className="muted">
-            Mostrando{" "}
-            {(page - 1) * pageSize + 1}
-            –
-            {Math.min(
-              page * pageSize,
-              rankingInfo.total,
-            )}{" "}
-            de {rankingInfo.total}
+          <span className="ranking-pagination-info">
+            Mostrando {(page - 1) * pageSize + 1}–{Math.min(page * pageSize, rankingInfo.total)} de {rankingInfo.total}
           </span>
-
-          <div
-            style={{
-              display: "flex",
-              alignItems: "center",
-              gap: "10px",
-            }}
-          >
-            <button
-              className="btn btn-secondary"
-              onClick={() =>
-                changePage(page - 1)
-              }
-              disabled={
-                page <= 1 ||
-                loading
-              }
-            >
+          <div className="ranking-pagination-controls">
+            <button className="btn btn-secondary" onClick={() => changePage(page - 1)} disabled={page <= 1 || loading}>
               Anterior
             </button>
-
-            <span>
-              Página {page} de{" "}
-              {Math.max(totalPages, 1)}
+            <span className="ranking-pagination-page">
+              Página {page} de {Math.max(totalPages, 1)}
             </span>
-
-            <button
-              className="btn btn-secondary"
-              onClick={() =>
-                changePage(page + 1)
-              }
-              disabled={
-                page >= totalPages ||
-                loading
-              }
-            >
+            <button className="btn btn-secondary" onClick={() => changePage(page + 1)} disabled={page >= totalPages || loading}>
               Siguiente
             </button>
           </div>
@@ -1245,85 +690,36 @@ function Ranking() {
       {/* ========================================================
           MODE MODAL
       ======================================================== */}
-
       {showModeModal && (
-        <div
-          className="modal-overlay"
-          onClick={() => setShowModeModal(false)}
-          style={{
-            position: "fixed",
-            top: 0,
-            left: 0,
-            right: 0,
-            bottom: 0,
-            background: "rgba(0,0,0,0.5)",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            zIndex: 1000,
-            padding: "20px",
-          }}
-        >
-          <div
-            className="modal"
-            onClick={(e) => e.stopPropagation()}
-            style={{
-              background: "white",
-              padding: "30px",
-              borderRadius: "15px",
-              width: "400px",
-              maxWidth: "100%",
-              boxShadow: "0 10px 40px rgba(0,0,0,0.2)",
-            }}
-          >
-            <h2 style={{ marginTop: 0, marginBottom: "10px" }}>Actualizar ranking</h2>
-            <p style={{ marginBottom: "20px", color: "#64748b" }}>
-              ¿Cómo quieres actualizar el ranking?
-            </p>
-            <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
+        <div className="modal-overlay" onClick={() => setShowModeModal(false)}>
+          <div className="modal" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header">
+              <h2>Actualizar ranking</h2>
+              <button className="btn btn-close" onClick={() => setShowModeModal(false)} disabled={isRecalculating}>✕</button>
+            </div>
+            <p className="muted" style={{ marginBottom: 20 }}>¿Cómo quieres actualizar el ranking?</p>
+            <div className="ranking-mode-modal-body">
               <button
-                className="btn btn-primary"
+                className="btn btn-primary ranking-mode-option"
                 onClick={() => recalculateRanking("incremental")}
                 disabled={isRecalculating}
-                style={{
-                  padding: "12px 18px",
-                  cursor: isRecalculating ? "not-allowed" : "pointer",
-                  textAlign: "left",
-                }}
               >
                 <strong>Solo nuevos candidatos</strong>
-                <br />
-                <span style={{ fontSize: "13px", fontWeight: "normal", opacity: 0.8 }}>
-                  Evalúa solo candidatos asignados desde el último ranking
-                </span>
+                <span>Evalúa solo candidatos asignados desde el último ranking</span>
               </button>
               <button
-                className="btn btn-secondary"
+                className="btn btn-secondary ranking-mode-option"
                 onClick={() => recalculateRanking("full")}
                 disabled={isRecalculating}
-                style={{
-                  padding: "12px 18px",
-                  cursor: isRecalculating ? "not-allowed" : "pointer",
-                  textAlign: "left",
-                }}
               >
                 <strong>Recalcular todo</strong>
-                <br />
-                <span style={{ fontSize: "13px", fontWeight: "normal", opacity: 0.8 }}>
-                  Re-evalúa todos los candidatos (más lento)
-                </span>
+                <span>Volverá a procesar todas las evaluaciones de esta fuente</span>
               </button>
             </div>
             <button
-              className="btn btn-close"
+              className="btn btn-ghost ranking-mode-cancel"
               onClick={() => setShowModeModal(false)}
               disabled={isRecalculating}
-              style={{
-                marginTop: "16px",
-                padding: "10px 20px",
-                cursor: "pointer",
-                width: "100%",
-              }}
             >
               Cancelar
             </button>
@@ -1332,216 +728,88 @@ function Ranking() {
       )}
 
       {/* ========================================================
-          MODAL
+          ANALYSIS MODAL
       ======================================================== */}
-
       {selectedCandidate && (
-        <div
-          className="modal-overlay"
-          onClick={closeModal}
-          style={{
-            position: "fixed",
-            top: 0,
-            left: 0,
-            right: 0,
-            bottom: 0,
-            background: "rgba(0,0,0,0.5)",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            zIndex: 1000,
-            padding: "20px",
-          }}
-        >
-          <div
-            className="modal ranking-modal"
-            onClick={(e) => e.stopPropagation()}
-            style={{
-              background: "white",
-              padding: "30px",
-              borderRadius: "15px",
-              width: "700px",
-              maxWidth: "100%",
-              maxHeight: "85vh",
-              overflowY: "auto",
-            }}
-          >
-            <h2>{selectedCandidate.candidate_name}</h2>
+        <div className="modal-overlay" onClick={closeModal}>
+          <div className="modal ranking-modal" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header">
+              <h2>{selectedCandidate.candidate_name}</h2>
+              <button className="btn btn-close" onClick={closeModal}>✕</button>
+            </div>
 
             {selectedCandidate.status === "FAILED" || selectedCandidate.status === "PENDING" ? (
-              <div style={{ marginTop: "10px" }}>
-                <h1 style={{ color: "#991b1b", fontSize: "28px" }}>
+              <div style={{ marginTop: 10 }}>
+                <h1 style={{ color: "var(--danger)", fontSize: "1.8rem" }}>
                   {selectedCandidate.status === "FAILED" ? "Evaluación fallida" : "Evaluación pendiente"}
                 </h1>
                 {selectedCandidate.error_message && (
-                  <p style={{ color: "#64748b", fontSize: "14px", marginTop: "10px" }}>
-                    {selectedCandidate.error_message}
-                  </p>
+                  <p className="muted" style={{ marginTop: 8 }}>{selectedCandidate.error_message}</p>
                 )}
               </div>
             ) : (
               <>
-                <h1>{selectedCandidate.match_score}%</h1>
-
-                <div
-                  style={{
-                    display: "inline-block",
-                    padding: "8px 15px",
-                    borderRadius: "20px",
-                    fontWeight: "bold",
-                    ...badgeStyle(selectedCandidate.recommendation),
-                  }}
-                >
-                  {getRecommendationLabel(selectedCandidate.recommendation)}
+                <span className="ranking-modal-score">{selectedCandidate.match_score}%</span>
+                <div style={{ marginTop: 10 }}>
+                  <span className={`ranking-badge ${getRecommendationClass(selectedCandidate.recommendation)}`}>
+                    {getRecommendationLabel(selectedCandidate.recommendation)}
+                  </span>
                 </div>
               </>
             )}
 
-            <hr />
+            <div className="ranking-modal-section">
+              <h3>Fortalezas</h3>
+              {selectedCandidate.strengths?.length ? (
+                <ul className="ranking-modal-list">
+                  {selectedCandidate.strengths.map((item, i) => <li key={i}>{item}</li>)}
+                </ul>
+              ) : <p className="muted">Sin datos</p>}
+            </div>
 
-            <h3>✅ Fortalezas</h3>
-
-            {selectedCandidate.strengths?.length ? (
-              <ul>
-                {selectedCandidate.strengths.map((item, i) => (
-                  <li key={i}>{item}</li>
-                ))}
-              </ul>
-            ) : (
-              <p>Sin datos</p>
-            )}
-
-            <h3>❌ Brechas</h3>
-
-            {selectedCandidate.gaps?.length ? (
-              <ul>
-                {selectedCandidate.gaps.map((item, i) => (
-                  <li key={i}>{item}</li>
-                ))}
-              </ul>
-            ) : (
-              <p>Sin brechas</p>
-            )}
+            <div className="ranking-modal-section">
+              <h3>Brechas</h3>
+              {selectedCandidate.gaps?.length ? (
+                <ul className="ranking-modal-list">
+                  {selectedCandidate.gaps.map((item, i) => <li key={i}>{item}</li>)}
+                </ul>
+              ) : <p className="muted">Sin brechas</p>}
+            </div>
 
             <hr />
 
-            <h3>📋 Requisitos evaluados</h3>
-
-            {requirementsLoading && <p>Cargando requisitos...</p>}
-
-            {!requirementsLoading && requirements.length === 0 && (
-              <p>No hay requisitos disponibles.</p>
-            )}
-
-            {requirements.map((req, i) => (
-              <div
-                key={i}
-                className="requirement"
-                style={{
-                  border: "1px solid #ddd",
-                  padding: "12px",
-                  marginBottom: "10px",
-                  borderRadius: "8px",
-                }}
-              >
-                <strong>{req.requirement}</strong>
-
-                <div
-                  style={{
-                    marginTop: "8px",
-                    display: "inline-block",
-                    padding: "5px 10px",
-                    borderRadius: "15px",
-                    fontSize: "13px",
-                    fontWeight: "bold",
-                    ...getRequirementStyle(req.status),
-                  }}
-                >
-                  {getRequirementLabel(req.status)}
+            <div className="ranking-modal-section">
+              <h3>Requisitos evaluados</h3>
+              {requirementsLoading && <p className="muted">Cargando requisitos...</p>}
+              {!requirementsLoading && requirements.length === 0 && <p className="muted">No hay requisitos disponibles.</p>}
+              {requirements.map((req, i) => (
+                <div key={i} className="ranking-modal-requirement">
+                  <strong>{req.requirement}</strong>
+                  <span className={`ranking-badge ${getRequirementClass(req.status)}`} style={{ marginTop: 6 }}>
+                    {getRequirementLabel(req.status)}
+                  </span>
+                  {req.evidence && <p className="ranking-modal-evidence"><strong>Evidencia:</strong> {req.evidence}</p>}
                 </div>
-
-                {req.evidence && (
-                  <p>
-                    <strong>Evidencia:</strong> {req.evidence}
-                  </p>
-                )}
-              </div>
-            ))}
+              ))}
+            </div>
 
             <hr />
 
-            <h3>🤖 Análisis IA</h3>
+            <div className="ranking-modal-section">
+              <h3>Análisis IA</h3>
+              {analysisLoading && <p className="muted">Generando análisis...</p>}
+              {analysis && <p style={{ lineHeight: 1.6, color: "var(--ink-soft)" }}>{analysis.explanation || analysis.summary || analysis.analysis}</p>}
+            </div>
 
-            {analysisLoading && <p>Generando análisis...</p>}
-
-            {analysis && (
-              <p
-                style={{
-                  lineHeight: "1.6",
-                }}
-              >
-                {analysis.explanation || analysis.summary || analysis.analysis}
-              </p>
-            )}
-
-            <button
-              className="btn btn-close"
-              onClick={closeModal}
-              style={{
-                marginTop: "20px",
-                padding: "10px 20px",
-                cursor: "pointer",
-              }}
-            >
-              Cerrar
-            </button>
-            <Link
-              className="btn btn-primary"
-              to={`/candidates/${selectedCandidate.candidate_id}?job_id=${selectedJob}`}
-              style={{ marginTop: "20px", marginLeft: "10px" }}
-            >
-              Abrir ficha de esta vacante
-            </Link>
+            <div style={{ display: "flex", gap: 10, marginTop: 24 }}>
+              <button className="btn btn-ghost" onClick={closeModal}>Cerrar</button>
+              <Link className="btn btn-primary" to={`/candidates/${selectedCandidate.candidate_id}?job_id=${selectedJob}`}>
+                Abrir ficha de esta vacante
+              </Link>
+            </div>
           </div>
         </div>
       )}
-    </div>
-  );
-}
-
-function SummaryCard({ title, value }) {
-  return (
-    <div
-      className="summary-card"
-      style={{
-        display: "flex",
-        flexDirection: "column",
-        alignItems: "center",
-        border: "1px solid #ddd",
-        padding: "20px",
-        borderRadius: "10px",
-        minWidth: "180px",
-        background: "#fff",
-      }}
-    >
-      <p
-        style={{
-          margin: 0,
-          color: "#64748b",
-          fontSize: "14px",
-        }}
-      >
-        {title}
-      </p>
-
-      <h2
-        style={{
-          marginTop: "8px",
-          marginBottom: 0,
-        }}
-      >
-        {value}
-      </h2>
     </div>
   );
 }
