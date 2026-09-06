@@ -196,6 +196,8 @@ VALID_RECOMMENDATIONS = {
     "PENDING",
 }
 
+MIN_SUMMARY_LENGTH = 100
+
 
 def is_evaluation_complete(evaluation: Evaluation | None) -> bool:
     """Check if an evaluation is complete and valid.
@@ -206,7 +208,7 @@ def is_evaluation_complete(evaluation: Evaluation | None) -> bool:
     - match_score is not None
     - 0 <= match_score <= 100
     - recommendation is a valid non-empty string
-    - summary is a non-empty string
+    - summary is a non-empty string with at least MIN_SUMMARY_LENGTH characters
     - strengths is a list (can be empty)
     - gaps is a list (can be empty)
 
@@ -228,6 +230,8 @@ def is_evaluation_complete(evaluation: Evaluation | None) -> bool:
     if evaluation.recommendation == "EVALUATION_FAILED":
         return False
     if not evaluation.summary:
+        return False
+    if len(evaluation.summary.strip()) < MIN_SUMMARY_LENGTH:
         return False
     if evaluation.strengths is None:
         return False

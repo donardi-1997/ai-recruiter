@@ -301,8 +301,9 @@ DESCRIPCIÓN DE LA VACANTE:
             "strengths": [],
             "gaps": [],
             "summary": (
-                "No se pudieron identificar requisitos "
-                "explícitos en la descripción de la vacante."
+                "No se pudieron identificar requisitos explícitos en la descripción de la vacante. "
+                "Sin una lista clara de requisitos técnicos o profesionales, no es posible realizar "
+                "una evaluación objetiva del perfil del candidato frente a las necesidades del puesto."
             ),
         }
 
@@ -495,13 +496,43 @@ DESCRIPCIÓN DE LA VACANTE:
     partial_count = sum(1 for r in final_requirements if r["status"] == "PARTIAL")
     missing_count = sum(1 for r in final_requirements if r["status"] == "MISSING")
 
-    summary = (
-        f"El candidato cumple completamente "
-        f"{match_count} de {total} requisitos, "
-        f"cumple parcialmente {partial_count} "
-        f"y no presenta evidencia explícita para "
-        f"{missing_count}."
+    # Build a substantial summary (minimum 100 characters)
+    parts = []
+    parts.append(
+        f"El candidato cumple completamente {match_count} de {total} requisitos evaluados"
     )
+    if partial_count > 0:
+        parts.append(
+            f", cumple parcialmente {partial_count} requisito{'s' if partial_count > 1 else ''}"
+        )
+    if missing_count > 0:
+        parts.append(
+            f" y no presenta evidencia suficiente para {missing_count} requisito{'s' if missing_count > 1 else ''}"
+        )
+    parts.append(".")
+
+    if strengths:
+        parts.append(
+            f" Sus fortalezas principales incluyen: {', '.join(strengths[:3])}."
+        )
+    if gaps:
+        parts.append(
+            f" Las áreas de mejora identificadas son: {', '.join(gaps[:3])}."
+        )
+
+    summary = "".join(parts)
+
+    # Ensure summary is at least 100 characters
+    MIN_SUMMARY_LENGTH = 100
+    if len(summary.strip()) < MIN_SUMMARY_LENGTH:
+        summary = (
+            f"El candidato ha sido evaluado contra {total} requisitos del puesto. "
+            f"Se identificaron {match_count} requisitos cumplidos, "
+            f"{partial_count} requisitos parcialmente cubiertos "
+            f"y {missing_count} requisitos sin evidencia suficiente en el CV. "
+            f"Este resultado proporciona una visión general del ajuste del perfil "
+            f"del candidato a las necesidades específicas de la vacante."
+        )
 
     return {
         "match_score": match_score,
