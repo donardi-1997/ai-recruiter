@@ -49,11 +49,13 @@ def upgrade() -> None:
         sa.Column("id", UUID(as_uuid=False), primary_key=True, server_default=sa.text("gen_random_uuid()")),
         sa.Column("candidate_id", UUID(as_uuid=False), sa.ForeignKey("candidates.id", ondelete="CASCADE"), nullable=False),
         sa.Column("job_id", UUID(as_uuid=False), sa.ForeignKey("jobs.id", ondelete="CASCADE"), nullable=False),
+        sa.Column("status", sa.Text, nullable=False, server_default="COMPLETED"),
         sa.Column("match_score", sa.Float, nullable=False, server_default="0.0"),
         sa.Column("recommendation", sa.Text, nullable=True),
         sa.Column("summary", sa.Text, nullable=True),
         sa.Column("strengths", JSONB, nullable=True, server_default="[]"),
         sa.Column("gaps", JSONB, nullable=True, server_default="[]"),
+        sa.Column("error_message", sa.Text, nullable=True),
         sa.Column("created_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()),
     )
 
