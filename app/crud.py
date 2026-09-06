@@ -46,6 +46,13 @@ def delete_job(db: Session, job_id: str) -> bool:
     job = get_job(db, job_id)
     if not job:
         return False
+    # Delete related records first
+    db.query(JobCandidate).filter(JobCandidate.job_id == job_id).delete()
+    db.query(RankingItem).filter(RankingItem.ranking_id.in_(
+        db.query(Ranking.id).filter(Ranking.job_id == job_id)
+    ))
+    db.query(Ranking).filter(Ranking.job_id == job_id).delete()
+    db.query(Evaluation).filter(Evaluation.job_id == job_id).delete()
     db.delete(job)
     db.commit()
     return True
@@ -85,6 +92,10 @@ def delete_candidate(db: Session, candidate_id: str) -> bool:
     candidate = get_candidate(db, candidate_id)
     if not candidate:
         return False
+    # Delete related records first to avoid FK constraint violations
+    db.query(JobCandidate).filter(JobCandidate.candidate_id == candidate_id).delete()
+    db.query(Evaluation).filter(Evaluation.candidate_id == candidate_id).delete()
+    db.query(RankingItem).filter(RankingItem.candidate_id == candidate_id).delete()
     db.delete(candidate)
     db.commit()
     return True
@@ -92,6 +103,10 @@ def delete_candidate(db: Session, candidate_id: str) -> bool:
 
 def delete_all_candidates(db: Session) -> tuple[int, int]:
     count = db.query(Candidate).count()
+    # Delete related records first
+    db.query(JobCandidate).delete()
+    db.query(Evaluation).delete()
+    db.query(RankingItem).delete()
     db.query(Candidate).delete()
     db.commit()
     return count, 0
