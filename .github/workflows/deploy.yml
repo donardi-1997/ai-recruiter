@@ -21,6 +21,7 @@ env:
   ECR_BACKEND_REPO: ai-recruiter-api
   ECR_FRONTEND_REPO: ai-recruiter-frontend
   INSTANCE_NAME: ai-recruiter
+  CLOUDFRONT_DISTRIBUTION_ID: E1IBIX4EWENEP7
 
 jobs:
   # ================================================================
@@ -464,6 +465,23 @@ jobs:
 
             echo "DEPLOYMENT_FRONTEND_OK"
           REMOTE_SCRIPT
+
+      - name: Invalidate CloudFront
+        run: |
+          echo "Invalidating CloudFront distribution ${{ env.CLOUDFRONT_DISTRIBUTION_ID }}..."
+          INVALIDATION_ID=$(aws cloudfront create-invalidation \
+            --distribution-id ${{ env.CLOUDFRONT_DISTRIBUTION_ID }} \
+            --paths "/*" \
+            --region us-east-1 \
+            --query "Invalidation.Id" \
+            --output text)
+          echo "INVALIDATION_ID=$INVALIDATION_ID"
+          echo "Waiting for invalidation to complete..."
+          aws cloudfront wait invalidation-completed \
+            --distribution-id ${{ env.CLOUDFRONT_DISTRIBUTION_ID }} \
+            --id "$INVALIDATION_ID" \
+            --region us-east-1
+          echo "CLOUDFRONT_INVALIDATION_OK"
 
       - name: Verify public health
         run: |

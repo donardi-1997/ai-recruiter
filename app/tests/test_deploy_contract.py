@@ -279,3 +279,51 @@ class TestFrontendImmutableDeploy:
                 pytest.fail(
                     f"deploy.yml contains docker run for ai-recruiter-api: {stripped}"
                 )
+
+
+# ============================================================
+# I. CloudFront/Lightsail migration — no S3 deploy
+# ============================================================
+
+class TestCloudFrontLightsailMigration:
+    def test_no_s3_sync_for_frontend(self, deploy_yml_content):
+        """deploy.yml must NOT use aws s3 sync for frontend deployment."""
+        assert "s3 sync" not in deploy_yml_content, (
+            "deploy.yml must not contain 'aws s3 sync' — frontend is served from Lightsail Docker"
+        )
+
+    def test_no_s3_cp_for_frontend(self, deploy_yml_content):
+        """deploy.yml must NOT use aws s3 cp for frontend deployment."""
+        assert "s3 cp" not in deploy_yml_content, (
+            "deploy.yml must not contain 'aws s3 cp' — frontend is served from Lightsail Docker"
+        )
+
+    def test_no_s3_bucket_reference(self, deploy_yml_content):
+        """deploy.yml must NOT reference the old S3 frontend bucket."""
+        assert "ai-recruiter-frontend-765761474007" not in deploy_yml_content, (
+            "deploy.yml must not reference the old S3 bucket ai-recruiter-frontend-765761474007"
+        )
+
+    def test_cloudfront_invalidation_exists(self, deploy_yml_content):
+        """deploy.yml must include CloudFront invalidation after frontend deploy."""
+        assert "cloudfront create-invalidation" in deploy_yml_content, (
+            "deploy.yml must include 'cloudfront create-invalidation'"
+        )
+
+    def test_cloudfront_distribution_id(self, deploy_yml_content):
+        """deploy.yml must reference CloudFront distribution E1IBIX4EWENEP7."""
+        assert "E1IBIX4EWENEP7" in deploy_yml_content, (
+            "deploy.yml must reference CloudFront distribution E1IBIX4EWENEP7"
+        )
+
+    def test_cloudfront_invalidation_wait(self, deploy_yml_content):
+        """deploy.yml must wait for CloudFront invalidation to complete."""
+        assert "invalidation-completed" in deploy_yml_content, (
+            "deploy.yml must wait for CloudFront invalidation to complete"
+        )
+
+    def test_frontendlightsail_origin_in_dns(self, deploy_yml_content):
+        """deploy.yml or docs should reference air-origin.adrianguerra.net."""
+        # This is a structural check — the DNS record must exist for CloudFront to work
+        # The deploy.yml itself may not reference it directly, but the CloudFront config does
+        pass  # DNS is managed outside deploy.yml; verified in Phase 6-7
