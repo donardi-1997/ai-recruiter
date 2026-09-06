@@ -53,6 +53,15 @@ function Ranking() {
   const rankingActionBusy =
     isEvaluatingCandidates || isRefreshingRanking || isRecalculating;
 
+  const selectedJobData =
+    jobs.find((job) => job.job_id === selectedJob) || null;
+
+  const assignedCandidateCount =
+    selectedJobData?.candidate_count ?? rankingBaseTotal ?? rankingInfo.total ?? 0;
+
+  const bestScore =
+    rankingInfo.maximum != null ? Number(rankingInfo.maximum) : null;
+
   // ============================================================
   // LOAD JOBS
   // ============================================================
@@ -89,19 +98,29 @@ function Ranking() {
     targetPageSize = pageSize,
     targetJob = selectedJob,
     targetScope = rankingScope,
+    targetRecommendation = recommendationFilter,
   ) {
     if (!targetJob) return false;
 
     if (minScore < 0 || minScore > 100) {
-      alert("El puntaje mínimo debe estar entre 0 y 100");
+      setActionFeedback({
+        type: "error",
+        message: "El puntaje mínimo debe estar entre 0 y 100.",
+      });
       return false;
     }
     if (maxScore < 0 || maxScore > 100) {
-      alert("El puntaje máximo debe estar entre 0 y 100");
+      setActionFeedback({
+        type: "error",
+        message: "El puntaje máximo debe estar entre 0 y 100.",
+      });
       return false;
     }
     if (minScore > maxScore) {
-      alert("El puntaje mínimo no puede ser mayor que el puntaje máximo");
+      setActionFeedback({
+        type: "error",
+        message: "El puntaje mínimo no puede ser mayor que el puntaje máximo.",
+      });
       return false;
     }
 
@@ -114,7 +133,7 @@ function Ranking() {
         page_size: targetPageSize,
         scope: targetScope,
       };
-      if (recommendationFilter) params.recommendation = recommendationFilter;
+      if (targetRecommendation) params.recommendation = targetRecommendation;
 
       const response = await api.get(`/jobs/${targetJob}/ranking`, { params });
       const data = response.data;
@@ -148,7 +167,12 @@ function Ranking() {
       return true;
     } catch (error) {
       console.error("ERROR LOADING RANKING:", error.response?.data || error);
-      alert(error.response?.data?.detail || "No fue posible cargar el ranking");
+      setActionFeedback({
+        type: "error",
+        message:
+          error.response?.data?.detail ||
+          "No fue posible cargar el ranking.",
+      });
       return false;
     } finally {
       setLoading(false);
@@ -161,7 +185,10 @@ function Ranking() {
 
   async function evaluateCandidates() {
     if (!selectedJob) {
-      alert("Seleccione una vacante");
+      setActionFeedback({
+        type: "info",
+        message: "Selecciona una vacante para continuar.",
+      });
       return;
     }
 
@@ -230,7 +257,10 @@ function Ranking() {
   // This action must never call the LLM or Bedrock.
   async function refreshRanking() {
     if (!selectedJob) {
-      alert("Seleccione una vacante");
+      setActionFeedback({
+        type: "info",
+        message: "Selecciona una vacante para continuar.",
+      });
       return;
     }
 
@@ -281,7 +311,10 @@ function Ranking() {
   // candidates and therefore may invoke Bedrock/LLM.
   async function recalculateRanking() {
     if (!selectedJob) {
-      alert("Seleccione una vacante");
+      setActionFeedback({
+        type: "info",
+        message: "Selecciona una vacante para continuar.",
+      });
       return;
     }
 
@@ -365,6 +398,21 @@ function Ranking() {
   async function applyFilters() {
     setPage(1);
     await loadRanking(1, pageSize);
+  }
+
+  async function applyRecommendationFilter(value) {
+    if (loading || rankingActionBusy) return;
+
+    setRecommendationFilter(value);
+    setPage(1);
+
+    await loadRanking(
+      1,
+      pageSize,
+      selectedJob,
+      rankingScope,
+      value,
+    );
   }
 
   async function handleJobChange(event) {
@@ -506,7 +554,7 @@ function Ranking() {
           </select>
           <p className="ranking-job-hint">
             {selectedJob
-              ? "Ranking y evaluaciones de esta vacante"
+              ? `${assignedCandidateCount} candidato${assignedCandidateCount === 1 ? "" : "s"} asignado${assignedCandidateCount === 1 ? "" : "s"} · ${evaluatedCount} evaluado${evaluatedCount === 1 ? "" : "s"} · ${rankingInfo.pending} pendiente${rankingInfo.pending === 1 ? "" : "s"}`
               : "Selecciona una vacante para comenzar"}
           </p>
         </div>
@@ -564,17 +612,19 @@ function Ranking() {
             <span className="ranking-metric-label">Evaluados</span>
             <span className="ranking-metric-value">{evaluatedCount}</span>
           </div>
-          <div className="ranking-metric">
+          <div className={`ranking-metric ${rankingInfo.pending > 0 ? "ranking-metric--attention" : ""}`}>
             <span className="ranking-metric-label">Pendientes</span>
             <span className="ranking-metric-value">{rankingInfo.pending}</span>
-          </div>
-          <div className="ranking-metric">
-            <span className="ranking-metric-label">Rango de puntuación</span>
-            <span className="ranking-metric-value">
-              {rankingInfo.minimum != null && rankingInfo.maximum != null
-                ? `${rankingInfo.minimum}% – ${rankingInfo.maximum}%`
-                : "—"}
+            <span className="ranking-metric-detail">
+              {rankingInfo.pending > 0 ? "Requieren evaluación" : "Todo al día"}
             </span>
+          </div>
+          <div className="ranking-metric ranking-metric--highlight">
+            <span className="ranking-metric-label">Mejor puntuación</span>
+            <span className="ranking-metric-value">
+              {bestScore != null ? `${bestScore}%` : "—"}
+            </span>
+            <span className="ranking-metric-detail">Mejor perfil visible</span>
           </div>
         </div>
       )}
@@ -583,9 +633,44 @@ function Ranking() {
       {selectedJob && (
         <div className="ranking-filter-panel">
           <div className="ranking-filter-header">
-            <h3>Filtros del ranking</h3>
-            <p>Ajusta los resultados sin modificar las evaluaciones.</p>
+            <div>
+              <span className="ranking-filter-kicker">Explorar candidatos</span>
+              <h3>Filtra el ranking</h3>
+              <p>Encuentra rápidamente los perfiles que quieres revisar.</p>
+            </div>
           </div>
+
+          <div
+            className="ranking-quick-filters"
+            role="group"
+            aria-label="Filtrar por clasificación"
+          >
+            {[
+              ["", "Todos"],
+              ["STRONG_MATCH", "Excelente"],
+              ["GOOD_MATCH", "Buena"],
+              ["PARTIAL_MATCH", "Parcial"],
+              ["LOW_MATCH", "Baja"],
+            ].map(([value, label]) => (
+              <button
+                key={value || "all"}
+                type="button"
+                className={`ranking-filter-chip ${
+                  recommendationFilter === value
+                    ? "ranking-filter-chip--active"
+                    : ""
+                }`}
+                onClick={() => applyRecommendationFilter(value)}
+                disabled={!selectedJob || loading || rankingActionBusy}
+                aria-pressed={recommendationFilter === value}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+
+          <div className="ranking-filter-divider" />
+
           <div className="ranking-filter-grid">
             <div>
               <label>Fuente de candidatos</label>
@@ -683,7 +768,21 @@ function Ranking() {
             const position = candidate.position ?? ((page - 1) * pageSize + index + 1);
 
             return (
-              <div key={candidate.candidate_id} className="ranking-candidate-card">
+              <div
+                key={candidate.candidate_id}
+                className={`ranking-candidate-card ${
+                  position <= 3
+                    ? `ranking-candidate-card--top ranking-candidate-card--top-${position}`
+                    : ""
+                }`}
+              >
+                {position <= 3 && (
+                  <div className="ranking-top-marker">
+                    <span className="ranking-top-marker-dot" />
+                    {position === 1 ? "Mejor perfil" : `Top ${position}`}
+                  </div>
+                )}
+
                 <div className="ranking-candidate-header">
                   <div className="ranking-candidate-header-left">
                     <span className="ranking-candidate-position">#{position}</span>
@@ -700,7 +799,12 @@ function Ranking() {
                         {isFailed ? "Evaluación fallida" : "Pendiente de evaluación"}
                       </span>
                     ) : (
-                      <span className="ranking-candidate-score-value">{candidate.match_score}%</span>
+                      <div className="ranking-candidate-score-wrap">
+                        <span className="ranking-candidate-score-value">
+                          {candidate.match_score}
+                        </span>
+                        <span className="ranking-candidate-score-max">/ 100</span>
+                      </div>
                     )}
                   </div>
                 </div>
@@ -717,9 +821,14 @@ function Ranking() {
                   <span className="ranking-chips-label">Fortalezas</span>
                   {candidate.strengths?.length ? (
                     <div className="ranking-chips">
-                      {candidate.strengths.map((item, i) => (
+                      {candidate.strengths.slice(0, 3).map((item, i) => (
                         <span key={i} className="ranking-chip ranking-strength-chip">{item}</span>
                       ))}
+                      {candidate.strengths.length > 3 && (
+                        <span className="ranking-chip ranking-chip-more">
+                          +{candidate.strengths.length - 3} más
+                        </span>
+                      )}
                     </div>
                   ) : (
                     <span className="ranking-chips-empty">Sin fortalezas registradas</span>
@@ -731,21 +840,36 @@ function Ranking() {
                   <span className="ranking-chips-label">Brechas</span>
                   {candidate.gaps?.length ? (
                     <div className="ranking-chips">
-                      {candidate.gaps.map((item, i) => (
+                      {candidate.gaps.slice(0, 2).map((item, i) => (
                         <span key={i} className="ranking-chip ranking-gap-chip">{item}</span>
                       ))}
+                      {candidate.gaps.length > 2 && (
+                        <span className="ranking-chip ranking-chip-more">
+                          +{candidate.gaps.length - 2} más
+                        </span>
+                      )}
                     </div>
                   ) : (
                     <span className="ranking-chips-empty">Sin brechas relevantes</span>
                   )}
                 </div>
 
-                <button
-                  className="btn btn-secondary ranking-analysis-btn"
-                  onClick={() => openAnalysis(candidate)}
-                >
-                  Ver análisis
-                </button>
+                <div className="ranking-candidate-actions">
+                  <button
+                    className="btn btn-secondary ranking-analysis-btn"
+                    onClick={() => openAnalysis(candidate)}
+                  >
+                    Ver análisis
+                  </button>
+
+                  <Link
+                    className="btn btn-ghost ranking-profile-btn"
+                    to={`/candidates/${candidate.candidate_id}?job_id=${selectedJob}`}
+                  >
+                    Ver candidato
+                    <span aria-hidden="true">→</span>
+                  </Link>
+                </div>
               </div>
             );
           })}
@@ -787,10 +911,25 @@ function Ranking() {
       ======================================================== */}
       {selectedCandidate && (
         <div className="modal-overlay" onClick={closeModal}>
-          <div className="modal ranking-modal" onClick={(e) => e.stopPropagation()}>
+          <div
+            className="modal ranking-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="ranking-analysis-title"
+            onClick={(e) => e.stopPropagation()}
+          >
             <div className="modal-header">
-              <h2>{selectedCandidate.candidate_name}</h2>
-              <button className="btn btn-close" onClick={closeModal}>✕</button>
+              <div>
+                <span className="eyebrow">Análisis del candidato</span>
+                <h2 id="ranking-analysis-title">{selectedCandidate.candidate_name}</h2>
+              </div>
+              <button
+                className="btn btn-close"
+                onClick={closeModal}
+                aria-label="Cerrar análisis"
+              >
+                ✕
+              </button>
             </div>
 
             {selectedCandidate.status === "FAILED" || selectedCandidate.status === "PENDING" ? (
