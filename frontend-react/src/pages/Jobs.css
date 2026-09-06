@@ -1,0 +1,324 @@
+/* =====================================================
+   JOBS — Card actions
+   ===================================================== */
+.job-card-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: auto;
+  padding-top: 20px;
+}
+
+/* =====================================================
+   JOBS — Detail modal
+   ===================================================== */
+.job-detail-modal {
+  max-width: 860px;
+  max-height: min(85vh, 900px);
+  overflow-y: auto;
+}
+
+.job-detail-section {
+  padding: 20px 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.job-detail-section:last-of-type {
+  border-bottom: none;
+}
+
+.job-detail-section h3 {
+  margin-bottom: 14px;
+  font-size: 0.95rem;
+  font-weight: 700;
+  color: var(--ink);
+}
+
+.job-detail-info-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 16px;
+}
+
+.job-detail-info-grid > div {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.job-detail-info-grid .muted {
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.job-detail-info-grid strong {
+  font-size: 0.9rem;
+}
+
+.job-detail-description {
+  white-space: pre-wrap;
+  color: var(--ink-soft);
+  font-size: 0.88rem;
+  line-height: 1.7;
+}
+
+.job-detail-candidates-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.job-detail-candidates-header h3 {
+  margin-bottom: 0;
+}
+
+.job-detail-loading {
+  padding: 32px 0;
+  text-align: center;
+}
+
+.job-detail-error {
+  padding: 16px;
+  border-radius: 12px;
+  background: var(--danger-bg);
+  color: var(--danger);
+  font-size: 0.85rem;
+}
+
+.job-detail-error .btn {
+  margin-top: 10px;
+}
+
+.job-detail-empty {
+  padding: 24px;
+  border: 1px dashed var(--border);
+  border-radius: 12px;
+  background: var(--surface-soft);
+  text-align: center;
+}
+
+.job-detail-empty p {
+  margin-bottom: 14px;
+  color: var(--ink-soft);
+  font-size: 0.85rem;
+}
+
+.job-detail-candidate-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.job-detail-candidate-row {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 14px 16px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface-soft);
+}
+
+.job-detail-candidate-avatar {
+  display: grid;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  flex: 0 0 auto;
+  border-radius: 10px;
+  background: linear-gradient(145deg, #eaf1ff, #dceaff);
+  color: var(--blue);
+  font-family: "Manrope", sans-serif;
+  font-weight: 800;
+  font-size: 0.85rem;
+}
+
+.job-detail-candidate-info {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.job-detail-candidate-info strong {
+  font-size: 0.85rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.job-detail-candidate-info span {
+  color: var(--ink-soft);
+  font-size: 0.78rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.job-detail-candidate-info small {
+  color: var(--ink-faint);
+  font-size: 0.72rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.btn-sm {
+  min-height: 34px;
+  padding: 0 12px;
+  font-size: 0.75rem;
+}
+
+.modal-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  padding-top: 20px;
+  border-top: 1px solid var(--border);
+}
+
+/* =====================================================
+   JOBS — Delete modal
+   ===================================================== */
+.job-delete-modal {
+  max-width: 560px;
+  max-height: min(85vh, 700px);
+}
+
+.job-delete-job-title {
+  font-size: 1rem;
+  font-weight: 700;
+  margin-bottom: 6px;
+}
+
+.job-delete-error {
+  margin-bottom: 16px;
+  padding: 12px 14px;
+  border-radius: 10px;
+  background: var(--danger-bg);
+  color: var(--danger);
+  font-size: 0.84rem;
+}
+
+.job-delete-options {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.job-delete-option {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  width: 100%;
+  padding: 16px 18px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface);
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 0.18s, background 0.18s, transform 0.18s;
+}
+
+.job-delete-option:hover:not(:disabled) {
+  transform: translateY(-1px);
+}
+
+.job-delete-option:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.job-delete-option strong {
+  font-size: 0.86rem;
+  font-weight: 700;
+}
+
+.job-delete-option span {
+  font-size: 0.78rem;
+  color: var(--ink-soft);
+  line-height: 1.5;
+}
+
+.job-delete-option-danger-outline {
+  border-color: var(--danger);
+  color: var(--danger);
+}
+
+.job-delete-option-danger-outline:hover:not(:disabled) {
+  background: var(--danger-bg);
+}
+
+.job-delete-option-danger-solid {
+  border-color: var(--danger);
+  background: var(--danger);
+  color: white;
+}
+
+.job-delete-option-danger-solid strong {
+  color: white;
+}
+
+.job-delete-option-danger-solid span {
+  color: rgba(255, 255, 255, 0.85);
+}
+
+.job-delete-option-danger-solid:hover:not(:disabled) {
+  background: #a83249;
+}
+
+.job-delete-option-cancel {
+  border-color: var(--border);
+  background: transparent;
+  color: var(--ink-soft);
+  text-align: center;
+}
+
+.job-delete-option-cancel:hover:not(:disabled) {
+  background: var(--surface-soft);
+}
+
+.job-delete-loading {
+  margin-top: 14px;
+  text-align: center;
+  color: var(--ink-soft);
+  font-size: 0.84rem;
+  font-weight: 600;
+}
+
+/* =====================================================
+   JOBS — Mobile responsive
+   ===================================================== */
+@media (max-width: 620px) {
+  .job-card-actions {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .job-detail-modal {
+    max-width: 100%;
+    max-height: 100vh;
+    border-radius: 0;
+  }
+
+  .job-detail-info-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .job-detail-candidate-row {
+    flex-wrap: wrap;
+  }
+
+  .job-detail-candidate-row .btn-sm {
+    width: 100%;
+  }
+
+  .job-delete-modal {
+    max-width: 100%;
+  }
+}

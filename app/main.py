@@ -240,12 +240,35 @@ def update_job(
 @app.delete("/api/jobs/{job_id}")
 def delete_job(
     job_id: str,
+    delete_candidates: bool = Query(False),
     db: Session = Depends(get_db),
     _user: dict = Depends(get_current_user),
 ):
     _require_job(db, job_id, _user["sub"])
-    crud.delete_job(db, job_id)
-    return {"detail": "Vacante eliminada."}
+    success, deleted_count = crud.delete_job(
+        db,
+        job_id,
+        owner_sub=_user["sub"],
+        delete_candidates=delete_candidates,
+    )
+    if not success:
+        raise HTTPException(
+            status_code=404,
+            detail="Vacante no encontrada.",
+        )
+    if delete_candidates:
+        return {
+            "detail": "Vacante y candidatos eliminados.",
+            "job_id": job_id,
+            "delete_candidates": True,
+            "deleted_candidates": deleted_count,
+        }
+    return {
+        "detail": "Vacante eliminada.",
+        "job_id": job_id,
+        "delete_candidates": False,
+        "deleted_candidates": 0,
+    }
 
 
 # ============================================================

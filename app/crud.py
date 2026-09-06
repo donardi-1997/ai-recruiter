@@ -102,20 +102,100 @@ def update_job(db: Session, job: Job, *, title: str | None = None, description: 
     return job
 
 
-def delete_job(db: Session, job_id: str) -> bool:
-    job = get_job(db, job_id)
+def delete_job(
+    db: Session,
+    job_id: str,
+    *,
+    owner_sub: str | None = None,
+    delete_candidates: bool = False,
+) -> tuple[bool, int]:
+    """Delete a job and its related records atomically.
+
+    When *delete_candidates* is True, every candidate currently assigned
+    to the job is also removed (including their evaluations and ranking
+    items across **all** jobs).  Shared candidates disappear from every
+    job they belong to.
+
+    Returns (success, deleted_candidates_count).
+    """
+    job = get_job(db, job_id, owner_sub=owner_sub)
     if not job:
-        return False
-    # Delete related records first
-    db.query(JobCandidate).filter(JobCandidate.job_id == job_id).delete()
-    db.query(RankingItem).filter(RankingItem.ranking_id.in_(
-        db.query(Ranking.id).filter(Ranking.job_id == job_id)
-    ))
-    db.query(Ranking).filter(Ranking.job_id == job_id).delete()
-    db.query(Evaluation).filter(Evaluation.job_id == job_id).delete()
-    db.delete(job)
-    db.commit()
-    return True
+        return False, 0
+
+    try:
+        # Collect candidate IDs assigned to this job
+        # (only those owned by the current user).
+        candidate_query = (
+            db.query(JobCandidate.candidate_id)
+            .filter(JobCandidate.job_id == job_id)
+        )
+        if owner_sub is not None:
+            candidate_query = candidate_query.join(
+                Candidate,
+                Candidate.id == JobCandidate.candidate_id,
+            ).filter(Candidate.owner_sub == owner_sub)
+
+        candidate_ids = [
+            cid for (cid,) in candidate_query.all()
+        ]
+
+        deleted_candidate_count = 0
+
+        if delete_candidates and candidate_ids:
+            # Remove associations and evaluations for
+            # these candidates across ALL jobs.
+            db.query(JobCandidate).filter(
+                JobCandidate.candidate_id.in_(candidate_ids)
+            ).delete(synchronize_session=False)
+
+            db.query(Evaluation).filter(
+                Evaluation.candidate_id.in_(candidate_ids)
+            ).delete(synchronize_session=False)
+
+            db.query(RankingItem).filter(
+                RankingItem.candidate_id.in_(candidate_ids)
+            ).delete(synchronize_session=False)
+
+            db.query(Candidate).filter(
+                Candidate.id.in_(candidate_ids)
+            ).delete(synchronize_session=False)
+
+            deleted_candidate_count = len(candidate_ids)
+
+        # Remove job-linked records.
+        ranking_ids = [
+            rid
+            for (rid,) in (
+                db.query(Ranking.id)
+                .filter(Ranking.job_id == job_id)
+                .all()
+            )
+        ]
+
+        if ranking_ids:
+            db.query(RankingItem).filter(
+                RankingItem.ranking_id.in_(ranking_ids)
+            ).delete(synchronize_session=False)
+
+        db.query(Ranking).filter(
+            Ranking.job_id == job_id
+        ).delete(synchronize_session=False)
+
+        db.query(Evaluation).filter(
+            Evaluation.job_id == job_id
+        ).delete(synchronize_session=False)
+
+        db.query(JobCandidate).filter(
+            JobCandidate.job_id == job_id
+        ).delete(synchronize_session=False)
+
+        db.delete(job)
+        db.commit()
+        return True, deleted_candidate_count
+
+    except Exception:
+        db.rollback()
+        raise
 
 
 def count_candidates_for_job(
