@@ -99,8 +99,18 @@ ECR_IMAGE="${ECR_ACCOUNT}.dkr.ecr.${AWS_REGION}.amazonaws.com/${ECR_REPO}:${ECR_
 if [[ "$DRY_RUN" == "true" ]]; then
     echo "[DRY RUN] docker pull $ECR_IMAGE"
 else
-    docker pull "$ECR_IMAGE"
-    log_ok "Image pulled: $ECR_IMAGE"
+    # Try to pull; if it fails (e.g. no ECR permissions), use local image
+    if docker pull "$ECR_IMAGE" 2>/dev/null; then
+        log_ok "Image pulled: $ECR_IMAGE"
+    else
+        # Check if image exists locally
+        if docker image inspect "$ECR_IMAGE" >/dev/null 2>&1; then
+            log_warn "ECR pull failed (no permissions), using local image: $ECR_IMAGE"
+        else
+            log_error "Image not available locally or in ECR: $ECR_IMAGE"
+            exit 1
+        fi
+    fi
 fi
 
 # ============================================================
