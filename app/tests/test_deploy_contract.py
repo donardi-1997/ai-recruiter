@@ -51,30 +51,21 @@ class TestDeployYmlUsesScript:
 
 class TestNoManualBackendDockerRun:
     def test_no_docker_run_for_backend_container(self, deploy_yml_content):
-        # Find all docker run blocks — there should be none that create ai-recruiter-api
-        # The backend is deployed via deploy-api.sh, not inline docker run
         lines = deploy_yml_content.split("\n")
-        in_docker_run = False
         for line in lines:
             stripped = line.strip()
-            # Track docker run commands (the REMOTE_SCRIPT heredoc contains shell code)
             if "docker run" in stripped and "ai-recruiter-api" in stripped:
                 pytest.fail(
                     f"deploy.yml contains a docker run that creates ai-recruiter-api: {stripped}"
                 )
 
     def test_no_inline_backend_env_vars(self, deploy_yml_content):
-        # deploy.yml should not set BEDROCK_AWS_PROFILE, DATABASE_URL etc.
-        # for the backend container — those come from deploy-api.sh
         lines = deploy_yml_content.split("\n")
         for i, line in enumerate(lines, 1):
             stripped = line.strip()
-            # Skip comments and the deploy-api.sh section
             if stripped.startswith("#"):
                 continue
-            # Check for inline backend env that should only be in deploy-api.sh
             if "BEDROCK_AWS_PROFILE" in stripped and "deploy-api.sh" not in stripped:
-                # It's OK if it appears in a comment or echo
                 if "echo" not in stripped and "#" not in stripped:
                     pytest.fail(
                         f"Line {i}: deploy.yml should not set BEDROCK_AWS_PROFILE directly"
@@ -139,7 +130,7 @@ class TestDeployScriptAwsRole:
 
 
 # ============================================================
-# G. deploy.yml uses SHA-based tag
+# G. deploy.yml uses SHA-based tag for backend
 # ============================================================
 
 class TestShaTag:
@@ -148,13 +139,143 @@ class TestShaTag:
             "deploy.yml must use GITHUB_SHA for immutable image tags"
         )
 
-    def test_deploy_yml_promotes_to_latest_only_after_checks(self, deploy_yml_content):
-        # "latest" tag should only appear AFTER post-deploy checks
+    def test_deploy_yml_backend_promotes_to_latest_only_after_checks(self, deploy_yml_content):
         lines = deploy_yml_content.split("\n")
-        latest_lines = []
+        latest_backend_lines = []
         for i, line in enumerate(lines, 1):
-            if "latest" in line and "docker" in line:
-                latest_lines.append(i)
-        assert len(latest_lines) > 0, "deploy.yml should have a latest promotion step"
-        # The last occurrence of latest should be after the health checks
-        # (This is a structural check — the promote step comes last)
+            if "latest" in line and "docker" in line and "ECR_BACKEND_REPO" in line:
+                latest_backend_lines.append(i)
+        assert len(latest_backend_lines) > 0, (
+            "deploy.yml should have a backend latest promotion step"
+        )
+
+        # Verify backend promotion occurs after public health check
+        public_health_line = None
+        for i, line in enumerate(lines, 1):
+            if "PUBLIC_HEALTH_OK" in line:
+                public_health_line = i
+                break
+        assert public_health_line is not None, (
+            "deploy.yml should have a PUBLIC_HEALTH_OK check"
+        )
+        assert latest_backend_lines[-1] > public_health_line, (
+            f"Backend latest promotion (line {latest_backend_lines[-1]}) must occur "
+            f"after PUBLIC_HEALTH_OK (line {public_health_line})"
+        )
+
+
+# ============================================================
+# H. Frontend uses immutable SHA tag (not latest for docker run)
+# ============================================================
+
+class TestFrontendImmutableDeploy:
+    def test_frontend_uses_sha_tag_in_build(self, deploy_yml_content):
+        """Frontend build step must use ECR_FRONTEND_REPO with github.sha."""
+        assert re.search(
+            r"ECR_FRONTEND_REPO.*github\.sha|github\.sha.*ECR_FRONTEND_REPO",
+            deploy_yml_content,
+        ), "deploy.yml must build frontend with ECR_FRONTEND_REPO:github.sha"
+
+    def test_frontend_pull_before_stop(self, deploy_yml_content):
+        """Frontend must be pulled (docker pull) BEFORE stopping old container."""
+        lines = deploy_yml_content.split("\n")
+        frontend_pull_line = None
+        frontend_stop_line = None
+        for i, line in enumerate(lines, 1):
+            stripped = line.strip()
+            if "docker pull" in stripped and "ECR_FRONTEND_REPO" in stripped:
+                frontend_pull_line = i
+            if "docker stop" in stripped and "ai-recruiter-web" in stripped:
+                frontend_stop_line = i
+                break
+        assert frontend_pull_line is not None, (
+            "deploy.yml must pull frontend SHA image"
+        )
+        assert frontend_stop_line is not None, (
+            "deploy.yml must stop ai-recruiter-web"
+        )
+        assert frontend_pull_line < frontend_stop_line, (
+            f"Frontend pull (line {frontend_pull_line}) must occur before "
+            f"stop (line {frontend_stop_line})"
+        )
+
+    def test_frontend_run_uses_sha_not_latest(self, deploy_yml_content):
+        """Frontend docker run must use SHA tag, not latest."""
+        lines = deploy_yml_content.split("\n")
+        for i, line in enumerate(lines, 1):
+            stripped = line.strip()
+            if (
+                "docker run" in stripped
+                and "ai-recruiter-web" in stripped
+            ):
+                assert "ECR_FRONTEND_REPO" in stripped, (
+                    f"Line {i}: frontend docker run must reference ECR_FRONTEND_REPO"
+                )
+                assert ":latest" not in stripped, (
+                    f"Line {i}: frontend docker run must NOT use :latest tag"
+                )
+                assert "github.sha" in stripped, (
+                    f"Line {i}: frontend docker run must use github.sha tag"
+                )
+
+    def test_frontend_docker_inspect_exists(self, deploy_yml_content):
+        """deploy.yml must inspect ai-recruiter-web to validate frontend."""
+        assert "docker inspect ai-recruiter-web" in deploy_yml_content, (
+            "deploy.yml must include docker inspect ai-recruiter-web"
+        )
+
+    def test_frontend_image_ok_check(self, deploy_yml_content):
+        """deploy.yml must verify FRONTEND_IMAGE_OK."""
+        assert "FRONTEND_IMAGE_OK" in deploy_yml_content, (
+            "deploy.yml must include FRONTEND_IMAGE_OK check"
+        )
+
+    def test_public_frontend_ok_check(self, deploy_yml_content):
+        """deploy.yml must verify PUBLIC_FRONTEND_OK."""
+        assert "PUBLIC_FRONTEND_OK" in deploy_yml_content, (
+            "deploy.yml must include PUBLIC_FRONTEND_OK check"
+        )
+
+    def test_frontend_bundle_comparison(self, deploy_yml_content):
+        """deploy.yml must compare DIRECT_FRONTEND_BUNDLE and PUBLIC_FRONTEND_BUNDLE."""
+        assert "DIRECT_FRONTEND_BUNDLE" in deploy_yml_content, (
+            "deploy.yml must include DIRECT_FRONTEND_BUNDLE"
+        )
+        assert "PUBLIC_FRONTEND_BUNDLE" in deploy_yml_content, (
+            "deploy.yml must include PUBLIC_FRONTEND_BUNDLE"
+        )
+
+    def test_frontend_latest_promoted_after_checks(self, deploy_yml_content):
+        """Frontend latest promotion must occur after all validation checks."""
+        lines = deploy_yml_content.split("\n")
+        frontend_latest_line = None
+        for i, line in enumerate(lines, 1):
+            if "latest" in line and "ECR_FRONTEND_REPO" in line:
+                frontend_latest_line = i
+        assert frontend_latest_line is not None, (
+            "deploy.yml must have a frontend latest promotion step"
+        )
+
+        # Verify it occurs after FRONTEND_IMAGE_OK
+        image_ok_line = None
+        for i, line in enumerate(lines, 1):
+            if "FRONTEND_IMAGE_OK" in line:
+                image_ok_line = i
+                break
+        assert image_ok_line is not None, (
+            "deploy.yml must have FRONTEND_IMAGE_OK check"
+        )
+        assert frontend_latest_line > image_ok_line, (
+            f"Frontend latest promotion (line {frontend_latest_line}) must occur "
+            f"after FRONTEND_IMAGE_OK (line {image_ok_line})"
+        )
+
+    def test_no_backend_docker_run_in_deploy_yml(self, deploy_yml_content):
+        """ai-recruiter-api must NOT have a docker run in deploy.yml."""
+        lines = deploy_yml_content.split("\n")
+        for line in lines:
+            stripped = line.strip()
+            if "docker run" in stripped and "ai-recruiter-api" in stripped:
+                pytest.fail(
+                    f"deploy.yml contains docker run for ai-recruiter-api: {stripped}"
+                )

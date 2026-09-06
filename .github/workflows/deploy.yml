@@ -114,12 +114,15 @@ jobs:
           docker push "$BACKEND_IMAGE"
           echo "BACKEND_IMAGE_SHA=$BACKEND_IMAGE"
 
-      - name: Build and push frontend image
+      - name: Build and push frontend image (SHA tag)
         env:
           ECR_REGISTRY: ${{ steps.ecr-login.outputs.registry }}
         run: |
-          docker build --tag "$ECR_REGISTRY/$ECR_FRONTEND_REPO:latest" ./frontend-react
-          docker push "$ECR_REGISTRY/$ECR_FRONTEND_REPO:latest"
+          FRONTEND_IMAGE="$ECR_REGISTRY/$ECR_FRONTEND_REPO:${{ github.sha }}"
+          echo "FRONTEND_IMAGE_SHA=$FRONTEND_IMAGE" >> "$GITHUB_ENV"
+          docker build --tag "$FRONTEND_IMAGE" ./frontend-react
+          docker push "$FRONTEND_IMAGE"
+          echo "FRONTEND_IMAGE_SHA=$FRONTEND_IMAGE"
 
       - name: Deploy via SSH
         env:
@@ -160,15 +163,19 @@ jobs:
             aws ecr get-login-password --region $AWS_REGION | \
               sudo docker login --username AWS --password-stdin $ECR_REGISTRY
 
-            # Pull the SHA image
+            # Pull the backend SHA image
             sudo docker pull $ECR_REGISTRY/$ECR_BACKEND_REPO:${{ github.sha }}
+
+            # Pull the frontend SHA image BEFORE stopping the old one
+            sudo docker pull $ECR_REGISTRY/$ECR_FRONTEND_REPO:${{ github.sha }}
+            echo "FRONTEND_PULL_OK"
 
             # Unset GitHub Actions credentials (not for runtime)
             unset AWS_ACCESS_KEY_ID
             unset AWS_SECRET_ACCESS_KEY
             unset AWS_SESSION_TOKEN
 
-            # Preserve rollback: tag current image before replacing
+            # Preserve rollback: tag current images before replacing
             ROLLBACK_TAG="rollback-\${GITHUB_RUN_ID:-manual}"
             if sudo docker inspect ai-recruiter-api >/dev/null 2>&1; then
               OLD_IMAGE_ID=\$(sudo docker inspect ai-recruiter-api --format '{{.Image}}')
@@ -177,6 +184,17 @@ jobs:
               echo "ROLLBACK_PRESERVED=\$ROLLBACK_TAG"
             else
               echo "NO_EXISTING_CONTAINER — fresh install"
+            fi
+
+            # Preserve frontend rollback
+            FRONTEND_ROLLBACK_TAG="frontend-rollback-\${GITHUB_RUN_ID:-manual}"
+            if sudo docker inspect ai-recruiter-web >/dev/null 2>&1; then
+              OLD_FRONTEND_IMAGE_ID=\$(sudo docker inspect ai-recruiter-web --format '{{.Image}}')
+              sudo docker tag "\$OLD_FRONTEND_IMAGE_ID" "$ECR_REGISTRY/$ECR_FRONTEND_REPO:\$FRONTEND_ROLLBACK_TAG" || true
+              sudo docker push "$ECR_REGISTRY/$ECR_FRONTEND_REPO:\$FRONTEND_ROLLBACK_TAG" || true
+              echo "FRONTEND_ROLLBACK_PRESERVED=\$FRONTEND_ROLLBACK_TAG"
+            else
+              echo "NO_EXISTING_FRONTEND — fresh install"
             fi
 
             # Preflight: Roles Anywhere files must exist before stopping backend
@@ -313,16 +331,136 @@ jobs:
             # --- DEPLOY BACKEND: SUCCESS ---
             echo "DEPLOYMENT_BACKEND_OK"
 
-            # --- FRONTEND DEPLOY ---
+            # ==============================================
+            # FRONTEND DEPLOY (immutable SHA tag)
+            # ==============================================
             echo "━━━ Deploy Frontend ━━━"
+
+            # Stop and remove old frontend
             sudo docker stop ai-recruiter-web 2>/dev/null || true
             sudo docker rm ai-recruiter-web 2>/dev/null || true
+
+            # Run new frontend with SHA tag
             sudo docker run -d \
               --name ai-recruiter-web \
               --network ai-recruiter \
               --restart unless-stopped \
               -p 80:80 \
-              $ECR_REGISTRY/$ECR_FRONTEND_REPO:latest
+              $ECR_REGISTRY/$ECR_FRONTEND_REPO:${{ github.sha }}
+
+            # --- FRONTEND VALIDATION ---
+            echo "━━━ Frontend: Container Status ━━━"
+            FRONTEND_STATUS=\$(sudo docker inspect ai-recruiter-web --format '{{.State.Status}}' 2>/dev/null || echo "MISSING")
+            if [ "\$FRONTEND_STATUS" = "running" ]; then
+              echo "FRONTEND_CONTAINER_OK running"
+            else
+              echo "FRONTEND_CONTAINER_FAIL status=\$FRONTEND_STATUS"
+              # Rollback to old frontend if available
+              if [ -n "\$FRONTEND_ROLLBACK_TAG" ]; then
+                sudo docker stop ai-recruiter-web 2>/dev/null || true
+                sudo docker rm ai-recruiter-web 2>/dev/null || true
+                sudo docker run -d \
+                  --name ai-recruiter-web \
+                  --network ai-recruiter \
+                  --restart unless-stopped \
+                  -p 80:80 \
+                  $ECR_REGISTRY/$ECR_FRONTEND_REPO:\$FRONTEND_ROLLBACK_TAG
+                echo "FRONTEND_ROLLBACK_ATTEMPTED"
+              fi
+              echo "DEPLOY_FAILED_FRONTEND_CONTAINER"
+              exit 1
+            fi
+
+            # Verify frontend image tag is SHA
+            echo "━━━ Frontend: Image Tag ━━━"
+            FRONTEND_IMAGE=\$(sudo docker inspect ai-recruiter-web --format '{{.Config.Image}}')
+            if echo "\$FRONTEND_IMAGE" | grep -q ":${{ github.sha }}$"; then
+              echo "FRONTEND_IMAGE_OK=\$FRONTEND_IMAGE"
+            else
+              echo "FRONTEND_IMAGE_FAIL=\$FRONTEND_IMAGE"
+              # Rollback to old frontend if available
+              if [ -n "\$FRONTEND_ROLLBACK_TAG" ]; then
+                sudo docker stop ai-recruiter-web 2>/dev/null || true
+                sudo docker rm ai-recruiter-web 2>/dev/null || true
+                sudo docker run -d \
+                  --name ai-recruiter-web \
+                  --network ai-recruiter \
+                  --restart unless-stopped \
+                  -p 80:80 \
+                  $ECR_REGISTRY/$ECR_FRONTEND_REPO:\$FRONTEND_ROLLBACK_TAG
+                echo "FRONTEND_ROLLBACK_ATTEMPTED"
+              fi
+              echo "DEPLOY_FAILED_FRONTEND_IMAGE"
+              exit 1
+            fi
+
+            # Verify Nginx responds locally
+            echo "━━━ Frontend: Local HTTP ━━━"
+            FRONTEND_HTML=\$(curl -fS http://127.0.0.1/ 2>/dev/null || echo "FAIL")
+            if echo "\$FRONTEND_HTML" | grep -q "root"; then
+              echo "FRONTEND_HTTP_OK"
+            else
+              echo "FRONTEND_HTTP_FAIL"
+              # Rollback to old frontend if available
+              if [ -n "\$FRONTEND_ROLLBACK_TAG" ]; then
+                sudo docker stop ai-recruiter-web 2>/dev/null || true
+                sudo docker rm ai-recruiter-web 2>/dev/null || true
+                sudo docker run -d \
+                  --name ai-recruiter-web \
+                  --network ai-recruiter \
+                  --restart unless-stopped \
+                  -p 80:80 \
+                  $ECR_REGISTRY/$ECR_FRONTEND_REPO:\$FRONTEND_ROLLBACK_TAG
+                echo "FRONTEND_ROLLBACK_ATTEMPTED"
+              fi
+              echo "DEPLOY_FAILED_FRONTEND_HTTP"
+              exit 1
+            fi
+
+            # Verify frontend bundle exists in container
+            echo "━━━ Frontend: Bundle Check ━━━"
+            sudo docker exec ai-recruiter-web test -f /usr/share/nginx/html/index.html
+            if sudo docker exec ai-recruiter-web sh -c 'ls /usr/share/nginx/html/assets/index-*.js >/dev/null 2>&1'; then
+              echo "FRONTEND_DIST_OK"
+            else
+              echo "FRONTEND_DIST_FAIL"
+              # Rollback to old frontend if available
+              if [ -n "\$FRONTEND_ROLLBACK_TAG" ]; then
+                sudo docker stop ai-recruiter-web 2>/dev/null || true
+                sudo docker rm ai-recruiter-web 2>/dev/null || true
+                sudo docker run -d \
+                  --name ai-recruiter-web \
+                  --network ai-recruiter \
+                  --restart unless-stopped \
+                  -p 80:80 \
+                  $ECR_REGISTRY/$ECR_FRONTEND_REPO:\$FRONTEND_ROLLBACK_TAG
+                echo "FRONTEND_ROLLBACK_ATTEMPTED"
+              fi
+              echo "DEPLOY_FAILED_FRONTEND_DIST"
+              exit 1
+            fi
+
+            # Extract bundle name from local HTTP response
+            DIRECT_BUNDLE=\$(echo "\$FRONTEND_HTML" | grep -oE 'assets/index-[^"]+\.js' | head -1)
+            if [ -n "\$DIRECT_BUNDLE" ]; then
+              echo "FRONTEND_BUNDLE_OK=\$DIRECT_BUNDLE"
+            else
+              echo "FRONTEND_BUNDLE_FAIL"
+              # Rollback to old frontend if available
+              if [ -n "\$FRONTEND_ROLLBACK_TAG" ]; then
+                sudo docker stop ai-recruiter-web 2>/dev/null || true
+                sudo docker rm ai-recruiter-web 2>/dev/null || true
+                sudo docker run -d \
+                  --name ai-recruiter-web \
+                  --network ai-recruiter \
+                  --restart unless-stopped \
+                  -p 80:80 \
+                  $ECR_REGISTRY/$ECR_FRONTEND_REPO:\$FRONTEND_ROLLBACK_TAG
+                echo "FRONTEND_ROLLBACK_ATTEMPTED"
+              fi
+              echo "DEPLOY_FAILED_FRONTEND_BUNDLE"
+              exit 1
+            fi
 
             echo "DEPLOYMENT_FRONTEND_OK"
           REMOTE_SCRIPT
@@ -349,7 +487,80 @@ jobs:
             exit 1
           fi
 
-      - name: Promote SHA to latest
+      - name: Verify public frontend
+        env:
+          ECR_REGISTRY: ${{ steps.ecr-login.outputs.registry }}
+        run: |
+          INSTANCE_IP=$(aws lightsail get-instance \
+            --instance-name ${{ env.INSTANCE_NAME }} \
+            --region ${{ env.AWS_REGION }} \
+            --query "instance.publicIpAddress" \
+            --output text)
+
+          # Get the direct bundle from Lightsail (bypasses CDN)
+          DIRECT_HTML=$(curl -fS "http://$INSTANCE_IP/" 2>/dev/null || echo "FAIL")
+          DIRECT_BUNDLE=$(echo "$DIRECT_HTML" | grep -oE 'assets/index-[^"]+\.js' | head -1)
+          echo "DIRECT_FRONTEND_BUNDLE=$DIRECT_BUNDLE"
+
+          if [ -z "$DIRECT_BUNDLE" ]; then
+            echo "DIRECT_FRONTEND_BUNDLE_FAIL — no bundle found on Lightsail"
+            echo "DEPLOY_FAILED_DIRECT_BUNDLE"
+            exit 1
+          fi
+
+          # Verify public frontend serves valid HTML with retries for CDN propagation
+          for i in $(seq 1 20); do
+            PUBLIC_HTML=$(curl -fS https://air.adrianguerra.net/ 2>/dev/null || echo "FAIL")
+            if echo "$PUBLIC_HTML" | grep -q "root"; then
+              echo "PUBLIC_FRONTEND_OK"
+              break
+            fi
+            echo "Waiting for public frontend... attempt $i/20"
+            sleep 5
+          done
+          if ! echo "$PUBLIC_HTML" | grep -q "root"; then
+            echo "PUBLIC_FRONTEND_FAIL"
+            echo "DEPLOY_FAILED_PUBLIC_FRONTEND"
+            exit 1
+          fi
+
+          # Extract public bundle name with retries for CDN propagation
+          for i in $(seq 1 20); do
+            PUBLIC_BUNDLE=$(echo "$PUBLIC_HTML" | grep -oE 'assets/index-[^"]+\.js' | head -1)
+            if [ -n "$PUBLIC_BUNDLE" ]; then
+              echo "PUBLIC_FRONTEND_BUNDLE=$PUBLIC_BUNDLE"
+              break
+            fi
+            echo "Waiting for bundle to appear... attempt $i/20"
+            sleep 5
+            PUBLIC_HTML=$(curl -fS https://air.adrianguerra.net/ 2>/dev/null || echo "FAIL")
+          done
+          if [ -z "$PUBLIC_BUNDLE" ]; then
+            echo "PUBLIC_FRONTEND_BUNDLE_FAIL"
+            echo "DEPLOY_FAILED_PUBLIC_BUNDLE"
+            exit 1
+          fi
+
+          # Compare direct vs public bundles with retries for CDN propagation
+          for i in $(seq 1 20); do
+            if [ "$DIRECT_BUNDLE" = "$PUBLIC_BUNDLE" ]; then
+              echo "PUBLIC_FRONTEND_BUNDLE_OK"
+              break
+            fi
+            echo "CDN cache stale — waiting... attempt $i/20 (direct=$DIRECT_BUNDLE public=$PUBLIC_BUNDLE)"
+            sleep 10
+            PUBLIC_HTML=$(curl -fS https://air.adrianguerra.net/ 2>/dev/null || echo "FAIL")
+            PUBLIC_BUNDLE=$(echo "$PUBLIC_HTML" | grep -oE 'assets/index-[^"]+\.js' | head -1)
+            echo "PUBLIC_FRONTEND_BUNDLE=$PUBLIC_BUNDLE"
+          done
+
+          if [ "$DIRECT_BUNDLE" != "$PUBLIC_BUNDLE" ]; then
+            echo "PUBLIC_FRONTEND_BUNDLE_STALE"
+            echo "DEPLOY_FAILED_PUBLIC_CACHE_MISMATCH"
+            exit 1
+          fi
+
+      - name: Promote backend SHA to latest
         env:
           ECR_REGISTRY: ${{ steps.ecr-login.outputs.registry }}
         run: |
@@ -359,4 +570,15 @@ jobs:
             "$ECR_REGISTRY/$ECR_BACKEND_REPO:latest"
           docker push "$ECR_REGISTRY/$ECR_BACKEND_REPO:latest"
           echo "BACKEND_LATEST_PROMOTED"
+
+      - name: Promote frontend SHA to latest
+        env:
+          ECR_REGISTRY: ${{ steps.ecr-login.outputs.registry }}
+        run: |
+          docker pull "$ECR_REGISTRY/$ECR_FRONTEND_REPO:${{ github.sha }}"
+          docker tag \
+            "$ECR_REGISTRY/$ECR_FRONTEND_REPO:${{ github.sha }}" \
+            "$ECR_REGISTRY/$ECR_FRONTEND_REPO:latest"
+          docker push "$ECR_REGISTRY/$ECR_FRONTEND_REPO:latest"
+          echo "FRONTEND_LATEST_PROMOTED"
           echo "DEPLOYMENT_OK"
