@@ -114,6 +114,34 @@ describe("Candidates evaluation", () => {
     ).not.toBeInTheDocument();
   });
 
+  it("shows public error message and hides score on FAILED evaluation", async () => {
+    api.post.mockResolvedValueOnce({
+      data: {
+        status: "FAILED",
+        match_score: null,
+        recommendation: "EVALUATION_FAILED",
+        summary: "No fue posible completar la evaluación. Intenta nuevamente.",
+        strengths: [],
+        gaps: [],
+        error_message: "No fue posible completar la evaluación. Intenta nuevamente.",
+      },
+    });
+
+    renderCandidates();
+    await screen.findByText("Ana Test");
+    fireEvent.change(screen.getByRole("combobox"), { target: { value: "job-1" } });
+    fireEvent.click(screen.getByRole("button", { name: "Evaluar candidato" }));
+
+    await waitFor(() => {
+      expect(screen.getByText("Evaluación fallida")).toBeInTheDocument();
+    });
+
+    expect(screen.getByText("No fue posible completar la evaluación. Intenta nuevamente.")).toBeInTheDocument();
+    expect(screen.queryByText("Sin clasificación")).not.toBeInTheDocument();
+    expect(screen.queryByText("0%")).not.toBeInTheDocument();
+    expect(screen.queryByText("score-bar", { selector: ".score-bar" })).not.toBeInTheDocument();
+  });
+
   it("supports PARTIAL_MATCH on successful evaluation", async () => {
     api.post.mockResolvedValueOnce({
       data: {
