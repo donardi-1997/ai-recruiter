@@ -332,17 +332,34 @@ def evaluate_candidate_for_job(
             job_description=job.description or job.title,
             results=results,
         )
-        evaluation = crud.create_evaluation(
-            db,
-            candidate_id=candidate_id,
-            job_id=body.job_id,
-            match_score=llm_result.get("match_score", 0),
-            recommendation=llm_result.get("recommendation", "LOW_MATCH"),
-            summary=llm_result.get("summary", ""),
-            strengths=llm_result.get("strengths", []),
-            gaps=llm_result.get("gaps", []),
-            status="COMPLETED",
-        )
+
+        # Check if evaluation actually succeeded
+        eval_status = llm_result.get("status", "COMPLETED")
+        if eval_status == "FAILED":
+            evaluation = crud.create_evaluation(
+                db,
+                candidate_id=candidate_id,
+                job_id=body.job_id,
+                match_score=0,
+                recommendation=llm_result.get("recommendation", "EVALUATION_FAILED"),
+                summary=llm_result.get("summary", ""),
+                strengths=[],
+                gaps=[],
+                status="FAILED",
+                error_message=llm_result.get("error_message", "EVALUATION_FAILED"),
+            )
+        else:
+            evaluation = crud.create_evaluation(
+                db,
+                candidate_id=candidate_id,
+                job_id=body.job_id,
+                match_score=llm_result.get("match_score", 0),
+                recommendation=llm_result.get("recommendation", "LOW_MATCH"),
+                summary=llm_result.get("summary", ""),
+                strengths=llm_result.get("strengths", []),
+                gaps=llm_result.get("gaps", []),
+                status="COMPLETED",
+            )
     except Exception as exc:
         logger.error("LLM evaluation failed for candidate %s: %s", candidate_id, exc, exc_info=True)
         evaluation = crud.create_evaluation(
@@ -552,6 +569,8 @@ def recalculate_ranking(
             needs_evaluation = (
                 evaluation is None
                 or effective_mode == "full"
+                or evaluation.status == "FAILED"
+                or evaluation.recommendation == "EVALUATION_FAILED"
             )
 
             if needs_evaluation:
@@ -565,18 +584,40 @@ def recalculate_ranking(
                         job_description=job.description or job.title,
                         results=results,
                     )
-                    evaluation = crud.create_evaluation(
-                        db,
-                        candidate_id=candidate.id,
-                        job_id=job_id,
-                        match_score=llm_result.get("match_score", 0),
-                        recommendation=llm_result.get("recommendation", "LOW_MATCH"),
-                        summary=llm_result.get("summary", ""),
-                        strengths=llm_result.get("strengths", []),
-                        gaps=llm_result.get("gaps", []),
-                        status="COMPLETED",
-                    )
-                    evaluated_count += 1
+
+                    # Check if evaluation actually succeeded
+                    eval_status = llm_result.get("status", "COMPLETED")
+                    if eval_status == "FAILED":
+                        evaluation = crud.create_evaluation(
+                            db,
+                            candidate_id=candidate.id,
+                            job_id=job_id,
+                            match_score=0,
+                            recommendation=llm_result.get("recommendation", "EVALUATION_FAILED"),
+                            summary=llm_result.get("summary", ""),
+                            strengths=[],
+                            gaps=[],
+                            status="FAILED",
+                            error_message=llm_result.get("error_message", "EVALUATION_FAILED"),
+                        )
+                        failed_count += 1
+                        failures.append({
+                            "candidate_id": candidate.id,
+                            "error": llm_result.get("error_message", "EVALUATION_FAILED"),
+                        })
+                    else:
+                        evaluation = crud.create_evaluation(
+                            db,
+                            candidate_id=candidate.id,
+                            job_id=job_id,
+                            match_score=llm_result.get("match_score", 0),
+                            recommendation=llm_result.get("recommendation", "LOW_MATCH"),
+                            summary=llm_result.get("summary", ""),
+                            strengths=llm_result.get("strengths", []),
+                            gaps=llm_result.get("gaps", []),
+                            status="COMPLETED",
+                        )
+                        evaluated_count += 1
                 except Exception as exc:
                     logger.error("Evaluation failed for candidate %s: %s", candidate.id, exc, exc_info=True)
                     failed_count += 1

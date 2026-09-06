@@ -20,13 +20,33 @@ logger = logging.getLogger(__name__)
 
 AWS_REGION = os.getenv("AWS_REGION", "us-east-2")
 KNOWLEDGE_BASE_ID = os.getenv("KNOWLEDGE_BASE_ID", "VUGNMJQAEN")
+BEDROCK_AWS_PROFILE = os.getenv("BEDROCK_AWS_PROFILE")
 NUMBER_OF_RESULTS = 50
 
 # ============================================================
-# AWS CLIENTS
+# AWS SESSION (uses IAM Roles Anywhere profile for Bedrock)
 # ============================================================
 
-bedrock_agent_runtime = boto3.client(
+def _get_bedrock_session():
+    """Create a boto3 session for Bedrock.
+
+    If BEDROCK_AWS_PROFILE is set, use that profile (IAM Roles Anywhere).
+    If not set, use the default credential chain.
+    """
+    if BEDROCK_AWS_PROFILE:
+        logger.info(
+            "Using configured Bedrock AWS profile: %s",
+            BEDROCK_AWS_PROFILE,
+        )
+        return boto3.Session(profile_name=BEDROCK_AWS_PROFILE)
+
+    logger.info("Using default AWS credential chain")
+    return boto3.Session()
+
+
+_bedrock_session = _get_bedrock_session()
+
+bedrock_agent_runtime = _bedrock_session.client(
     "bedrock-agent-runtime",
     region_name=AWS_REGION,
 )
@@ -36,6 +56,7 @@ bedrock_agent_runtime = boto3.client(
 # ============================================================
 
 llm = ChatBedrock(
+    client=_bedrock_session.client("bedrock-runtime", region_name=AWS_REGION),
     model_id="amazon.nova-lite-v1:0",
     region_name=AWS_REGION,
     model_kwargs={"temperature": 0},
@@ -145,18 +166,20 @@ def evaluate_candidate(
     Returns a dict with: match_score, recommendation, requirements,
     strengths, gaps, summary.
     """
-    # No results -> return default low score
+    # No results -> candidate context not found in KB
     if not results:
         return {
             "match_score": 0,
-            "recommendation": "LOW_MATCH",
+            "recommendation": "EVALUATION_FAILED",
             "requirements": [],
             "strengths": [],
-            "gaps": ["No se encontró información relevante en el CV."],
+            "gaps": [],
             "summary": (
                 "No fue posible evaluar al candidato porque "
-                "no se encontró información relevante en su CV."
+                "no se encontró información relevante en el Knowledge Base."
             ),
+            "status": "FAILED",
+            "error_message": "CANDIDATE_CONTEXT_NOT_FOUND",
         }
 
     # Build CV context from retrieval results
