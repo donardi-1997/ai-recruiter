@@ -13,6 +13,7 @@ from fastapi import Depends, FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 
+from evaluation import evaluate_candidate, retrieve_candidate
 from pg_backend.crud import (
     acquire_job_lock,
     get_evaluation,
@@ -187,25 +188,25 @@ def recalculate_ranking(
                 failures += 1
                 continue
 
-            # NOTE: In production, call your LLM / Bedrock evaluator
-            # here.  For the scaffold we reuse any existing evaluation
-            # or create a placeholder.
             existing = get_evaluation(db, job_id, cid)
-            if existing:
-                # Already evaluated — skip or re-evaluate (full mode)
-                if mode == "incremental":
-                    evaluated += 1
-                    continue
-
-            # Placeholder scoring — replace with real LLM call
-            match_score    = existing.match_score if existing else 0
-            recommendation = existing.recommendation if existing else "PENDING"
-            requirements   = existing.requirements if existing else []
-            strengths      = existing.strengths if existing else []
-            gaps           = existing.gaps if existing else []
-            summary        = existing.summary if existing else ""
+            if existing and mode == "incremental":
+                evaluated += 1
+                continue
 
             try:
+                # Retrieve CV context from Bedrock Knowledge Base
+                results = retrieve_candidate(
+                    candidate_id=cid,
+                    question=job.description,
+                )
+
+                # Evaluate candidate against job description using LLM
+                evaluation = evaluate_candidate(
+                    candidate_id=cid,
+                    job_description=job.description,
+                    results=results,
+                )
+
                 upsert_evaluation(
                     db,
                     job_id,
@@ -214,12 +215,12 @@ def recalculate_ranking(
                     job_title=job.title,
                     job_description=job.description,
                     candidate_name=candidate.name,
-                    match_score=match_score,
-                    recommendation=recommendation,
-                    requirements=requirements,
-                    strengths=strengths,
-                    gaps=gaps,
-                    summary=summary,
+                    match_score=evaluation.get("match_score", 0),
+                    recommendation=evaluation.get("recommendation", "LOW_MATCH"),
+                    requirements=evaluation.get("requirements", []),
+                    strengths=evaluation.get("strengths", []),
+                    gaps=evaluation.get("gaps", []),
+                    summary=evaluation.get("summary", ""),
                 )
                 evaluated += 1
             except Exception as exc:

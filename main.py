@@ -1891,18 +1891,6 @@ DESCRIPCIÓN DE LA VACANTE:
         "summary": summary
     }
 
-    # ========================================================
-    # RESULTADO FINAL
-    # ========================================================
-    return {
-        "match_score": match_score,
-        "recommendation": recommendation,
-        "requirements": final_requirements,
-        "strengths": strengths,
-        "gaps": gaps,
-        "summary": summary
-    }
-
 # ============================================================
 # ENDPOINTS
 # ============================================================
@@ -3115,6 +3103,11 @@ def evaluate_candidate_endpoint(
                 status_code=404,
                 detail="Candidato no encontrado."
             )
+        if candidate.get("owner_id") != current_user["sub"]:
+            raise HTTPException(
+                status_code=403,
+                detail="No tienes permiso para evaluar este candidato."
+            )
         results = retrieve_candidate(
             candidate_id=candidate_id,
             question=request.job_description
@@ -4109,6 +4102,11 @@ def get_job_ranking(
 
                     "recommendation":
                         evaluation_recommendation,
+
+                    "status": evaluation.get(
+                        "status",
+                        "COMPLETED"
+                    ),
 
                     "strengths": strengths,
 

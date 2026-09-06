@@ -416,11 +416,7 @@ def get_ranking_for_job(
     # 1. Metadata
     meta = get_ranking_metadata(db, job_id)
 
-    # 2. All assigned candidates for this job
-    assigned_ids = get_job_candidate_ids(db, job_id, owner_id="*")
-
-    # If owner_id="*" is not used, caller should pass real owner.
-    # Fallback: count via JobCandidate table directly.
+    # 2. Count all assigned candidates for this job (no owner filter)
     assigned_count = (
         db.query(func.count(JobCandidate.candidate_id))
         .filter(JobCandidate.job_id == job_id)
