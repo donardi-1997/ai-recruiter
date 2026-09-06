@@ -312,4 +312,273 @@ describe("Ranking page", () => {
     });
   });
 
+  // ============================================================
+  // EVALUAR CANDIDATOS TESTS
+  // ============================================================
+
+  it('shows "Evaluar candidatos" button and not "Evaluar ranking"', async () => {
+    renderRanking();
+
+    await waitFor(() => {
+      expect(
+        screen.getByRole("button", { name: "Evaluar candidatos" }),
+      ).toBeInTheDocument();
+    });
+
+    expect(
+      screen.queryByRole("button", { name: "Evaluar ranking" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("sends correct POST when clicking Evaluar candidatos", async () => {
+    api.post.mockResolvedValueOnce({
+      data: {
+        job_id: "job-1",
+        mode: "incremental",
+        scope: "assigned",
+        total_candidates: 2,
+        evaluated: 2,
+        failed: 0,
+      },
+    });
+
+    renderRanking();
+
+    await waitFor(() => {
+      expect(
+        screen.getByRole("button", { name: "Evaluar candidatos" }),
+      ).not.toBeDisabled();
+    });
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "Evaluar candidatos" }),
+    );
+
+    await waitFor(() => {
+      expect(api.post).toHaveBeenCalledWith(
+        "/jobs/job-1/ranking/recalculate",
+        null,
+        {
+          params: {
+            mode: "incremental",
+            scope: "assigned",
+          },
+        },
+      );
+    });
+  });
+
+  it("refreshes ranking page 1 after successful evaluation", async () => {
+    let rankingCalls = 0;
+
+    api.get.mockImplementation((url) => {
+      if (url === "/jobs") {
+        return Promise.resolve({
+          data: [{ job_id: "job-1", title: "Dev Python" }],
+        });
+      }
+      if (url.includes("/ranking")) {
+        rankingCalls += 1;
+        if (rankingCalls === 1) {
+          return Promise.resolve({
+            data: {
+              candidates: [],
+              ranking_generated_at: null,
+              ranking_version: null,
+              ranking_scope: "assigned",
+              ranking_total: 0,
+              total: 0,
+              total_pages: 0,
+              page: 1,
+              page_size: 10,
+              pending_candidates: 2,
+            },
+          });
+        }
+        return Promise.resolve({
+          data: {
+            candidates: [
+              {
+                candidate_id: "c1",
+                candidate_name: "Ana",
+                position: 1,
+                status: "COMPLETED",
+                match_score: 85,
+                recommendation: "GOOD_MATCH",
+                strengths: [],
+                gaps: [],
+              },
+            ],
+            ranking_generated_at: "2026-09-06T12:00:00Z",
+            ranking_version: 1,
+            ranking_scope: "assigned",
+            ranking_total: 1,
+            total: 1,
+            total_pages: 1,
+            page: 1,
+            page_size: 10,
+            pending_candidates: 0,
+            score_min: 85,
+            score_max: 85,
+          },
+        });
+      }
+      return Promise.resolve({ data: [] });
+    });
+
+    api.post.mockResolvedValueOnce({
+      data: { total_candidates: 1, evaluated: 1, failed: 0 },
+    });
+
+    renderRanking();
+
+    await waitFor(() => {
+      expect(
+        screen.getByRole("button", { name: "Evaluar candidatos" }),
+      ).not.toBeDisabled();
+    });
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "Evaluar candidatos" }),
+    );
+
+    await waitFor(() => {
+      expect(api.get.mock.calls.length).toBeGreaterThanOrEqual(3);
+    });
+
+    const lastRankingCall = api.get.mock.calls.find(
+      ([url]) => url === "/jobs/job-1/ranking",
+    );
+    expect(lastRankingCall[1].params.page).toBe(1);
+  });
+
+  it("shows loading text and disables button while evaluating", async () => {
+    let resolvePost;
+    api.post.mockImplementation(
+      () => new Promise((resolve) => { resolvePost = resolve; }),
+    );
+
+    api.get.mockImplementation((url) => {
+      if (url === "/jobs") {
+        return Promise.resolve({
+          data: [{ job_id: "job-1", title: "Dev Python" }],
+        });
+      }
+      if (url.includes("/ranking")) {
+        return Promise.resolve({
+          data: {
+            candidates: [],
+            ranking_generated_at: null,
+            ranking_version: null,
+            ranking_scope: "assigned",
+            ranking_total: 0,
+            total: 0,
+            total_pages: 0,
+            page: 1,
+            page_size: 10,
+            pending_candidates: 0,
+          },
+        });
+      }
+      return Promise.resolve({ data: [] });
+    });
+
+    renderRanking();
+
+    await waitFor(() => {
+      expect(
+        screen.getByRole("button", { name: "Evaluar candidatos" }),
+      ).not.toBeDisabled();
+    });
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "Evaluar candidatos" }),
+    );
+
+    await waitFor(() => {
+      expect(
+        screen.getByText("Evaluando candidatos..."),
+      ).toBeInTheDocument();
+    });
+
+    expect(
+      screen.getByRole("button", { name: "Evaluando candidatos..." }),
+    ).toBeDisabled();
+
+    resolvePost({ data: { total_candidates: 0, evaluated: 0, failed: 0 } });
+
+    await waitFor(() => {
+      expect(
+        screen.getByRole("button", { name: "Evaluar candidatos" }),
+      ).not.toBeDisabled();
+    });
+  });
+
+  it("uses dynamic rankingScope in POST", async () => {
+    api.get.mockImplementation((url) => {
+      if (url === "/jobs") {
+        return Promise.resolve({
+          data: [{ job_id: "job-1", title: "Dev Python" }],
+        });
+      }
+      if (url.includes("/ranking")) {
+        return Promise.resolve({
+          data: {
+            candidates: [],
+            ranking_generated_at: null,
+            ranking_version: null,
+            ranking_scope: "all",
+            ranking_total: 0,
+            total: 0,
+            total_pages: 0,
+            page: 1,
+            page_size: 10,
+            pending_candidates: 0,
+          },
+        });
+      }
+      return Promise.resolve({ data: [] });
+    });
+
+    api.post.mockResolvedValueOnce({
+      data: { total_candidates: 3, evaluated: 3, failed: 0 },
+    });
+
+    renderRanking();
+
+    await waitFor(() => {
+      expect(
+        screen.getByRole("button", { name: "Evaluar candidatos" }),
+      ).not.toBeDisabled();
+    });
+
+    fireEvent.change(
+      screen.getByDisplayValue("Solo esta vacante"),
+      { target: { value: "all" } },
+    );
+
+    await waitFor(() => {
+      expect(
+        screen.getByDisplayValue("Todos mis candidatos"),
+      ).toBeInTheDocument();
+    });
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "Evaluar candidatos" }),
+    );
+
+    await waitFor(() => {
+      expect(api.post).toHaveBeenCalledWith(
+        "/jobs/job-1/ranking/recalculate",
+        null,
+        {
+          params: {
+            mode: "incremental",
+            scope: "all",
+          },
+        },
+      );
+    });
+  });
+
 });

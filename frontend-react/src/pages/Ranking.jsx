@@ -39,6 +39,8 @@ function Ranking() {
 
   const [isRecalculating, setIsRecalculating] = useState(false);
 
+  const [isEvaluatingCandidates, setIsEvaluatingCandidates] = useState(false);
+
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(10);
   const [totalPages, setTotalPages] = useState(0);
@@ -304,18 +306,18 @@ function Ranking() {
   }
 
 
-  async function evaluateRanking() {
+  async function evaluateCandidates() {
     if (!selectedJob) {
       alert("Seleccione una vacante");
       return;
     }
 
-    if (isRecalculating) {
+    if (isEvaluatingCandidates) {
       return;
     }
 
     try {
-      setIsRecalculating(true);
+      setIsEvaluatingCandidates(true);
       setRankingMessage("");
 
       const response = await api.post(
@@ -347,16 +349,16 @@ function Ranking() {
       }
     } catch (error) {
       console.error(
-        "ERROR EVALUATING RANKING:",
+        "ERROR EVALUATING CANDIDATES:",
         error.response?.data || error,
       );
 
       alert(
         error.response?.data?.detail ||
-          "No fue posible evaluar el ranking",
+          "No fue posible evaluar los candidatos",
       );
     } finally {
-      setIsRecalculating(false);
+      setIsEvaluatingCandidates(false);
     }
   }
 
@@ -811,10 +813,11 @@ function Ranking() {
 
           <button
             className="btn btn-secondary"
-            onClick={evaluateRanking}
+            onClick={evaluateCandidates}
             disabled={
               !selectedJob ||
               loading ||
+              isEvaluatingCandidates ||
               isRecalculating
             }
             style={{
@@ -822,14 +825,15 @@ function Ranking() {
               cursor:
                 !selectedJob ||
                 loading ||
+                isEvaluatingCandidates ||
                 isRecalculating
                   ? "not-allowed"
                   : "pointer",
             }}
           >
-            {isRecalculating
-              ? "Evaluando..."
-              : "Evaluar ranking"}
+            {isEvaluatingCandidates
+              ? "Evaluando candidatos..."
+              : "Evaluar candidatos"}
           </button>
 
           {/* BUTTON */}
