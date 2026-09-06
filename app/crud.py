@@ -248,6 +248,22 @@ def create_evaluation(
     status: str = "COMPLETED",
     error_message: str | None = None,
 ) -> Evaluation:
+    # Upsert: update existing evaluation for this (candidate_id, job_id) pair
+    existing = get_evaluation_for_job_candidate(db, job_id, candidate_id)
+
+    if existing:
+        existing.status = status
+        existing.match_score = match_score
+        existing.recommendation = recommendation
+        existing.summary = summary
+        existing.strengths = strengths
+        existing.gaps = gaps
+        existing.error_message = error_message
+        existing.created_at = datetime.now(timezone.utc)
+        db.commit()
+        db.refresh(existing)
+        return existing
+
     evaluation = Evaluation(
         candidate_id=candidate_id,
         job_id=job_id,
