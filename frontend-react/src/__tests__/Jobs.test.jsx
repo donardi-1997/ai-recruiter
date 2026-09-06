@@ -57,7 +57,7 @@ describe("Jobs page", () => {
   it("each vacante has Ver, Agregar candidatos, Editar, Eliminar buttons", async () => {
     renderJobs();
     await screen.findByText("Backend Developer");
-    expect(screen.getByRole("button", { name: /ver/i })).toBeInTheDocument();
+    expect(screen.getAllByRole("button", { name: /^ver$/i })).toHaveLength(JOBS.length);
     expect(screen.getAllByText("Agregar candidatos").length).toBeGreaterThanOrEqual(1);
     expect(screen.getAllByText("Editar").length).toBeGreaterThanOrEqual(1);
     expect(screen.getAllByText("Eliminar").length).toBeGreaterThanOrEqual(1);
@@ -73,7 +73,7 @@ describe("Jobs page", () => {
       expect(screen.getByText("Información de la vacante")).toBeInTheDocument();
     });
     expect(screen.getByText("Descripción y requisitos")).toBeInTheDocument();
-    expect(screen.getByText("Python APIs REST")).toBeInTheDocument();
+    expect(screen.getByRole("dialog")).toHaveTextContent("Python APIs REST");
     expect(screen.getByText("Candidatos asignados")).toBeInTheDocument();
   });
 
@@ -231,9 +231,9 @@ describe("Jobs page", () => {
     await waitFor(() => {
       expect(screen.getByText("Eliminando…")).toBeInTheDocument();
     });
-    expect(screen.getByText("Borrar solo la vacante")).toBeDisabled();
-    expect(screen.getByText("Borrar vacante y candidatos")).toBeDisabled();
-    expect(screen.getByText("Cancelar")).toBeDisabled();
+    expect(screen.getByRole("button", { name: /^Borrar solo la vacante/i })).toBeDisabled();
+    expect(screen.getByRole("button", { name: /^Borrar vacante y candidatos/i })).toBeDisabled();
+    expect(screen.getByRole("button", { name: /^Cancelar$/i })).toBeDisabled();
 
     resolveDelete({ data: { detail: "Vacante eliminada." } });
   });
