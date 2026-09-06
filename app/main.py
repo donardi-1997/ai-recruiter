@@ -2,12 +2,12 @@
 
 import logging
 import os
-import uuid
 from typing import Any
 
 from fastapi import Depends, FastAPI, File, HTTPException, Query, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from app import crud
@@ -19,12 +19,6 @@ from app.deps import (
     get_current_user,
     get_db,
     release_job_lock,
-)
-from app.schemas import (
-    CandidateResponse,
-    JobResponse,
-    RankingResponse,
-    RecalculateResponse,
 )
 
 logger = logging.getLogger(__name__)
@@ -64,7 +58,6 @@ async def global_exception_handler(request: Request, exc: Exception):
 
 @app.on_event("startup")
 def on_startup() -> None:
-    import os
     db_url = os.getenv("DATABASE_URL", "")
     if "sqlite" in db_url or not db_url:
         logger.info("Skipping table creation (non-PostgreSQL URL).")
@@ -73,6 +66,10 @@ def on_startup() -> None:
     Base.metadata.create_all(bind=get_engine())
     logger.info("Tables ready.")
 
+
+# ============================================================
+# HELPERS
+# ============================================================
 
 def _require_job(db: Session, job_id: str):
     job = crud.get_job(db, job_id)
@@ -89,37 +86,135 @@ def _require_candidate(db: Session, candidate_id: str):
 
 
 # ============================================================
+# REQUEST SCHEMAS
+# ============================================================
+
+class CreateJobRequest(BaseModel):
+    title: str
+    description: str | None = None
+
+
+class UpdateJobRequest(BaseModel):
+    title: str | None = None
+    description: str | None = None
+
+
+class AssignCandidatesRequest(BaseModel):
+    candidate_ids: list[str]
+
+
+class EvaluateRequest(BaseModel):
+    job_id: str
+
+
+# ============================================================
 # JOBS
 # ============================================================
 
-@app.get("/api/jobs", response_model=list[JobResponse])
+@app.get("/api/jobs")
 def list_jobs(
     db: Session = Depends(get_db),
     _user: dict = Depends(get_current_user),
 ):
-    return crud.list_jobs(db)
+    jobs = crud.list_jobs(db)
+    return [
+        {
+            "job_id": j.id,
+            "id": j.id,
+            "title": j.title,
+            "description": j.description,
+            "created_at": j.created_at.isoformat() if j.created_at else None,
+            "candidate_count": crud.count_candidates_for_job(db, j.id),
+        }
+        for j in jobs
+    ]
 
 
-@app.post("/api/jobs", response_model=JobResponse, status_code=201)
+@app.post("/api/jobs", status_code=201)
 def create_job(
-    title: str = Query(...),
-    description: str | None = Query(None),
+    body: CreateJobRequest,
     db: Session = Depends(get_db),
     _user: dict = Depends(get_current_user),
 ):
-    return crud.create_job(db, title=title, description=description)
+    job = crud.create_job(db, title=body.title, description=body.description)
+    return {
+        "job_id": job.id,
+        "id": job.id,
+        "title": job.title,
+        "description": job.description,
+        "created_at": job.created_at.isoformat() if job.created_at else None,
+    }
+
+
+@app.put("/api/jobs/{job_id}")
+def update_job(
+    job_id: str,
+    body: UpdateJobRequest,
+    db: Session = Depends(get_db),
+    _user: dict = Depends(get_current_user),
+):
+    job = _require_job(db, job_id)
+    updated = crud.update_job(db, job, title=body.title, description=body.description)
+    return {
+        "job_id": updated.id,
+        "id": updated.id,
+        "title": updated.title,
+        "description": updated.description,
+        "created_at": updated.created_at.isoformat() if updated.created_at else None,
+    }
+
+
+@app.delete("/api/jobs/{job_id}")
+def delete_job(
+    job_id: str,
+    db: Session = Depends(get_db),
+    _user: dict = Depends(get_current_user),
+):
+    _require_job(db, job_id)
+    crud.delete_job(db, job_id)
+    return {"detail": "Vacante eliminada."}
 
 
 # ============================================================
 # CANDIDATES
 # ============================================================
 
-@app.get("/api/candidates", response_model=list[CandidateResponse])
+@app.get("/api/candidates")
 def list_candidates(
     db: Session = Depends(get_db),
     _user: dict = Depends(get_current_user),
 ):
-    return crud.list_candidates(db)
+    candidates = crud.list_candidates(db)
+    return [
+        {
+            "candidate_id": c.id,
+            "id": c.id,
+            "name": c.name,
+            "email": c.email,
+            "created_at": c.created_at.isoformat() if c.created_at else None,
+            "metadata": c.metadata_,
+            "filename": c.metadata_.get("filename") if c.metadata_ else None,
+        }
+        for c in candidates
+    ]
+
+
+@app.get("/api/candidates/{candidate_id}")
+def get_candidate(
+    candidate_id: str,
+    db: Session = Depends(get_db),
+    _user: dict = Depends(get_current_user),
+):
+    c = _require_candidate(db, candidate_id)
+    return {
+        "candidate_id": c.id,
+        "id": c.id,
+        "name": c.name,
+        "email": c.email,
+        "created_at": c.created_at.isoformat() if c.created_at else None,
+        "metadata": c.metadata_,
+        "filename": c.metadata_.get("filename") if c.metadata_ else None,
+    }
 
 
 @app.post("/api/candidates/bulk")
@@ -133,7 +228,8 @@ async def upload_candidates_bulk(
     for f in files:
         try:
             name = os.path.splitext(f.filename or "Unknown")[0]
-            candidate = crud.create_candidate(db, name=name)
+            metadata = {"filename": f.filename}
+            candidate = crud.create_candidate(db, name=name, metadata=metadata)
             results.append({
                 "candidate_id": candidate.id,
                 "name": candidate.name,
@@ -171,7 +267,7 @@ def delete_candidate(
     db: Session = Depends(get_db),
     _user: dict = Depends(get_current_user),
 ):
-    candidate = _require_candidate(db, candidate_id)
+    _require_candidate(db, candidate_id)
     try:
         crud.delete_candidate(db, candidate_id)
         return {"detail": "Candidato eliminado."}
@@ -186,27 +282,51 @@ def download_candidate_cv(
     db: Session = Depends(get_db),
     _user: dict = Depends(get_current_user),
 ):
-    candidate = _require_candidate(db, candidate_id)
+    _require_candidate(db, candidate_id)
     return {"download_url": None, "detail": "CV storage not configured."}
+
+
+@app.get("/api/candidates/{candidate_id}/evaluations")
+def get_candidate_evaluations(
+    candidate_id: str,
+    db: Session = Depends(get_db),
+    _user: dict = Depends(get_current_user),
+):
+    _require_candidate(db, candidate_id)
+    evaluations = crud.get_evaluations_for_candidate(db, candidate_id)
+    return {
+        "evaluations": [
+            {
+                "evaluation_id": e.id,
+                "job_id": e.job_id,
+                "match_score": e.match_score,
+                "recommendation": e.recommendation,
+                "summary": e.summary,
+                "strengths": e.strengths or [],
+                "gaps": e.gaps or [],
+            }
+            for e in evaluations
+        ]
+    }
 
 
 @app.post("/api/candidates/{candidate_id}/evaluate-job")
 def evaluate_candidate_for_job(
     candidate_id: str,
-    job_id: str = Query(...),
+    body: EvaluateRequest,
     db: Session = Depends(get_db),
     _user: dict = Depends(get_current_user),
 ):
-    candidate = _require_candidate(db, candidate_id)
-    job = _require_job(db, job_id)
+    _require_candidate(db, candidate_id)
+    _require_job(db, body.job_id)
 
     evaluation = crud.create_evaluation(
         db,
         candidate_id=candidate_id,
-        job_id=job_id,
+        job_id=body.job_id,
         match_score=0.0,
         recommendation="LOW_MATCH",
-        summary="Evaluación pendiente de implementar.",
+        summary="Evaluacion pendiente de implementar.",
         strengths=[],
         gaps=[],
     )
@@ -214,12 +334,12 @@ def evaluate_candidate_for_job(
     return {
         "evaluation_id": evaluation.id,
         "candidate_id": candidate_id,
-        "job_id": job_id,
+        "job_id": body.job_id,
         "match_score": evaluation.match_score,
         "recommendation": evaluation.recommendation,
         "summary": evaluation.summary,
-        "strengths": evaluation.strengths,
-        "gaps": evaluation.gaps,
+        "strengths": evaluation.strengths or [],
+        "gaps": evaluation.gaps or [],
     }
 
 
@@ -230,22 +350,18 @@ def evaluate_candidate_for_job(
 @app.post("/api/jobs/{job_id}/candidates")
 def assign_candidates_to_job(
     job_id: str,
-    body: dict,
+    body: AssignCandidatesRequest,
     db: Session = Depends(get_db),
     _user: dict = Depends(get_current_user),
 ):
     _require_job(db, job_id)
-    candidate_ids = body.get("candidate_ids", [])
-    if not candidate_ids:
+    if not body.candidate_ids:
         raise HTTPException(status_code=400, detail="candidate_ids requerido.")
-    assigned, skipped = crud.assign_candidates_to_job(db, job_id, candidate_ids)
+    assigned, skipped = crud.assign_candidates_to_job(db, job_id, body.candidate_ids)
     return {"assigned": assigned, "skipped": skipped}
 
 
-@app.get(
-    "/api/jobs/{job_id}/candidates",
-    response_model=list[CandidateResponse],
-)
+@app.get("/api/jobs/{job_id}/candidates")
 def get_job_candidates(
     job_id: str,
     page: int = Query(1, ge=1),
@@ -254,49 +370,106 @@ def get_job_candidates(
     _user: dict = Depends(get_current_user),
 ):
     _require_job(db, job_id)
-    items, _total = crud.list_candidates_for_job(
+    items, total = crud.list_candidates_for_job(
         db, job_id, page=page, page_size=page_size,
     )
     return [
-        CandidateResponse(
-            id=c.id,
-            name=c.name,
-            email=c.email,
-            created_at=c.created_at,
-            metadata=c.metadata_,
-        )
+        {
+            "candidate_id": c.id,
+            "id": c.id,
+            "name": c.name,
+            "email": c.email,
+            "created_at": c.created_at.isoformat() if c.created_at else None,
+            "metadata": c.metadata_,
+            "filename": c.metadata_.get("filename") if c.metadata_ else None,
+        }
         for c in items
     ]
+
+
+@app.get("/api/jobs/{job_id}/candidates/{candidate_id}")
+def get_job_candidate_detail(
+    job_id: str,
+    candidate_id: str,
+    db: Session = Depends(get_db),
+    _user: dict = Depends(get_current_user),
+):
+    _require_job(db, job_id)
+    _require_candidate(db, candidate_id)
+    evaluation = crud.get_evaluation_for_job_candidate(db, job_id, candidate_id)
+    if not evaluation:
+        raise HTTPException(status_code=404, detail="Evaluacion no encontrada.")
+    return {
+        "evaluation_id": evaluation.id,
+        "candidate_id": evaluation.candidate_id,
+        "job_id": evaluation.job_id,
+        "match_score": evaluation.match_score,
+        "recommendation": evaluation.recommendation,
+        "summary": evaluation.summary,
+        "strengths": evaluation.strengths or [],
+        "gaps": evaluation.gaps or [],
+    }
+
+
+@app.get("/api/jobs/{job_id}/candidates/{candidate_id}/explanation")
+def get_candidate_explanation(
+    job_id: str,
+    candidate_id: str,
+    db: Session = Depends(get_db),
+    _user: dict = Depends(get_current_user),
+):
+    _require_job(db, job_id)
+    _require_candidate(db, candidate_id)
+    evaluation = crud.get_evaluation_for_job_candidate(db, job_id, candidate_id)
+    return {
+        "explanation": evaluation.summary if evaluation else "Sin evaluacion.",
+        "summary": evaluation.summary if evaluation else None,
+        "analysis": None,
+    }
+
+
+@app.get("/api/jobs/{job_id}/candidates/{candidate_id}/requirements")
+def get_candidate_requirements(
+    job_id: str,
+    candidate_id: str,
+    db: Session = Depends(get_db),
+    _user: dict = Depends(get_current_user),
+):
+    _require_job(db, job_id)
+    _require_candidate(db, candidate_id)
+    evaluation = crud.get_evaluation_for_job_candidate(db, job_id, candidate_id)
+    requirements = []
+    if evaluation and evaluation.strengths:
+        for s in evaluation.strengths:
+            requirements.append({"requirement": s, "status": "MATCH", "evidence": None})
+    if evaluation and evaluation.gaps:
+        for g in evaluation.gaps:
+            requirements.append({"requirement": g, "status": "MISSING", "evidence": None})
+    return {"requirements": requirements}
 
 
 # ============================================================
 # RANKING
 # ============================================================
 
-@app.get(
-    "/api/jobs/{job_id}/ranking",
-    response_model=RankingResponse,
-)
+@app.get("/api/jobs/{job_id}/ranking")
 def get_job_ranking(
     job_id: str,
     min_score: float = Query(0, ge=0, le=100),
     max_score: float = Query(100, ge=0, le=100),
     page: int = Query(1, ge=1),
     page_size: int = Query(10, ge=1, le=100),
+    scope: str = Query("assigned"),
+    recommendation: str | None = Query(None),
     db: Session = Depends(get_db),
     _user: dict = Depends(get_current_user),
 ):
     _require_job(db, job_id)
 
     if min_score > max_score:
-        raise HTTPException(
-            status_code=400,
-            detail="min_score no puede ser mayor que max_score.",
-        )
+        raise HTTPException(status_code=400, detail="min_score no puede ser mayor que max_score.")
 
-    result = crud.build_ranking_response(
-        db, job_id, page=page, page_size=page_size,
-    )
+    result = crud.build_ranking_response(db, job_id, page=page, page_size=page_size)
 
     candidates = result["candidates"]
     if min_score > 0:
@@ -306,35 +479,24 @@ def get_job_ranking(
 
     result["candidates"] = candidates
     result["total"] = len(candidates)
-    result["total_pages"] = (
-        (len(candidates) + page_size - 1) // page_size
-        if candidates else 0
-    )
+    result["total_pages"] = (len(candidates) + page_size - 1) // page_size if candidates else 0
 
     return result
 
 
-@app.post(
-    "/api/jobs/{job_id}/ranking/recalculate",
-    response_model=RecalculateResponse,
-)
+@app.post("/api/jobs/{job_id}/ranking/recalculate")
 def recalculate_ranking(
     job_id: str,
-    mode: str = Query(
-        "full",
-        pattern=r"^(full|incremental)$",
-    ),
+    mode: str = Query("full", pattern=r"^(full|incremental)$"),
+    scope: str = Query("assigned"),
     db: Session = Depends(get_db),
     _user: dict = Depends(get_current_user),
 ):
-    job = _require_job(db, job_id)
+    _require_job(db, job_id)
 
     acquired = acquire_job_lock(db, job_id)
     if not acquired:
-        raise HTTPException(
-            status_code=409,
-            detail="Otro proceso está recalculando el ranking.",
-        )
+        raise HTTPException(status_code=409, detail="Otro proceso esta recalculando el ranking.")
 
     try:
         meta = crud.get_ranking_metadata(db, job_id)
@@ -347,16 +509,12 @@ def recalculate_ranking(
 
         candidate_ids: list[str] = []
 
-        ranking = crud.upsert_ranking_metadata(
-            db, job_id, new_version, mode=effective_mode,
-        )
+        ranking = crud.upsert_ranking_metadata(db, job_id, new_version, mode=effective_mode)
 
         all_items: list[dict] = []
 
         if all_items:
-            crud.insert_ranking_items(
-                db, ranking_id=ranking.id, items=all_items,
-            )
+            crud.insert_ranking_items(db, ranking_id=ranking.id, items=all_items)
 
         return {
             "job_id": job_id,
@@ -366,15 +524,11 @@ def recalculate_ranking(
             "failed": 0,
             "ranking_version": new_version,
         }
-
     finally:
         release_job_lock(db, job_id)
 
 
-@app.get(
-    "/api/jobs/{job_id}/ranking/latest",
-    response_model=RankingResponse,
-)
+@app.get("/api/jobs/{job_id}/ranking/latest")
 def get_latest_ranking(
     job_id: str,
     db: Session = Depends(get_db),
@@ -384,21 +538,14 @@ def get_latest_ranking(
 
     meta = crud.get_ranking_metadata(db, job_id)
     if not meta or meta.ranking_version == 0:
-        raise HTTPException(
-            status_code=404,
-            detail="No existe ranking para esta vacante.",
-        )
+        raise HTTPException(status_code=404, detail="No existe ranking para esta vacante.")
 
     items = crud.get_ranking_items(db, meta.id)
 
     return {
         "job_id": job_id,
         "job_title": crud.get_job(db, job_id).title,
-        "ranking_generated_at": (
-            meta.generated_at.isoformat()
-            if meta.generated_at
-            else None
-        ),
+        "ranking_generated_at": meta.generated_at.isoformat() if meta.generated_at else None,
         "ranking_version": meta.ranking_version,
         "total": len(items),
         "total_pages": 1,
@@ -411,6 +558,8 @@ def get_latest_ranking(
                 "candidate_id": item.candidate_id,
                 "score": item.score,
                 "candidate_name": item.candidate.name if item.candidate else "",
+                "recommendation": "",
+                "status": "COMPLETED",
             }
             for item in items
         ],

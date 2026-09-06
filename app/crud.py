@@ -32,6 +32,29 @@ def create_job(db: Session, *, title: str, description: str | None = None) -> Jo
     return job
 
 
+def update_job(db: Session, job: Job, *, title: str | None = None, description: str | None = None) -> Job:
+    if title is not None:
+        job.title = title
+    if description is not None:
+        job.description = description
+    db.commit()
+    db.refresh(job)
+    return job
+
+
+def delete_job(db: Session, job_id: str) -> bool:
+    job = get_job(db, job_id)
+    if not job:
+        return False
+    db.delete(job)
+    db.commit()
+    return True
+
+
+def count_candidates_for_job(db: Session, job_id: str) -> int:
+    return db.query(JobCandidate).filter(JobCandidate.job_id == job_id).count()
+
+
 # ============================================================
 # CANDIDATES
 # ============================================================
@@ -81,7 +104,6 @@ def list_candidates_for_job(
     page: int = 1,
     page_size: int = 10,
 ) -> tuple[list[Candidate], int]:
-    """List candidates assigned to a given job."""
     query = (
         db.query(Candidate)
         .join(JobCandidate, JobCandidate.candidate_id == Candidate.id)
@@ -147,6 +169,19 @@ def create_evaluation(
     db.commit()
     db.refresh(evaluation)
     return evaluation
+
+
+def get_evaluations_for_candidate(db: Session, candidate_id: str) -> list[Evaluation]:
+    return db.query(Evaluation).filter(Evaluation.candidate_id == candidate_id).order_by(Evaluation.created_at.desc()).all()
+
+
+def get_evaluation_for_job_candidate(db: Session, job_id: str, candidate_id: str) -> Evaluation | None:
+    return (
+        db.query(Evaluation)
+        .filter(Evaluation.job_id == job_id, Evaluation.candidate_id == candidate_id)
+        .order_by(Evaluation.created_at.desc())
+        .first()
+    )
 
 
 # ============================================================
@@ -254,6 +289,8 @@ def build_ranking_response(
                 "candidate_id": item.candidate_id,
                 "score": item.score,
                 "candidate_name": item.candidate.name if item.candidate else "",
+                "recommendation": "",
+                "status": "COMPLETED",
             }
             for item in items
         ]
