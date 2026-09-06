@@ -26,6 +26,7 @@ function renderRanking() {
 describe("Ranking page", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.stubGlobal("alert", vi.fn());
     // Mock loadJobs
     api.get.mockImplementation((url) => {
       if (url === "/jobs") {
@@ -188,14 +189,20 @@ describe("Ranking page", () => {
 
     renderRanking();
 
+    const viewRankingButton =
+      screen.getByRole(
+        "button",
+        { name: "Ver ranking" },
+      );
+
     await waitFor(() => {
       expect(
-        screen.getByText("Ver ranking"),
-      ).toBeInTheDocument();
+        viewRankingButton,
+      ).not.toBeDisabled();
     });
 
     fireEvent.click(
-      screen.getByText("Ver ranking"),
+      viewRankingButton,
     );
 
     await waitFor(() => {
@@ -212,9 +219,8 @@ describe("Ranking page", () => {
     });
 
     await waitFor(() => {
-      expect(
-        screen.getByText("85%"),
-      ).toBeInTheDocument();
+      const scores = screen.getAllByText("85%");
+      expect(scores.length).toBeGreaterThan(0);
     });
   });
 

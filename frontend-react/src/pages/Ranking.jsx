@@ -304,6 +304,63 @@ function Ranking() {
   }
 
 
+  async function evaluateRanking() {
+    if (!selectedJob) {
+      alert("Seleccione una vacante");
+      return;
+    }
+
+    if (isRecalculating) {
+      return;
+    }
+
+    try {
+      setIsRecalculating(true);
+      setRankingMessage("");
+
+      const response = await api.post(
+        `/jobs/${selectedJob}/ranking/recalculate`,
+        null,
+        {
+          params: {
+            mode: "incremental",
+            scope: rankingScope,
+          },
+        },
+      );
+
+      const result = response.data;
+
+      setPage(1);
+
+      await loadRanking(
+        1,
+        pageSize,
+      );
+
+      if (result.total_candidates === 0) {
+        setRankingMessage(
+          rankingScope === "assigned"
+            ? "No hay candidatos asignados a esta vacante."
+            : "No hay candidatos disponibles para evaluar.",
+        );
+      }
+    } catch (error) {
+      console.error(
+        "ERROR EVALUATING RANKING:",
+        error.response?.data || error,
+      );
+
+      alert(
+        error.response?.data?.detail ||
+          "No fue posible evaluar el ranking",
+      );
+    } finally {
+      setIsRecalculating(false);
+    }
+  }
+
+
   async function recalculateRanking(mode) {
     if (!selectedJob) {
       alert("Seleccione una vacante");
@@ -752,6 +809,29 @@ function Ranking() {
             Aplicar filtros
           </button>
 
+          <button
+            className="btn btn-secondary"
+            onClick={evaluateRanking}
+            disabled={
+              !selectedJob ||
+              loading ||
+              isRecalculating
+            }
+            style={{
+              padding: "10px 18px",
+              cursor:
+                !selectedJob ||
+                loading ||
+                isRecalculating
+                  ? "not-allowed"
+                  : "pointer",
+            }}
+          >
+            {isRecalculating
+              ? "Evaluando..."
+              : "Evaluar ranking"}
+          </button>
+
           {/* BUTTON */}
 
           <button
@@ -761,10 +841,19 @@ function Ranking() {
                 ? () => setShowModeModal(true)
                 : viewRanking
             }
-            disabled={loading || isRecalculating}
+            disabled={
+              !selectedJob ||
+              loading ||
+              isRecalculating
+            }
             style={{
               padding: "10px 18px",
-              cursor: loading || isRecalculating ? "not-allowed" : "pointer",
+              cursor:
+                !selectedJob ||
+                loading ||
+                isRecalculating
+                  ? "not-allowed"
+                  : "pointer",
             }}
           >
             {loading
