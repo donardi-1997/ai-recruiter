@@ -105,11 +105,13 @@ class Evaluation(Base):
         ForeignKey("jobs.id", ondelete="CASCADE"),
         nullable=False,
     )
+    status = Column(Text, nullable=False, default="COMPLETED")
     match_score = Column(Float, nullable=False, default=0.0)
     recommendation = Column(Text, nullable=True)
     summary = Column(Text, nullable=True)
     strengths = Column(JSON, nullable=True, default=list)
     gaps = Column(JSON, nullable=True, default=list)
+    error_message = Column(Text, nullable=True)
     created_at = Column(
         DateTime(timezone=True),
         nullable=False,

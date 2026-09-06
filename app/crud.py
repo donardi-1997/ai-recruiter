@@ -170,15 +170,19 @@ def create_evaluation(
     summary: str,
     strengths: list[str],
     gaps: list[str],
+    status: str = "COMPLETED",
+    error_message: str | None = None,
 ) -> Evaluation:
     evaluation = Evaluation(
         candidate_id=candidate_id,
         job_id=job_id,
+        status=status,
         match_score=match_score,
         recommendation=recommendation,
         summary=summary,
         strengths=strengths,
         gaps=gaps,
+        error_message=error_message,
     )
     db.add(evaluation)
     db.commit()
@@ -311,9 +315,10 @@ def build_ranking_response(
                 "match_score": evaluation.match_score if evaluation else item.score,
                 "candidate_name": item.candidate.name if item.candidate else "",
                 "recommendation": evaluation.recommendation if evaluation else "PENDING",
-                "status": "COMPLETED",
+                "status": evaluation.status if evaluation else "PENDING",
                 "strengths": evaluation.strengths if evaluation and evaluation.strengths else [],
                 "gaps": evaluation.gaps if evaluation and evaluation.gaps else [],
+                "error_message": evaluation.error_message if evaluation else None,
             })
     else:
         total = 0

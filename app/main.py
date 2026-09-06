@@ -332,26 +332,31 @@ def evaluate_candidate_for_job(
             job_description=job.description or job.title,
             results=results,
         )
+        evaluation = crud.create_evaluation(
+            db,
+            candidate_id=candidate_id,
+            job_id=body.job_id,
+            match_score=llm_result.get("match_score", 0),
+            recommendation=llm_result.get("recommendation", "LOW_MATCH"),
+            summary=llm_result.get("summary", ""),
+            strengths=llm_result.get("strengths", []),
+            gaps=llm_result.get("gaps", []),
+            status="COMPLETED",
+        )
     except Exception as exc:
-        logger.error("LLM evaluation failed for candidate %s: %s", candidate_id, exc)
-        llm_result = {
-            "match_score": 0,
-            "recommendation": "LOW_MATCH",
-            "summary": f"Evaluacion fallida: {exc}",
-            "strengths": [],
-            "gaps": [],
-        }
-
-    evaluation = crud.create_evaluation(
-        db,
-        candidate_id=candidate_id,
-        job_id=body.job_id,
-        match_score=llm_result.get("match_score", 0),
-        recommendation=llm_result.get("recommendation", "LOW_MATCH"),
-        summary=llm_result.get("summary", ""),
-        strengths=llm_result.get("strengths", []),
-        gaps=llm_result.get("gaps", []),
-    )
+        logger.error("LLM evaluation failed for candidate %s: %s", candidate_id, exc, exc_info=True)
+        evaluation = crud.create_evaluation(
+            db,
+            candidate_id=candidate_id,
+            job_id=body.job_id,
+            match_score=0.0,
+            recommendation="EVALUATION_FAILED",
+            summary=f"Evaluacion fallida: {exc}",
+            strengths=[],
+            gaps=[],
+            status="FAILED",
+            error_message=str(exc),
+        )
 
     return {
         "evaluation_id": evaluation.id,
@@ -569,23 +574,25 @@ def recalculate_ranking(
                         summary=llm_result.get("summary", ""),
                         strengths=llm_result.get("strengths", []),
                         gaps=llm_result.get("gaps", []),
+                        status="COMPLETED",
                     )
                     evaluated_count += 1
                 except Exception as exc:
-                    logger.error("Evaluation failed for candidate %s: %s", candidate.id, exc)
+                    logger.error("Evaluation failed for candidate %s: %s", candidate.id, exc, exc_info=True)
                     failed_count += 1
                     failures.append({"candidate_id": candidate.id, "error": str(exc)})
-                    if evaluation is None:
-                        evaluation = crud.create_evaluation(
-                            db,
-                            candidate_id=candidate.id,
-                            job_id=job_id,
-                            match_score=0.0,
-                            recommendation="LOW_MATCH",
-                            summary="Evaluacion fallida.",
-                            strengths=[],
-                            gaps=[],
-                        )
+                    evaluation = crud.create_evaluation(
+                        db,
+                        candidate_id=candidate.id,
+                        job_id=job_id,
+                        match_score=0.0,
+                        recommendation="EVALUATION_FAILED",
+                        summary="Evaluacion fallida.",
+                        strengths=[],
+                        gaps=[],
+                        status="FAILED",
+                        error_message=str(exc),
+                    )
             else:
                 evaluated_count += 1
 
@@ -635,9 +642,10 @@ def get_latest_ranking(
             "match_score": evaluation.match_score if evaluation else item.score,
             "candidate_name": item.candidate.name if item.candidate else "",
             "recommendation": evaluation.recommendation if evaluation else "PENDING",
-            "status": "COMPLETED",
+            "status": evaluation.status if evaluation else "PENDING",
             "strengths": evaluation.strengths if evaluation and evaluation.strengths else [],
             "gaps": evaluation.gaps if evaluation and evaluation.gaps else [],
+            "error_message": evaluation.error_message if evaluation else None,
         })
 
     return {

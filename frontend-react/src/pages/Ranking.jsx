@@ -266,6 +266,10 @@ function Ranking() {
       return "Baja coincidencia";
     }
 
+    if (recommendation === "EVALUATION_FAILED") {
+      return "Evaluación fallida";
+    }
+
     if (recommendation === "PENDING") {
       return "Pendiente";
     }
@@ -289,6 +293,14 @@ function Ranking() {
       return {
         background: "#fef3c7",
         color: "#92400e",
+      };
+    }
+
+    if (recommendation === "EVALUATION_FAILED") {
+      return {
+        background: "#fef2f2",
+        color: "#991b1b",
+        border: "1px solid #fecaca",
       };
     }
 
@@ -614,28 +626,41 @@ function Ranking() {
 
             <strong>Puntaje de coincidencia</strong>
 
-            <h1>{candidate.match_score}%</h1>
+            {candidate.status === "FAILED" ? (
+              <div style={{ marginTop: "10px" }}>
+                <h1 style={{ color: "#991b1b", fontSize: "24px" }}>Evaluación fallida</h1>
+                {candidate.error_message && (
+                  <p style={{ color: "#64748b", fontSize: "13px", marginTop: "5px" }}>
+                    {candidate.error_message}
+                  </p>
+                )}
+              </div>
+            ) : (
+              <>
+                <h1>{candidate.match_score}%</h1>
 
-            {/* SCORE BAR */}
+                {/* SCORE BAR */}
 
-            <div
-              className="ranking-score-bar"
-              style={{
-                height: "12px",
-                background: "#eee",
-                borderRadius: "10px",
-                overflow: "hidden",
-              }}
-            >
-              <div
-                className="ranking-score-fill"
-                style={{
-                  width: `${candidate.match_score}%`,
-                  height: "100%",
-                  background: "#4f46e5",
-                }}
-              />
-            </div>
+                <div
+                  className="ranking-score-bar"
+                  style={{
+                    height: "12px",
+                    background: "#eee",
+                    borderRadius: "10px",
+                    overflow: "hidden",
+                  }}
+                >
+                  <div
+                    className="ranking-score-fill"
+                    style={{
+                      width: `${candidate.match_score}%`,
+                      height: "100%",
+                      background: "#4f46e5",
+                    }}
+                  />
+                </div>
+              </>
+            )}
 
             {/* RECOMMENDATION */}
 
@@ -846,19 +871,32 @@ function Ranking() {
           >
             <h2>{selectedCandidate.candidate_name}</h2>
 
-            <h1>{selectedCandidate.match_score}%</h1>
+            {selectedCandidate.status === "FAILED" ? (
+              <div style={{ marginTop: "10px" }}>
+                <h1 style={{ color: "#991b1b", fontSize: "28px" }}>Evaluación fallida</h1>
+                {selectedCandidate.error_message && (
+                  <p style={{ color: "#64748b", fontSize: "14px", marginTop: "10px" }}>
+                    Error: {selectedCandidate.error_message}
+                  </p>
+                )}
+              </div>
+            ) : (
+              <>
+                <h1>{selectedCandidate.match_score}%</h1>
 
-            <div
-              style={{
-                display: "inline-block",
-                padding: "8px 15px",
-                borderRadius: "20px",
-                fontWeight: "bold",
-                ...badgeStyle(selectedCandidate.recommendation),
-              }}
-            >
-              {getRecommendationLabel(selectedCandidate.recommendation)}
-            </div>
+                <div
+                  style={{
+                    display: "inline-block",
+                    padding: "8px 15px",
+                    borderRadius: "20px",
+                    fontWeight: "bold",
+                    ...badgeStyle(selectedCandidate.recommendation),
+                  }}
+                >
+                  {getRecommendationLabel(selectedCandidate.recommendation)}
+                </div>
+              </>
+            )}
 
             <hr />
 
