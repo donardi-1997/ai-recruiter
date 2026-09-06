@@ -160,6 +160,81 @@ def assign_candidates_to_job(
 # EVALUATIONS
 # ============================================================
 
+VALID_RECOMMENDATIONS = {
+    "STRONG_MATCH",
+    "GOOD_MATCH",
+    "PARTIAL_MATCH",
+    "LOW_MATCH",
+    "EVALUATION_FAILED",
+    "PENDING",
+}
+
+
+def is_evaluation_complete(evaluation: Evaluation | None) -> bool:
+    """Check if an evaluation is complete and valid.
+
+    An evaluation is complete ONLY if ALL of:
+    - evaluation exists
+    - status == "COMPLETED"
+    - match_score is not None
+    - 0 <= match_score <= 100
+    - recommendation is a valid non-empty string
+    - summary is a non-empty string
+    - strengths is a list (can be empty)
+    - gaps is a list (can be empty)
+
+    FAILED evaluations, None evaluations, and incomplete evaluations
+    all return False.
+    """
+    if evaluation is None:
+        return False
+    if evaluation.status != "COMPLETED":
+        return False
+    if evaluation.match_score is None:
+        return False
+    if not (0 <= evaluation.match_score <= 100):
+        return False
+    if not evaluation.recommendation:
+        return False
+    if evaluation.recommendation not in VALID_RECOMMENDATIONS:
+        return False
+    if evaluation.recommendation == "EVALUATION_FAILED":
+        return False
+    if not evaluation.summary:
+        return False
+    if evaluation.strengths is None:
+        return False
+    if evaluation.gaps is None:
+        return False
+    return True
+
+
+def needs_evaluation(
+    evaluation: Evaluation | None,
+    *,
+    force: bool = False,
+) -> bool:
+    """Determine if a candidate needs (re-)evaluation.
+
+    Returns True if:
+    - No evaluation exists
+    - force=True (full mode)
+    - Evaluation is FAILED
+    - Evaluation is incomplete (missing recommendation, score, etc.)
+    """
+    if force:
+        return True
+    if evaluation is None:
+        return True
+    if evaluation.status == "FAILED":
+        return True
+    if evaluation.recommendation == "EVALUATION_FAILED":
+        return True
+    if not is_evaluation_complete(evaluation):
+        return True
+    return False
+
+
 def create_evaluation(
     db: Session,
     *,
@@ -309,17 +384,47 @@ def build_ranking_response(
         candidates = []
         for item in items:
             evaluation = get_evaluation_for_job_candidate(db, job_id, item.candidate_id)
-            candidates.append({
-                "position": item.position,
-                "candidate_id": item.candidate_id,
-                "match_score": evaluation.match_score if evaluation else item.score,
-                "candidate_name": item.candidate.name if item.candidate else "",
-                "recommendation": evaluation.recommendation if evaluation else "PENDING",
-                "status": evaluation.status if evaluation else "PENDING",
-                "strengths": evaluation.strengths if evaluation and evaluation.strengths else [],
-                "gaps": evaluation.gaps if evaluation and evaluation.gaps else [],
-                "error_message": evaluation.error_message if evaluation else None,
-            })
+
+            if is_evaluation_complete(evaluation):
+                # Valid completed evaluation
+                candidates.append({
+                    "position": item.position,
+                    "candidate_id": item.candidate_id,
+                    "match_score": evaluation.match_score,
+                    "candidate_name": item.candidate.name if item.candidate else "",
+                    "recommendation": evaluation.recommendation,
+                    "status": "COMPLETED",
+                    "strengths": evaluation.strengths or [],
+                    "gaps": evaluation.gaps or [],
+                    "error_message": None,
+                })
+            elif evaluation and evaluation.status == "FAILED":
+                # Explicitly failed evaluation
+                candidates.append({
+                    "position": item.position,
+                    "candidate_id": item.candidate_id,
+                    "match_score": None,
+                    "candidate_name": item.candidate.name if item.candidate else "",
+                    "recommendation": "EVALUATION_FAILED",
+                    "status": "FAILED",
+                    "strengths": [],
+                    "gaps": [],
+                    "error_message": evaluation.error_message or "Evaluacion fallida",
+                })
+            else:
+                # No evaluation or incomplete — should not happen after recalculate
+                # but handle gracefully
+                candidates.append({
+                    "position": item.position,
+                    "candidate_id": item.candidate_id,
+                    "match_score": None,
+                    "candidate_name": item.candidate.name if item.candidate else "",
+                    "recommendation": "PENDING",
+                    "status": "PENDING",
+                    "strengths": [],
+                    "gaps": [],
+                    "error_message": "Evaluacion pendiente",
+                })
     else:
         total = 0
         total_pages = 0

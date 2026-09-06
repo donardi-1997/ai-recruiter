@@ -566,14 +566,7 @@ def recalculate_ranking(
         for position, candidate in enumerate(assigned_candidates, start=1):
             evaluation = crud.get_evaluation_for_job_candidate(db, job_id, candidate.id)
 
-            needs_evaluation = (
-                evaluation is None
-                or effective_mode == "full"
-                or evaluation.status == "FAILED"
-                or evaluation.recommendation == "EVALUATION_FAILED"
-            )
-
-            if needs_evaluation:
+            if crud.needs_evaluation(evaluation, force=(effective_mode == "full")):
                 try:
                     results = retrieve_candidate(
                         candidate_id=candidate.id,
@@ -677,17 +670,43 @@ def get_latest_ranking(
     candidates = []
     for item in items:
         evaluation = crud.get_evaluation_for_job_candidate(db, job_id, item.candidate_id)
-        candidates.append({
-            "position": item.position,
-            "candidate_id": item.candidate_id,
-            "match_score": evaluation.match_score if evaluation else item.score,
-            "candidate_name": item.candidate.name if item.candidate else "",
-            "recommendation": evaluation.recommendation if evaluation else "PENDING",
-            "status": evaluation.status if evaluation else "PENDING",
-            "strengths": evaluation.strengths if evaluation and evaluation.strengths else [],
-            "gaps": evaluation.gaps if evaluation and evaluation.gaps else [],
-            "error_message": evaluation.error_message if evaluation else None,
-        })
+
+        if crud.is_evaluation_complete(evaluation):
+            candidates.append({
+                "position": item.position,
+                "candidate_id": item.candidate_id,
+                "match_score": evaluation.match_score,
+                "candidate_name": item.candidate.name if item.candidate else "",
+                "recommendation": evaluation.recommendation,
+                "status": "COMPLETED",
+                "strengths": evaluation.strengths or [],
+                "gaps": evaluation.gaps or [],
+                "error_message": None,
+            })
+        elif evaluation and evaluation.status == "FAILED":
+            candidates.append({
+                "position": item.position,
+                "candidate_id": item.candidate_id,
+                "match_score": None,
+                "candidate_name": item.candidate.name if item.candidate else "",
+                "recommendation": "EVALUATION_FAILED",
+                "status": "FAILED",
+                "strengths": [],
+                "gaps": [],
+                "error_message": evaluation.error_message or "Evaluacion fallida",
+            })
+        else:
+            candidates.append({
+                "position": item.position,
+                "candidate_id": item.candidate_id,
+                "match_score": None,
+                "candidate_name": item.candidate.name if item.candidate else "",
+                "recommendation": "PENDING",
+                "status": "PENDING",
+                "strengths": [],
+                "gaps": [],
+                "error_message": "Evaluacion pendiente",
+            })
 
     return {
         "job_id": job_id,

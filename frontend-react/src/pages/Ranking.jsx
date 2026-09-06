@@ -133,17 +133,21 @@ function Ranking() {
       setRankingGeneratedAt(data.ranking_generated_at || null);
       setRankingVersion(data.ranking_version ?? null);
 
-      const allScores = candidates.map((candidate) =>
-        Number(candidate.match_score || 0),
+      // Only use COMPLETED evaluations for statistics
+      const completedCandidates = candidates.filter(
+        (c) => c.status === "COMPLETED" && c.match_score != null,
+      );
+      const allScores = completedCandidates.map((c) =>
+        Number(c.match_score),
       );
 
       setRankingInfo({
         total: data.total ?? candidates.length,
         pending: data.pending_candidates ?? 0,
 
-        minimum: allScores.length > 0 ? Math.min(...allScores) : 0,
+        minimum: allScores.length > 0 ? Math.min(...allScores) : null,
 
-        maximum: allScores.length > 0 ? Math.max(...allScores) : 0,
+        maximum: allScores.length > 0 ? Math.max(...allScores) : null,
       });
     } catch (error) {
       console.error("ERROR LOADING RANKING:", error.response?.data || error);
@@ -567,12 +571,12 @@ function Ranking() {
 
           <SummaryCard
             title="Puntaje mínimo"
-            value={`${rankingInfo.minimum}%`}
+            value={rankingInfo.minimum != null ? `${rankingInfo.minimum}%` : "—"}
           />
 
           <SummaryCard
             title="Puntaje máximo"
-            value={`${rankingInfo.maximum}%`}
+            value={rankingInfo.maximum != null ? `${rankingInfo.maximum}%` : "—"}
           />
         </div>
       )}
@@ -626,9 +630,11 @@ function Ranking() {
 
             <strong>Puntaje de coincidencia</strong>
 
-            {candidate.status === "FAILED" ? (
+            {candidate.status === "FAILED" || candidate.status === "PENDING" ? (
               <div style={{ marginTop: "10px" }}>
-                <h1 style={{ color: "#991b1b", fontSize: "24px" }}>Evaluación fallida</h1>
+                <h1 style={{ color: "#991b1b", fontSize: "24px" }}>
+                  {candidate.status === "FAILED" ? "Evaluación fallida" : "Evaluación pendiente"}
+                </h1>
                 {candidate.error_message && (
                   <p style={{ color: "#64748b", fontSize: "13px", marginTop: "5px" }}>
                     {candidate.error_message}
@@ -871,12 +877,14 @@ function Ranking() {
           >
             <h2>{selectedCandidate.candidate_name}</h2>
 
-            {selectedCandidate.status === "FAILED" ? (
+            {selectedCandidate.status === "FAILED" || selectedCandidate.status === "PENDING" ? (
               <div style={{ marginTop: "10px" }}>
-                <h1 style={{ color: "#991b1b", fontSize: "28px" }}>Evaluación fallida</h1>
+                <h1 style={{ color: "#991b1b", fontSize: "28px" }}>
+                  {selectedCandidate.status === "FAILED" ? "Evaluación fallida" : "Evaluación pendiente"}
+                </h1>
                 {selectedCandidate.error_message && (
                   <p style={{ color: "#64748b", fontSize: "14px", marginTop: "10px" }}>
-                    Error: {selectedCandidate.error_message}
+                    {selectedCandidate.error_message}
                   </p>
                 )}
               </div>
