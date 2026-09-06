@@ -43,16 +43,49 @@ def _sanitize_error_message(error_message: str | None) -> str | None:
 # JOBS
 # ============================================================
 
-def get_job(db: Session, job_id: str) -> Job | None:
-    return db.query(Job).filter(Job.id == job_id).first()
+def get_job(
+    db: Session,
+    job_id: str,
+    owner_sub: str | None = None,
+) -> Job | None:
+    query = db.query(Job).filter(Job.id == job_id)
+
+    if owner_sub is not None:
+        query = query.filter(
+            Job.owner_sub == owner_sub
+        )
+
+    return query.first()
 
 
-def list_jobs(db: Session) -> list[Job]:
-    return db.query(Job).order_by(Job.created_at.desc()).all()
+def list_jobs(
+    db: Session,
+    owner_sub: str | None = None,
+) -> list[Job]:
+    query = db.query(Job)
+
+    if owner_sub is not None:
+        query = query.filter(
+            Job.owner_sub == owner_sub
+        )
+
+    return query.order_by(
+        Job.created_at.desc()
+    ).all()
 
 
-def create_job(db: Session, *, title: str, description: str | None = None) -> Job:
-    job = Job(title=title, description=description)
+def create_job(
+    db: Session,
+    *,
+    title: str,
+    description: str | None = None,
+    owner_sub: str | None = None,
+) -> Job:
+    job = Job(
+        title=title,
+        description=description,
+        owner_sub=owner_sub,
+    )
     db.add(job)
     db.commit()
     db.refresh(job)
@@ -85,20 +118,62 @@ def delete_job(db: Session, job_id: str) -> bool:
     return True
 
 
-def count_candidates_for_job(db: Session, job_id: str) -> int:
-    return db.query(JobCandidate).filter(JobCandidate.job_id == job_id).count()
+def count_candidates_for_job(
+    db: Session,
+    job_id: str,
+    owner_sub: str | None = None,
+) -> int:
+    query = (
+        db.query(JobCandidate)
+        .join(
+            Candidate,
+            Candidate.id
+            == JobCandidate.candidate_id,
+        )
+        .filter(
+            JobCandidate.job_id == job_id
+        )
+    )
+
+    if owner_sub is not None:
+        query = query.filter(
+            Candidate.owner_sub == owner_sub
+        )
+
+    return query.count()
 
 
-# ============================================================
-# CANDIDATES
-# ============================================================
+def get_candidate(
+    db: Session,
+    candidate_id: str,
+    owner_sub: str | None = None,
+) -> Candidate | None:
+    query = db.query(Candidate).filter(
+        Candidate.id == candidate_id
+    )
 
-def get_candidate(db: Session, candidate_id: str) -> Candidate | None:
-    return db.query(Candidate).filter(Candidate.id == candidate_id).first()
+    if owner_sub is not None:
+        query = query.filter(
+            Candidate.owner_sub == owner_sub
+        )
+
+    return query.first()
 
 
-def list_candidates(db: Session) -> list[Candidate]:
-    return db.query(Candidate).order_by(Candidate.created_at.desc()).all()
+def list_candidates(
+    db: Session,
+    owner_sub: str | None = None,
+) -> list[Candidate]:
+    query = db.query(Candidate)
+
+    if owner_sub is not None:
+        query = query.filter(
+            Candidate.owner_sub == owner_sub
+        )
+
+    return query.order_by(
+        Candidate.created_at.desc()
+    ).all()
 
 
 def create_candidate(
@@ -107,8 +182,14 @@ def create_candidate(
     name: str,
     email: str | None = None,
     metadata: dict | None = None,
+    owner_sub: str | None = None,
 ) -> Candidate:
-    candidate = Candidate(name=name, email=email, metadata_=metadata or {})
+    candidate = Candidate(
+        name=name,
+        email=email,
+        metadata_=metadata or {},
+        owner_sub=owner_sub,
+    )
     db.add(candidate)
     db.commit()
     db.refresh(candidate)
@@ -128,13 +209,59 @@ def delete_candidate(db: Session, candidate_id: str) -> bool:
     return True
 
 
-def delete_all_candidates(db: Session) -> tuple[int, int]:
-    count = db.query(Candidate).count()
-    # Delete related records first
-    db.query(JobCandidate).delete()
-    db.query(Evaluation).delete()
-    db.query(RankingItem).delete()
-    db.query(Candidate).delete()
+def delete_all_candidates(
+    db: Session,
+    owner_sub: str | None = None,
+) -> tuple[int, int]:
+    query = db.query(Candidate)
+
+    if owner_sub is not None:
+        query = query.filter(
+            Candidate.owner_sub == owner_sub
+        )
+
+    candidate_ids = [
+        candidate_id
+        for (candidate_id,) in query.with_entities(
+            Candidate.id
+        ).all()
+    ]
+
+    count = len(candidate_ids)
+
+    if not candidate_ids:
+        return 0, 0
+
+    db.query(JobCandidate).filter(
+        JobCandidate.candidate_id.in_(
+            candidate_ids
+        )
+    ).delete(
+        synchronize_session=False
+    )
+
+    db.query(Evaluation).filter(
+        Evaluation.candidate_id.in_(
+            candidate_ids
+        )
+    ).delete(
+        synchronize_session=False
+    )
+
+    db.query(RankingItem).filter(
+        RankingItem.candidate_id.in_(
+            candidate_ids
+        )
+    ).delete(
+        synchronize_session=False
+    )
+
+    db.query(Candidate).filter(
+        Candidate.id.in_(candidate_ids)
+    ).delete(
+        synchronize_session=False
+    )
+
     db.commit()
     return count, 0
 
@@ -145,46 +272,101 @@ def list_candidates_for_job(
     *,
     page: int = 1,
     page_size: int = 10,
+    owner_sub: str | None = None,
 ) -> tuple[list[Candidate], int]:
     query = (
         db.query(Candidate)
-        .join(JobCandidate, JobCandidate.candidate_id == Candidate.id)
-        .filter(JobCandidate.job_id == job_id)
-        .order_by(Candidate.name)
+        .join(
+            JobCandidate,
+            JobCandidate.candidate_id
+            == Candidate.id,
+        )
+        .filter(
+            JobCandidate.job_id == job_id
+        )
     )
+
+    if owner_sub is not None:
+        query = query.filter(
+            Candidate.owner_sub == owner_sub
+        )
+
+    query = query.order_by(
+        Candidate.name
+    )
+
     total = query.count() or 0
-    items = query.offset((page - 1) * page_size).limit(page_size).all()
+
+    items = (
+        query
+        .offset((page - 1) * page_size)
+        .limit(page_size)
+        .all()
+    )
+
     return items, total
 
-
-# ============================================================
-# JOB-CANDIDATE ASSIGNMENT
-# ============================================================
 
 def assign_candidates_to_job(
     db: Session,
     job_id: str,
     candidate_ids: list[str],
+    owner_sub: str | None = None,
 ) -> tuple[int, int]:
     assigned = 0
     skipped = 0
+
+    candidate_query = db.query(
+        Candidate.id
+    ).filter(
+        Candidate.id.in_(candidate_ids)
+    )
+
+    if owner_sub is not None:
+        candidate_query = candidate_query.filter(
+            Candidate.owner_sub == owner_sub
+        )
+
+    allowed_ids = {
+        candidate_id
+        for (candidate_id,)
+        in candidate_query.all()
+    }
+
     for cid in candidate_ids:
+        # Never allow assignment of a candidate
+        # owned by a different Cognito user.
+        if cid not in allowed_ids:
+            skipped += 1
+            continue
+
         existing = (
             db.query(JobCandidate)
-            .filter(JobCandidate.job_id == job_id, JobCandidate.candidate_id == cid)
+            .filter(
+                JobCandidate.job_id == job_id,
+                JobCandidate.candidate_id == cid,
+            )
             .first()
         )
+
         if existing:
             skipped += 1
             continue
-        db.add(JobCandidate(job_id=job_id, candidate_id=cid))
+
+        db.add(
+            JobCandidate(
+                job_id=job_id,
+                candidate_id=cid,
+            )
+        )
         assigned += 1
+
     db.commit()
     return assigned, skipped
 
 
 # ============================================================
-# EVALUATIONS
+# EVALUATION CONTRACT
 # ============================================================
 
 VALID_RECOMMENDATIONS = {
@@ -197,7 +379,6 @@ VALID_RECOMMENDATIONS = {
 }
 
 MIN_SUMMARY_LENGTH = 100
-
 
 def is_evaluation_complete(evaluation: Evaluation | None) -> bool:
     """Check if an evaluation is complete and valid.
@@ -276,11 +457,17 @@ def create_evaluation(
     summary: str,
     strengths: list[str],
     gaps: list[str],
+    requirements: list[dict] | None = None,
     status: str = "COMPLETED",
     error_message: str | None = None,
 ) -> Evaluation:
-    # Upsert: update existing evaluation for this (candidate_id, job_id) pair
-    existing = get_evaluation_for_job_candidate(db, job_id, candidate_id)
+    # Upsert: one current evaluation for a
+    # candidate/job pair.
+    existing = get_evaluation_for_job_candidate(
+        db,
+        job_id,
+        candidate_id,
+    )
 
     if existing:
         existing.status = status
@@ -289,8 +476,15 @@ def create_evaluation(
         existing.summary = summary
         existing.strengths = strengths
         existing.gaps = gaps
+
+        if requirements is not None:
+            existing.requirements = requirements
+
         existing.error_message = error_message
-        existing.created_at = datetime.now(timezone.utc)
+        existing.created_at = datetime.now(
+            timezone.utc
+        )
+
         db.commit()
         db.refresh(existing)
         return existing
@@ -304,11 +498,14 @@ def create_evaluation(
         summary=summary,
         strengths=strengths,
         gaps=gaps,
+        requirements=requirements or [],
         error_message=error_message,
     )
+
     db.add(evaluation)
     db.commit()
     db.refresh(evaluation)
+
     return evaluation
 
 

@@ -71,17 +71,45 @@ def on_startup() -> None:
 # HELPERS
 # ============================================================
 
-def _require_job(db: Session, job_id: str):
-    job = crud.get_job(db, job_id)
+def _require_job(
+    db: Session,
+    job_id: str,
+    owner_sub: str,
+):
+    job = crud.get_job(
+        db,
+        job_id,
+        owner_sub=owner_sub,
+    )
+
     if not job:
-        raise HTTPException(status_code=404, detail="Vacante no encontrada.")
+        # 404 intentionally avoids leaking whether
+        # another user's resource exists.
+        raise HTTPException(
+            status_code=404,
+            detail="Vacante no encontrada.",
+        )
+
     return job
 
 
-def _require_candidate(db: Session, candidate_id: str):
-    candidate = crud.get_candidate(db, candidate_id)
+def _require_candidate(
+    db: Session,
+    candidate_id: str,
+    owner_sub: str,
+):
+    candidate = crud.get_candidate(
+        db,
+        candidate_id,
+        owner_sub=owner_sub,
+    )
+
     if not candidate:
-        raise HTTPException(status_code=404, detail="Candidato no encontrado.")
+        raise HTTPException(
+            status_code=404,
+            detail="Candidato no encontrado.",
+        )
+
     return candidate
 
 
@@ -112,6 +140,11 @@ def _public_evaluation_payload(evaluation) -> dict[str, Any]:
         ),
         "strengths": [] if failed else (evaluation.strengths or []),
         "gaps": [] if failed else (evaluation.gaps or []),
+        "requirements": (
+            []
+            if failed
+            else (evaluation.requirements or [])
+        ),
         "error_message": (
             FAILED_EVALUATION_PUBLIC_MESSAGE
             if failed
@@ -151,7 +184,7 @@ def list_jobs(
     db: Session = Depends(get_db),
     _user: dict = Depends(get_current_user),
 ):
-    jobs = crud.list_jobs(db)
+    jobs = crud.list_jobs(db, owner_sub=_user["sub"])
     return [
         {
             "job_id": j.id,
@@ -159,7 +192,7 @@ def list_jobs(
             "title": j.title,
             "description": j.description,
             "created_at": j.created_at.isoformat() if j.created_at else None,
-            "candidate_count": crud.count_candidates_for_job(db, j.id),
+            "candidate_count": crud.count_candidates_for_job(db, j.id, owner_sub=_user["sub"]),
         }
         for j in jobs
     ]
@@ -171,7 +204,12 @@ def create_job(
     db: Session = Depends(get_db),
     _user: dict = Depends(get_current_user),
 ):
-    job = crud.create_job(db, title=body.title, description=body.description)
+    job = crud.create_job(
+        db,
+        title=body.title,
+        description=body.description,
+        owner_sub=_user["sub"],
+    )
     return {
         "job_id": job.id,
         "id": job.id,
@@ -188,7 +226,7 @@ def update_job(
     db: Session = Depends(get_db),
     _user: dict = Depends(get_current_user),
 ):
-    job = _require_job(db, job_id)
+    job = _require_job(db, job_id, _user["sub"])
     updated = crud.update_job(db, job, title=body.title, description=body.description)
     return {
         "job_id": updated.id,
@@ -205,7 +243,7 @@ def delete_job(
     db: Session = Depends(get_db),
     _user: dict = Depends(get_current_user),
 ):
-    _require_job(db, job_id)
+    _require_job(db, job_id, _user["sub"])
     crud.delete_job(db, job_id)
     return {"detail": "Vacante eliminada."}
 
@@ -219,7 +257,7 @@ def list_candidates(
     db: Session = Depends(get_db),
     _user: dict = Depends(get_current_user),
 ):
-    candidates = crud.list_candidates(db)
+    candidates = crud.list_candidates(db, owner_sub=_user["sub"])
     return [
         {
             "candidate_id": c.id,
@@ -240,7 +278,7 @@ def get_candidate(
     db: Session = Depends(get_db),
     _user: dict = Depends(get_current_user),
 ):
-    c = _require_candidate(db, candidate_id)
+    c = _require_candidate(db, candidate_id, _user["sub"])
     return {
         "candidate_id": c.id,
         "id": c.id,
@@ -356,6 +394,7 @@ async def upload_candidates_bulk(
                 db,
                 name=name,
                 metadata={"filename": f.filename},
+                owner_sub=_user["sub"],
             )
 
             indexing = index_candidate_document(candidate, file_content, f.filename)
@@ -387,7 +426,10 @@ def delete_all_candidates(
     _user: dict = Depends(get_current_user),
 ):
     try:
-        deleted, failed = crud.delete_all_candidates(db)
+        deleted, failed = crud.delete_all_candidates(
+            db,
+            owner_sub=_user["sub"],
+        )
         return {"deleted": deleted, "failed": failed}
     except Exception as exc:
         logger.error("Error deleting all candidates: %s", exc)
@@ -400,7 +442,7 @@ def delete_candidate(
     db: Session = Depends(get_db),
     _user: dict = Depends(get_current_user),
 ):
-    _require_candidate(db, candidate_id)
+    _require_candidate(db, candidate_id, _user["sub"])
     try:
         crud.delete_candidate(db, candidate_id)
         return {"detail": "Candidato eliminado."}
@@ -415,7 +457,7 @@ def download_candidate_cv(
     db: Session = Depends(get_db),
     _user: dict = Depends(get_current_user),
 ):
-    _require_candidate(db, candidate_id)
+    _require_candidate(db, candidate_id, _user["sub"])
     return {"download_url": None, "detail": "CV storage not configured."}
 
 
@@ -425,7 +467,7 @@ def get_candidate_evaluations(
     db: Session = Depends(get_db),
     _user: dict = Depends(get_current_user),
 ):
-    _require_candidate(db, candidate_id)
+    _require_candidate(db, candidate_id, _user["sub"])
     evaluations = crud.get_evaluations_for_candidate(db, candidate_id)
     return {
         "evaluations": [
@@ -446,8 +488,8 @@ def evaluate_candidate_for_job(
         retrieve_candidate,
     )
 
-    candidate = _require_candidate(db, candidate_id)
-    job = _require_job(db, body.job_id)
+    candidate = _require_candidate(db, candidate_id, _user["sub"])
+    job = _require_job(db, body.job_id, _user["sub"])
 
     try:
         results = retrieve_candidate(
@@ -476,6 +518,7 @@ def evaluate_candidate_for_job(
                 ),
                 strengths=[],
                 gaps=[],
+                requirements=[],
                 status="FAILED",
                 error_message=(
                     llm_result.get("error_message")
@@ -488,6 +531,15 @@ def evaluate_candidate_for_job(
             summary = str(llm_result.get("summary") or "").strip()
             strengths = llm_result.get("strengths", [])
             gaps = llm_result.get("gaps", [])
+            requirements = llm_result.get(
+                "requirements",
+                [],
+            )
+
+            if not isinstance(requirements, list):
+                raise ValueError(
+                    "INVALID_EVALUATION_REQUIREMENTS"
+                )
 
             if match_score is None:
                 raise ValueError("INVALID_EVALUATION_SCORE")
@@ -528,6 +580,7 @@ def evaluate_candidate_for_job(
                 summary=summary,
                 strengths=strengths,
                 gaps=gaps,
+                requirements=requirements,
                 status="COMPLETED",
                 error_message=None,
             )
@@ -566,10 +619,15 @@ def assign_candidates_to_job(
     db: Session = Depends(get_db),
     _user: dict = Depends(get_current_user),
 ):
-    _require_job(db, job_id)
+    _require_job(db, job_id, _user["sub"])
     if not body.candidate_ids:
         raise HTTPException(status_code=400, detail="candidate_ids requerido.")
-    assigned, skipped = crud.assign_candidates_to_job(db, job_id, body.candidate_ids)
+    assigned, skipped = crud.assign_candidates_to_job(
+        db,
+        job_id,
+        body.candidate_ids,
+        owner_sub=_user["sub"],
+    )
     return {"assigned": assigned, "skipped": skipped}
 
 
@@ -581,9 +639,13 @@ def get_job_candidates(
     db: Session = Depends(get_db),
     _user: dict = Depends(get_current_user),
 ):
-    _require_job(db, job_id)
+    _require_job(db, job_id, _user["sub"])
     items, total = crud.list_candidates_for_job(
-        db, job_id, page=page, page_size=page_size,
+        db,
+        job_id,
+        page=page,
+        page_size=page_size,
+        owner_sub=_user["sub"],
     )
     return [
         {
@@ -606,8 +668,8 @@ def get_job_candidate_detail(
     db: Session = Depends(get_db),
     _user: dict = Depends(get_current_user),
 ):
-    _require_job(db, job_id)
-    _require_candidate(db, candidate_id)
+    _require_job(db, job_id, _user["sub"])
+    _require_candidate(db, candidate_id, _user["sub"])
 
     evaluation = crud.get_evaluation_for_job_candidate(
         db,
@@ -630,8 +692,8 @@ def get_candidate_explanation(
     db: Session = Depends(get_db),
     _user: dict = Depends(get_current_user),
 ):
-    _require_job(db, job_id)
-    _require_candidate(db, candidate_id)
+    _require_job(db, job_id, _user["sub"])
+    _require_candidate(db, candidate_id, _user["sub"])
 
     evaluation = crud.get_evaluation_for_job_candidate(
         db,
@@ -663,17 +725,61 @@ def get_candidate_requirements(
     db: Session = Depends(get_db),
     _user: dict = Depends(get_current_user),
 ):
-    _require_job(db, job_id)
-    _require_candidate(db, candidate_id)
-    evaluation = crud.get_evaluation_for_job_candidate(db, job_id, candidate_id)
+    _require_job(
+        db,
+        job_id,
+        _user["sub"],
+    )
+    _require_candidate(
+        db,
+        candidate_id,
+        _user["sub"],
+    )
+
+    evaluation = (
+        crud.get_evaluation_for_job_candidate(
+            db,
+            job_id,
+            candidate_id,
+        )
+    )
+
+    if not evaluation:
+        return {"requirements": []}
+
+    # New evaluations preserve the exact LLM
+    # requirement-level analysis.
+    if evaluation.requirements:
+        return {
+            "requirements":
+                evaluation.requirements
+        }
+
+    # Legacy fallback for evaluations created
+    # before structured requirements existed.
     requirements = []
-    if evaluation and evaluation.strengths:
-        for s in evaluation.strengths:
-            requirements.append({"requirement": s, "status": "MATCH", "evidence": None})
-    if evaluation and evaluation.gaps:
-        for g in evaluation.gaps:
-            requirements.append({"requirement": g, "status": "MISSING", "evidence": None})
-    return {"requirements": requirements}
+
+    for strength in (
+        evaluation.strengths or []
+    ):
+        requirements.append({
+            "requirement": strength,
+            "status": "MATCH",
+            "evidence": None,
+        })
+
+    for gap in (
+        evaluation.gaps or []
+    ):
+        requirements.append({
+            "requirement": gap,
+            "status": "MISSING",
+            "evidence": None,
+        })
+
+    return {
+        "requirements": requirements
+    }
 
 
 # ============================================================
@@ -695,7 +801,7 @@ def get_job_ranking(
     db: Session = Depends(get_db),
     _user: dict = Depends(get_current_user),
 ):
-    _require_job(db, job_id)
+    _require_job(db, job_id, _user["sub"])
 
     if min_score > max_score:
         raise HTTPException(
@@ -732,7 +838,7 @@ def recalculate_ranking(
     db: Session = Depends(get_db),
     _user: dict = Depends(get_current_user),
 ):
-    _require_job(db, job_id)
+    _require_job(db, job_id, _user["sub"])
 
     acquired = acquire_job_lock(db, job_id)
 
@@ -786,7 +892,7 @@ def recalculate_ranking(
         )
 
         if scope == "all":
-            ranking_candidates = crud.list_candidates(db)
+            ranking_candidates = crud.list_candidates(db, owner_sub=_user["sub"])
         else:
             ranking_candidates = (
                 crud.list_candidates_for_job(
@@ -794,6 +900,7 @@ def recalculate_ranking(
                     job_id,
                     page=1,
                     page_size=100000,
+                    owner_sub=_user["sub"],
                 )[0]
             )
 
@@ -905,6 +1012,10 @@ def recalculate_ranking(
                                 "gaps",
                                 [],
                             ),
+                            requirements=llm_result.get(
+                                "requirements",
+                                [],
+                            ),
                             status="COMPLETED",
                             error_message=None,
                         )
@@ -938,6 +1049,7 @@ def recalculate_ranking(
                         summary="Evaluacion fallida.",
                         strengths=[],
                         gaps=[],
+                        requirements=[],
                         status="FAILED",
                         error_message=str(exc),
                     )
@@ -1036,7 +1148,7 @@ def get_latest_ranking(
     db: Session = Depends(get_db),
     _user: dict = Depends(get_current_user),
 ):
-    _require_job(db, job_id)
+    _require_job(db, job_id, _user["sub"])
 
     meta = crud.get_ranking_metadata(db, job_id)
     if not meta or meta.ranking_version == 0:

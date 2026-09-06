@@ -97,7 +97,11 @@ def _uuid():
 
 
 def _seed_job(db, job_id=None, title="Dev Python"):
-    job = Job(id=job_id or _uuid(), title=title)
+    job = Job(
+        id=job_id or _uuid(),
+        title=title,
+        owner_sub="test-user-123",
+    )
     db.add(job)
     db.commit()
     db.refresh(job)
@@ -109,6 +113,7 @@ def _seed_candidate(db, candidate_id=None, name="Ana García", email=None):
         id=candidate_id or _uuid(),
         name=name,
         email=email,
+        owner_sub="test-user-123",
     )
     db.add(cand)
     db.commit()

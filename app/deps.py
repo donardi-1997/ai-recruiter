@@ -92,7 +92,9 @@ def get_current_user(request: Request) -> dict:
         response = cognito.get_user(AccessToken=token)
         attrs = {a["Name"]: a["Value"] for a in response.get("UserAttributes", [])}
         return {
-            "sub": response.get("Username"),
+            # "sub" is the stable Cognito user identifier.
+            # Username is only a compatibility fallback.
+            "sub": attrs.get("sub") or response.get("Username"),
             "email": attrs.get("email"),
         }
     except Exception as exc:

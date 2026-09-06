@@ -154,6 +154,25 @@ def retrieve_candidate(candidate_id: str, question: str) -> list:
 
 
 # ============================================================
+# RECOMMENDATION
+# ============================================================
+def recommendation_for_score(match_score: float) -> str:
+    """Map a 0-100 score to the four public recommendation bands."""
+    score = float(match_score)
+
+    if score >= 80:
+        return "STRONG_MATCH"
+
+    if score >= 60:
+        return "GOOD_MATCH"
+
+    if score >= 40:
+        return "PARTIAL_MATCH"
+
+    return "LOW_MATCH"
+
+
+# ============================================================
 # EVALUATE CANDIDATE AGAINST JOB DESCRIPTION
 # ============================================================
 def evaluate_candidate(
@@ -472,12 +491,9 @@ DESCRIPCIÓN DE LA VACANTE:
     match_score = round((points / total) * 100) if total > 0 else 0
 
     # Recommendation
-    if match_score >= 80:
-        recommendation = "STRONG_MATCH"
-    elif match_score >= 60:
-        recommendation = "PARTIAL_MATCH"
-    else:
-        recommendation = "LOW_MATCH"
+    recommendation = recommendation_for_score(
+        match_score
+    )
 
     # Strengths
     strengths = [

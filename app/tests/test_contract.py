@@ -83,7 +83,11 @@ def _uuid():
 
 
 def _seed_job(db):
-    job = Job(id=_uuid(), title="Dev Python")
+    job = Job(
+        id=_uuid(),
+        title="Dev Python",
+        owner_sub="test-user",
+    )
     db.add(job)
     db.commit()
     db.refresh(job)
@@ -266,6 +270,7 @@ def test_evaluate_candidate_completed_has_status_and_long_summary(
     job = _seed_job(db_session)
 
     candidate = Candidate(
+        owner_sub="test-user",
         id=_uuid(),
         name="Ana Test",
     )
@@ -331,6 +336,7 @@ def test_evaluate_candidate_failure_does_not_expose_aws_error(
     job = _seed_job(db_session)
 
     candidate = Candidate(
+        owner_sub="test-user",
         id=_uuid(),
         name="Failure Test",
     )
@@ -397,6 +403,7 @@ def test_evaluate_candidate_rejects_short_completed_summary(
     job = _seed_job(db_session)
 
     candidate = Candidate(
+        owner_sub="test-user",
         id=_uuid(),
         name="Short Summary Test",
     )

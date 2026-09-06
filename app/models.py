@@ -28,6 +28,10 @@ class Candidate(Base):
     )
     name = Column(Text, nullable=False)
     email = Column(Text, nullable=True)
+    # Cognito subject that owns this candidate.
+    # Nullable in ORM for backwards-compatible tests; production
+    # migration enforces NOT NULL after legacy backfill.
+    owner_sub = Column(Text, nullable=True)
     created_at = Column(
         DateTime(timezone=True),
         nullable=False,
@@ -49,6 +53,8 @@ class Job(Base):
     )
     title = Column(Text, nullable=False)
     description = Column(Text, nullable=True)
+    # Cognito subject that owns this job.
+    owner_sub = Column(Text, nullable=True)
     created_at = Column(
         DateTime(timezone=True),
         nullable=False,
@@ -111,6 +117,9 @@ class Evaluation(Base):
     summary = Column(Text, nullable=True)
     strengths = Column(JSON, nullable=True, default=list)
     gaps = Column(JSON, nullable=True, default=list)
+    # Full requirement-level analysis:
+    # requirement/status/evidence.
+    requirements = Column(JSON, nullable=True, default=list)
     error_message = Column(Text, nullable=True)
     created_at = Column(
         DateTime(timezone=True),
