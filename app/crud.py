@@ -245,6 +245,10 @@ def insert_ranking_items(
     ranking_id: str,
     items: list[dict[str, Any]],
 ) -> int:
+    # Delete old items for this ranking first
+    db.query(RankingItem).filter(RankingItem.ranking_id == ranking_id).delete()
+    db.flush()
+
     count = 0
     for item in items:
         db.add(
