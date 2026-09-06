@@ -17,6 +17,27 @@
 .ranking-job-hint { margin-top: 10px; color: var(--ink-soft); font-size: .82rem; }
 .ranking-job-panel-right { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
 
+/* --- Job actions (3 buttons) --- */
+.ranking-job-actions { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+.ranking-btn-recalculate {
+  padding: 10px 18px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--warning-bg);
+  color: var(--ink);
+  font-weight: 700;
+  cursor: pointer;
+  transition: background .15s, border-color .15s;
+}
+.ranking-btn-recalculate:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--warning) 15%, var(--warning-bg));
+  border-color: var(--warning);
+}
+.ranking-btn-recalculate:disabled {
+  opacity: .55;
+  cursor: not-allowed;
+}
+
 .ranking-pending-badge { display: inline-flex; align-items: center; gap: 6px; padding: 5px 12px; border-radius: 999px; font-size: .72rem; font-weight: 700; }
 .ranking-pending-badge--warning { background: var(--warning-bg); color: var(--warning); }
 .ranking-pending-badge--success { background: var(--success-bg); color: var(--success); }
@@ -120,13 +141,6 @@
 .ranking-pagination select { min-width: 70px; padding: 8px 10px; }
 
 /* --- Modals --- */
-.ranking-mode-modal-body { display: grid; gap: 10px; }
-.ranking-mode-option { display: block; width: 100%; padding: 14px 18px; border-radius: 12px; text-align: left; cursor: pointer; }
-.ranking-mode-option strong { display: block; margin-bottom: 3px; font-size: .88rem; }
-.ranking-mode-option span { font-size: .78rem; font-weight: 400; opacity: .8; }
-.ranking-mode-cancel { margin-top: 14px; width: 100%; }
-
-/* --- Analysis modal extras --- */
 .ranking-modal h2 { margin-bottom: 8px; }
 .ranking-modal-score { font-family: "Manrope", sans-serif; font-size: 2.4rem; font-weight: 800; letter-spacing: -.04em; }
 .ranking-modal-section { margin-top: 22px; }
@@ -147,7 +161,8 @@
   .ranking-header { flex-direction: column; }
   .ranking-job-panel { flex-direction: column; align-items: stretch; }
   .ranking-job-panel-right { justify-content: stretch; }
-  .ranking-job-panel-right .btn { width: 100%; }
+  .ranking-job-actions { width: 100%; flex-direction: column; }
+  .ranking-job-actions .btn, .ranking-job-actions .ranking-btn-recalculate { width: 100%; }
   .ranking-metrics { grid-template-columns: 1fr 1fr; }
   .ranking-filter-grid { grid-template-columns: 1fr; }
   .ranking-candidate-header { flex-direction: column; }
@@ -169,6 +184,7 @@
 [data-theme="dark"] .ranking-score-track { background: var(--navy-soft); }
 [data-theme="dark"] .ranking-skeleton-line { background: var(--navy-soft); }
 [data-theme="dark"] .ranking-skeleton-card { background: var(--surface); border-color: var(--border); }
-[data-theme="dark"] .ranking-mode-option { background: var(--navy-soft); }
 [data-theme="dark"] .ranking-modal-requirement { background: var(--surface-soft); border-color: var(--border); }
 [data-theme="dark"] .ranking-badge--good { background: rgba(52, 211, 153, 0.1); color: var(--success); }
+[data-theme="dark"] .ranking-btn-recalculate { background: var(--navy-soft); border-color: var(--border); color: var(--ink); }
+[data-theme="dark"] .ranking-btn-recalculate:hover:not(:disabled) { background: color-mix(in srgb, var(--warning) 15%, var(--navy-soft)); border-color: var(--warning); }

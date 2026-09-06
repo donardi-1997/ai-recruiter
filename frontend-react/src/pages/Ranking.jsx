@@ -22,11 +22,11 @@ function Ranking() {
   const [recommendationFilter, setRecommendationFilter] = useState("");
   const [rankingScope, setRankingScope] = useState("assigned");
 
-  const [showModeModal, setShowModeModal] = useState(false);
   const [rankingGeneratedAt, setRankingGeneratedAt] = useState(null);
   const [rankingVersion, setRankingVersion] = useState(null);
+  const [isEvaluatingCandidates, setIsEvaluatingCandidates] = useState(false);
+  const [isRefreshingRanking, setIsRefreshingRanking] = useState(false);
   const [isRecalculating, setIsRecalculating] = useState(false);
-  const [isCalculatingEvaluations, setIsCalculatingEvaluations] = useState(false);
   const [actionFeedback, setActionFeedback] = useState(null);
 
   const [page, setPage] = useState(1);
@@ -49,6 +49,9 @@ function Ranking() {
     rankingBaseTotal > 0;
 
   const evaluatedCount = Math.max(rankingInfo.total - rankingInfo.pending, 0);
+
+  const rankingActionBusy =
+    isEvaluatingCandidates || isRefreshingRanking || isRecalculating;
 
   // ============================================================
   // LOAD JOBS
@@ -87,19 +90,19 @@ function Ranking() {
     targetJob = selectedJob,
     targetScope = rankingScope,
   ) {
-    if (!targetJob) return;
+    if (!targetJob) return false;
 
     if (minScore < 0 || minScore > 100) {
       alert("El puntaje mínimo debe estar entre 0 y 100");
-      return;
+      return false;
     }
     if (maxScore < 0 || maxScore > 100) {
       alert("El puntaje máximo debe estar entre 0 y 100");
-      return;
+      return false;
     }
     if (minScore > maxScore) {
       alert("El puntaje mínimo no puede ser mayor que el puntaje máximo");
-      return;
+      return false;
     }
 
     try {
@@ -142,117 +145,201 @@ function Ranking() {
       });
 
       if (candidates.length > 0) setRankingMessage("");
+      return true;
     } catch (error) {
       console.error("ERROR LOADING RANKING:", error.response?.data || error);
       alert(error.response?.data?.detail || "No fue posible cargar el ranking");
+      return false;
     } finally {
       setLoading(false);
     }
   }
 
   // ============================================================
-  // CALCULAR EVALUACIONES (primary CTA)
+  // EVALUAR CANDIDATOS
   // ============================================================
 
-  async function calculateJobEvaluations() {
+  async function evaluateCandidates() {
     if (!selectedJob) {
       alert("Seleccione una vacante");
       return;
     }
-    if (isCalculatingEvaluations) return;
+
+    if (isEvaluatingCandidates || isRefreshingRanking || isRecalculating) {
+      return;
+    }
 
     try {
-      setIsCalculatingEvaluations(true);
+      setIsEvaluatingCandidates(true);
       setActionFeedback(null);
       setRankingMessage("");
 
       const response = await api.post(
         `/jobs/${selectedJob}/ranking/recalculate`,
         null,
-        { params: { mode: "incremental", scope: "assigned" } },
+        {
+          params: {
+            mode: "incremental",
+            scope: "assigned",
+          },
+        },
       );
 
       const result = response.data;
 
       setPage(1);
-      await loadRanking(1, pageSize);
+      await loadRanking(1, pageSize, selectedJob, rankingScope);
 
       if (result.total_candidates === 0) {
-        setActionFeedback({ type: "info", message: "No hay evaluaciones pendientes para esta vacante." });
+        setActionFeedback({
+          type: "info",
+          message: "No hay candidatos asignados a esta vacante.",
+        });
       } else if (result.failed > 0) {
         setActionFeedback({
           type: "error",
-          message: `Evaluaciones procesadas: ${result.evaluated} completadas, ${result.failed} no pudo evaluarse.`,
+          message: `Evaluación completada: ${result.evaluated} candidatos procesados y ${result.failed} con error.`,
         });
       } else {
         setActionFeedback({
           type: "success",
-          message: `Evaluaciones actualizadas: ${result.evaluated} completadas.`,
+          message: `Evaluación completada: ${result.evaluated} candidatos procesados.`,
         });
       }
     } catch (error) {
-      console.error("ERROR CALCULATING EVALUATIONS:", error.response?.data || error);
+      console.error(
+        "ERROR EVALUATING CANDIDATES:",
+        error.response?.data || error,
+      );
       setActionFeedback({
         type: "error",
-        message: error.response?.data?.detail || "No fue posible calcular las evaluaciones. Intenta nuevamente.",
+        message:
+          error.response?.data?.detail ||
+          "No fue posible evaluar los candidatos. Intenta nuevamente.",
       });
     } finally {
-      setIsCalculatingEvaluations(false);
+      setIsEvaluatingCandidates(false);
     }
   }
 
   // ============================================================
-  // VIEW / RECALCULATE RANKING
+  // ACTUALIZAR RANKING
   // ============================================================
 
-  async function viewRanking() {
-    if (!selectedJob) { alert("Seleccione una vacante"); return; }
-    if (isRecalculating) return;
+  // Refresh only: GET current persisted ranking.
+  // This action must never call the LLM or Bedrock.
+  async function refreshRanking() {
+    if (!selectedJob) {
+      alert("Seleccione una vacante");
+      return;
+    }
+
+    if (isEvaluatingCandidates || isRefreshingRanking || isRecalculating) {
+      return;
+    }
+
+    try {
+      setIsRefreshingRanking(true);
+      setActionFeedback(null);
+      setRankingMessage("");
+      setPage(1);
+
+      const refreshed = await loadRanking(
+        1,
+        pageSize,
+        selectedJob,
+        rankingScope,
+      );
+
+      if (refreshed) {
+        setActionFeedback({
+          type: "success",
+          message: "Ranking actualizado.",
+        });
+      }
+    } catch (error) {
+      console.error(
+        "ERROR REFRESHING RANKING:",
+        error.response?.data || error,
+      );
+      setActionFeedback({
+        type: "error",
+        message:
+          error.response?.data?.detail ||
+          "No fue posible actualizar el ranking.",
+      });
+    } finally {
+      setIsRefreshingRanking(false);
+    }
+  }
+
+  // ============================================================
+  // RECALCULAR RANKING
+  // ============================================================
+
+  // Full recalculation forces evaluation of all assigned
+  // candidates and therefore may invoke Bedrock/LLM.
+  async function recalculateRanking() {
+    if (!selectedJob) {
+      alert("Seleccione una vacante");
+      return;
+    }
+
+    if (isEvaluatingCandidates || isRefreshingRanking || isRecalculating) {
+      return;
+    }
+
+    const confirmed = window.confirm(
+      "Se volverán a evaluar todos los candidatos asignados a esta vacante y se reconstruirá el ranking. Esta operación puede tardar y consumir recursos de IA. ¿Deseas continuar?",
+    );
+
+    if (!confirmed) {
+      return;
+    }
 
     try {
       setIsRecalculating(true);
+      setActionFeedback(null);
       setRankingMessage("");
+
       const response = await api.post(
         `/jobs/${selectedJob}/ranking/recalculate`,
         null,
-        { params: { mode: "incremental", scope: rankingScope } },
+        {
+          params: {
+            mode: "full",
+            scope: "assigned",
+          },
+        },
       );
+
       const result = response.data;
-      await loadRanking(1, pageSize);
+
       setPage(1);
-      if (result.total_candidates === 0) {
-        setRankingMessage(
-          rankingScope === "assigned"
-            ? "No hay candidatos asignados a esta vacante."
-            : "No hay candidatos disponibles para evaluar.",
-        );
+      await loadRanking(1, pageSize, selectedJob, rankingScope);
+
+      if (result.failed > 0) {
+        setActionFeedback({
+          type: "error",
+          message: `Ranking recalculado, pero ${result.failed} candidato(s) no pudieron evaluarse.`,
+        });
+      } else {
+        setActionFeedback({
+          type: "success",
+          message: "Ranking recalculado correctamente.",
+        });
       }
     } catch (error) {
-      console.error("ERROR GENERATING RANKING:", error.response?.data || error);
-      alert(error.response?.data?.detail || "No fue posible generar el ranking");
-    } finally {
-      setIsRecalculating(false);
-    }
-  }
-
-  async function recalculateRanking(mode) {
-    if (!selectedJob) { alert("Seleccione una vacante"); return; }
-    setShowModeModal(false);
-
-    const label = mode === "incremental" ? "Solo nuevos candidatos" : "Recalcular todo";
-    if (!window.confirm(`¿${label}?`)) return;
-
-    try {
-      setIsRecalculating(true);
-      await api.post(
-        `/jobs/${selectedJob}/ranking/recalculate`,
-        null,
-        { params: { mode, scope: rankingScope } },
+      console.error(
+        "ERROR RECALCULATING RANKING:",
+        error.response?.data || error,
       );
-      setPage(1);
-      await loadRanking(1, pageSize);
-    } catch (error) {
-      alert(error.response?.data?.detail || "No fue posible recalcular el ranking");
+      setActionFeedback({
+        type: "error",
+        message:
+          error.response?.data?.detail ||
+          "No fue posible recalcular el ranking. Intenta nuevamente.",
+      });
     } finally {
       setIsRecalculating(false);
     }
@@ -403,7 +490,7 @@ function Ranking() {
         </div>
       </header>
 
-      {/* 2. JOB PANEL + PRIMARY CTA */}
+      {/* 2. JOB PANEL + ACTIONS */}
       <div className="ranking-job-panel">
         <div className="ranking-job-panel-left">
           <span className="ranking-job-label">Vacante activa</span>
@@ -434,14 +521,35 @@ function Ranking() {
               Evaluaciones al día
             </span>
           )}
-          <button
-            className="btn btn-primary"
-            onClick={calculateJobEvaluations}
-            disabled={!selectedJob || loading || isCalculatingEvaluations || isRecalculating}
-          >
-            {isCalculatingEvaluations && <span className="ranking-spinner" />}
-            {isCalculatingEvaluations ? "Calculando evaluaciones..." : "Calcular evaluaciones"}
-          </button>
+          <div className="ranking-job-actions">
+            <button
+              className="btn btn-primary"
+              onClick={evaluateCandidates}
+              disabled={!selectedJob || loading || rankingActionBusy}
+              title="Procesa candidatos pendientes de esta vacante."
+            >
+              {isEvaluatingCandidates && <span className="ranking-spinner" />}
+              {isEvaluatingCandidates ? "Evaluando candidatos..." : "Evaluar candidatos"}
+            </button>
+            <button
+              className="btn btn-secondary"
+              onClick={refreshRanking}
+              disabled={!selectedJob || loading || rankingActionBusy}
+              title="Actualiza la información mostrada sin volver a evaluar."
+            >
+              {isRefreshingRanking && <span className="ranking-spinner" />}
+              {isRefreshingRanking ? "Actualizando ranking..." : "Actualizar ranking"}
+            </button>
+            <button
+              className="btn ranking-btn-recalculate"
+              onClick={recalculateRanking}
+              disabled={!selectedJob || loading || rankingActionBusy}
+              title="Vuelve a evaluar todos los candidatos de esta vacante."
+            >
+              {isRecalculating && <span className="ranking-spinner" />}
+              {isRecalculating ? "Recalculando ranking..." : "Recalcular ranking"}
+            </button>
+          </div>
         </div>
       </div>
 
@@ -508,7 +616,7 @@ function Ranking() {
               <button
                 className="btn btn-secondary"
                 onClick={applyFilters}
-                disabled={!hasRanking || loading || isRecalculating}
+                disabled={!hasRanking || loading || rankingActionBusy}
               >
                 Aplicar filtros
               </button>
@@ -524,7 +632,7 @@ function Ranking() {
         </div>
       )}
 
-      {/* 6. RANKING METADATA + UPDATE */}
+      {/* 6. RANKING METADATA */}
       {selectedJob && (
         <div className="ranking-meta">
           <div className="ranking-meta-info">
@@ -532,19 +640,6 @@ function Ranking() {
               ? `Último ranking · v${rankingVersion} · ${new Date(rankingGeneratedAt).toLocaleString("es-ES")}`
               : "\u00A0"}
           </div>
-          <button
-            className="btn btn-secondary"
-            onClick={hasRanking ? () => setShowModeModal(true) : viewRanking}
-            disabled={!selectedJob || loading || isRecalculating}
-          >
-            {loading
-              ? "Cargando..."
-              : isRecalculating
-                ? "Recalculando..."
-                : hasRanking
-                  ? "Actualizar ranking"
-                  : "Generar ranking"}
-          </button>
         </div>
       )}
 
@@ -561,14 +656,14 @@ function Ranking() {
         </div>
       )}
 
-      {/* 9. EMPTY STATES */}
+      {/* 8. EMPTY STATES */}
       {!loading && selectedJob && ranking.length === 0 && (
         <div className="ranking-empty">
           <div className="ranking-empty-icon">📋</div>
           {rankingInfo.pending > 0 ? (
             <>
               <h3>Hay candidatos pendientes de evaluación</h3>
-              <p>Usa "Calcular evaluaciones" para procesar los candidatos asignados a esta vacante.</p>
+              <p>Usa "Evaluar candidatos" para procesar los candidatos asignados a esta vacante.</p>
             </>
           ) : (
             <>
@@ -682,46 +777,6 @@ function Ranking() {
             </span>
             <button className="btn btn-secondary" onClick={() => changePage(page + 1)} disabled={page >= totalPages || loading}>
               Siguiente
-            </button>
-          </div>
-        </div>
-      )}
-
-      {/* ========================================================
-          MODE MODAL
-      ======================================================== */}
-      {showModeModal && (
-        <div className="modal-overlay" onClick={() => setShowModeModal(false)}>
-          <div className="modal" onClick={(e) => e.stopPropagation()}>
-            <div className="modal-header">
-              <h2>Actualizar ranking</h2>
-              <button className="btn btn-close" onClick={() => setShowModeModal(false)} disabled={isRecalculating}>✕</button>
-            </div>
-            <p className="muted" style={{ marginBottom: 20 }}>¿Cómo quieres actualizar el ranking?</p>
-            <div className="ranking-mode-modal-body">
-              <button
-                className="btn btn-primary ranking-mode-option"
-                onClick={() => recalculateRanking("incremental")}
-                disabled={isRecalculating}
-              >
-                <strong>Solo nuevos candidatos</strong>
-                <span>Evalúa solo candidatos asignados desde el último ranking</span>
-              </button>
-              <button
-                className="btn btn-secondary ranking-mode-option"
-                onClick={() => recalculateRanking("full")}
-                disabled={isRecalculating}
-              >
-                <strong>Recalcular todo</strong>
-                <span>Volverá a procesar todas las evaluaciones de esta fuente</span>
-              </button>
-            </div>
-            <button
-              className="btn btn-ghost ranking-mode-cancel"
-              onClick={() => setShowModeModal(false)}
-              disabled={isRecalculating}
-            >
-              Cancelar
             </button>
           </div>
         </div>
