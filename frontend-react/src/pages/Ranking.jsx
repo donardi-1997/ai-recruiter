@@ -70,25 +70,41 @@ function Ranking() {
 
       const data = response.data;
 
-      setJobs(Array.isArray(data) ? data : data.jobs || []);
+      const loadedJobs =
+        Array.isArray(data)
+          ? data
+          : data.jobs || [];
+
+      setJobs(loadedJobs);
+
+      if (!selectedJob && loadedJobs.length > 0) {
+        const firstJobId =
+          loadedJobs[0].job_id;
+
+        setSelectedJob(firstJobId);
+
+        await loadRanking(
+          1,
+          pageSize,
+          firstJobId,
+          rankingScope,
+        );
+      }
     } catch (error) {
-      console.error("ERROR LOADING JOBS:", error.response?.data || error);
+      console.error(
+        "ERROR LOADING JOBS:",
+        error.response?.data || error,
+      );
     }
   }
 
   useEffect(() => {
-    // The initial request synchronizes this view with the API.
+    // Initial API synchronization on mount.
     // eslint-disable-next-line react-hooks/set-state-in-effect
     loadJobs();
-  }, []);
 
-  useEffect(() => {
-    if (!selectedJob && jobs.length > 0) {
-      // Select the first owned vacancy so the ranking is visible on entry.
-      // eslint-disable-next-line react-hooks/set-state-in-effect
-      setSelectedJob(jobs[0].job_id);
-    }
-  }, [jobs, selectedJob]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // ============================================================
   // LOAD RANKING
@@ -97,8 +113,10 @@ function Ranking() {
   async function loadRanking(
     targetPage = page,
     targetPageSize = pageSize,
+    targetJob = selectedJob,
+    targetScope = rankingScope,
   ) {
-    if (!selectedJob) {
+    if (!targetJob) {
       return;
     }
 
@@ -131,7 +149,7 @@ function Ranking() {
         max_score: maxScore,
         page: targetPage,
         page_size: targetPageSize,
-        scope: rankingScope,
+        scope: targetScope,
       };
 
       if (recommendationFilter) {
@@ -140,7 +158,7 @@ function Ranking() {
       }
 
       const response = await api.get(
-        `/jobs/${selectedJob}/ranking`,
+        `/jobs/${targetJob}/ranking`,
         { params },
       );
 
@@ -168,7 +186,7 @@ function Ranking() {
       );
 
       setRankingLoadedScope(
-        data.ranking_scope ?? rankingScope,
+        data.ranking_scope ?? targetScope,
       );
 
       setRankingBaseTotal(
@@ -455,16 +473,60 @@ function Ranking() {
   }
 
 
-  useEffect(() => {
-    if (selectedJob) {
-      loadRanking(
-        1,
-        pageSize,
-      );
+  async function handleJobChange(event) {
+    const nextJob =
+      event.target.value;
+
+    setSelectedJob(nextJob);
+    setPage(1);
+    setRankingMessage("");
+
+    if (!nextJob) {
+      setRanking([]);
+      setRankingGeneratedAt(null);
+      setRankingVersion(null);
+      setRankingLoadedScope(null);
+      setRankingBaseTotal(0);
+      setTotalPages(0);
+
+      setRankingInfo({
+        total: 0,
+        pending: 0,
+        minimum: 0,
+        maximum: 0,
+      });
+
+      return;
     }
 
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedJob, rankingScope]);
+    await loadRanking(
+      1,
+      pageSize,
+      nextJob,
+      rankingScope,
+    );
+  }
+
+
+  async function handleScopeChange(event) {
+    const nextScope =
+      event.target.value;
+
+    setRankingScope(nextScope);
+    setPage(1);
+    setRankingMessage("");
+
+    if (!selectedJob) {
+      return;
+    }
+
+    await loadRanking(
+      1,
+      pageSize,
+      selectedJob,
+      nextScope,
+    );
+  }
 
   // ============================================================
   // OPEN ANALYSIS
@@ -682,11 +744,7 @@ function Ranking() {
 
             <select
               value={selectedJob}
-              onChange={(e) => {
-                setSelectedJob(e.target.value);
-                setPage(1);
-                setRankingMessage("");
-              }}
+              onChange={handleJobChange}
               style={{
                 padding: "10px",
                 minWidth: "250px",
@@ -708,11 +766,7 @@ function Ranking() {
             </label>
             <select
               value={rankingScope}
-              onChange={(e) => {
-                setRankingScope(e.target.value);
-                setPage(1);
-                setRankingMessage("");
-              }}
+              onChange={handleScopeChange}
               style={{ padding: "10px", minWidth: "220px" }}
             >
               <option value="assigned">Solo esta vacante</option>
