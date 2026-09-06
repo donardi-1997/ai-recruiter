@@ -258,8 +258,16 @@ function Ranking() {
       return "Buena coincidencia";
     }
 
+    if (recommendation === "PARTIAL_MATCH") {
+      return "Coincidencia parcial";
+    }
+
     if (recommendation === "LOW_MATCH") {
       return "Baja coincidencia";
+    }
+
+    if (recommendation === "PENDING") {
+      return "Pendiente";
     }
 
     return "Sin clasificación";
@@ -277,10 +285,17 @@ function Ranking() {
       };
     }
 
-    if (recommendation === "GOOD_MATCH") {
+    if (recommendation === "GOOD_MATCH" || recommendation === "PARTIAL_MATCH") {
       return {
         background: "#fef3c7",
         color: "#92400e",
+      };
+    }
+
+    if (recommendation === "PENDING") {
+      return {
+        background: "#f1f5f9",
+        color: "#475569",
       };
     }
 
@@ -486,6 +501,8 @@ function Ranking() {
               <option value="STRONG_MATCH">Excelente coincidencia</option>
 
               <option value="GOOD_MATCH">Buena coincidencia</option>
+
+              <option value="PARTIAL_MATCH">Coincidencia parcial</option>
 
               <option value="LOW_MATCH">Baja coincidencia</option>
             </select>

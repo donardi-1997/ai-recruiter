@@ -302,17 +302,19 @@ def build_ranking_response(
             .all()
         )
 
-        candidates = [
-            {
+        candidates = []
+        for item in items:
+            evaluation = get_evaluation_for_job_candidate(db, job_id, item.candidate_id)
+            candidates.append({
                 "position": item.position,
                 "candidate_id": item.candidate_id,
-                "score": item.score,
+                "match_score": evaluation.match_score if evaluation else item.score,
                 "candidate_name": item.candidate.name if item.candidate else "",
-                "recommendation": "",
+                "recommendation": evaluation.recommendation if evaluation else "PENDING",
                 "status": "COMPLETED",
-            }
-            for item in items
-        ]
+                "strengths": evaluation.strengths if evaluation and evaluation.strengths else [],
+                "gaps": evaluation.gaps if evaluation and evaluation.gaps else [],
+            })
     else:
         total = 0
         total_pages = 0

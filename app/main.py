@@ -317,18 +317,40 @@ def evaluate_candidate_for_job(
     db: Session = Depends(get_db),
     _user: dict = Depends(get_current_user),
 ):
-    _require_candidate(db, candidate_id)
-    _require_job(db, body.job_id)
+    from evaluation import evaluate_candidate as llm_evaluate, retrieve_candidate
+
+    candidate = _require_candidate(db, candidate_id)
+    job = _require_job(db, body.job_id)
+
+    try:
+        results = retrieve_candidate(
+            candidate_id=candidate_id,
+            question=job.description or job.title,
+        )
+        llm_result = llm_evaluate(
+            candidate_id=candidate_id,
+            job_description=job.description or job.title,
+            results=results,
+        )
+    except Exception as exc:
+        logger.error("LLM evaluation failed for candidate %s: %s", candidate_id, exc)
+        llm_result = {
+            "match_score": 0,
+            "recommendation": "LOW_MATCH",
+            "summary": f"Evaluacion fallida: {exc}",
+            "strengths": [],
+            "gaps": [],
+        }
 
     evaluation = crud.create_evaluation(
         db,
         candidate_id=candidate_id,
         job_id=body.job_id,
-        match_score=0.0,
-        recommendation="LOW_MATCH",
-        summary="Evaluacion pendiente de implementar.",
-        strengths=[],
-        gaps=[],
+        match_score=llm_result.get("match_score", 0),
+        recommendation=llm_result.get("recommendation", "LOW_MATCH"),
+        summary=llm_result.get("summary", ""),
+        strengths=llm_result.get("strengths", []),
+        gaps=llm_result.get("gaps", []),
     )
 
     return {
@@ -473,9 +495,9 @@ def get_job_ranking(
 
     candidates = result["candidates"]
     if min_score > 0:
-        candidates = [c for c in candidates if c.get("score", 0) >= min_score]
+        candidates = [c for c in candidates if c.get("match_score", 0) >= min_score]
     if max_score < 100:
-        candidates = [c for c in candidates if c.get("score", 0) <= max_score]
+        candidates = [c for c in candidates if c.get("match_score", 0) <= max_score]
 
     result["candidates"] = candidates
     result["total"] = len(candidates)
@@ -499,6 +521,9 @@ def recalculate_ranking(
         raise HTTPException(status_code=409, detail="Otro proceso esta recalculando el ranking.")
 
     try:
+        from evaluation import evaluate_candidate as llm_evaluate, retrieve_candidate
+
+        job = crud.get_job(db, job_id)
         meta = crud.get_ranking_metadata(db, job_id)
         prev_version = (meta.ranking_version if meta else 0) or 0
         new_version = prev_version + 1
@@ -509,13 +534,61 @@ def recalculate_ranking(
 
         ranking = crud.upsert_ranking_metadata(db, job_id, new_version, mode=effective_mode)
 
-        # Get candidates assigned to this job
         assigned_candidates = crud.list_candidates_for_job(db, job_id, page=1, page_size=1000)[0]
+
+        evaluated_count = 0
+        failed_count = 0
+        failures = []
 
         all_items: list[dict] = []
         for position, candidate in enumerate(assigned_candidates, start=1):
-            # Get evaluation for this candidate-job pair
             evaluation = crud.get_evaluation_for_job_candidate(db, job_id, candidate.id)
+
+            needs_evaluation = (
+                evaluation is None
+                or effective_mode == "full"
+            )
+
+            if needs_evaluation:
+                try:
+                    results = retrieve_candidate(
+                        candidate_id=candidate.id,
+                        question=job.description or job.title,
+                    )
+                    llm_result = llm_evaluate(
+                        candidate_id=candidate.id,
+                        job_description=job.description or job.title,
+                        results=results,
+                    )
+                    evaluation = crud.create_evaluation(
+                        db,
+                        candidate_id=candidate.id,
+                        job_id=job_id,
+                        match_score=llm_result.get("match_score", 0),
+                        recommendation=llm_result.get("recommendation", "LOW_MATCH"),
+                        summary=llm_result.get("summary", ""),
+                        strengths=llm_result.get("strengths", []),
+                        gaps=llm_result.get("gaps", []),
+                    )
+                    evaluated_count += 1
+                except Exception as exc:
+                    logger.error("Evaluation failed for candidate %s: %s", candidate.id, exc)
+                    failed_count += 1
+                    failures.append({"candidate_id": candidate.id, "error": str(exc)})
+                    if evaluation is None:
+                        evaluation = crud.create_evaluation(
+                            db,
+                            candidate_id=candidate.id,
+                            job_id=job_id,
+                            match_score=0.0,
+                            recommendation="LOW_MATCH",
+                            summary="Evaluacion fallida.",
+                            strengths=[],
+                            gaps=[],
+                        )
+            else:
+                evaluated_count += 1
+
             score = evaluation.match_score if evaluation else 0.0
             all_items.append({
                 "candidate_id": candidate.id,
@@ -530,8 +603,9 @@ def recalculate_ranking(
             "job_id": job_id,
             "mode": effective_mode,
             "total_candidates": len(assigned_candidates),
-            "evaluated": len([i for i in all_items if i["score"] > 0]),
-            "failed": 0,
+            "evaluated": evaluated_count,
+            "failed": failed_count,
+            "failures": failures,
             "ranking_version": new_version,
         }
     finally:
@@ -552,6 +626,20 @@ def get_latest_ranking(
 
     items = crud.get_ranking_items(db, meta.id)
 
+    candidates = []
+    for item in items:
+        evaluation = crud.get_evaluation_for_job_candidate(db, job_id, item.candidate_id)
+        candidates.append({
+            "position": item.position,
+            "candidate_id": item.candidate_id,
+            "match_score": evaluation.match_score if evaluation else item.score,
+            "candidate_name": item.candidate.name if item.candidate else "",
+            "recommendation": evaluation.recommendation if evaluation else "PENDING",
+            "status": "COMPLETED",
+            "strengths": evaluation.strengths if evaluation and evaluation.strengths else [],
+            "gaps": evaluation.gaps if evaluation and evaluation.gaps else [],
+        })
+
     return {
         "job_id": job_id,
         "job_title": crud.get_job(db, job_id).title,
@@ -562,15 +650,5 @@ def get_latest_ranking(
         "page": 1,
         "page_size": len(items),
         "pending_candidates": 0,
-        "candidates": [
-            {
-                "position": item.position,
-                "candidate_id": item.candidate_id,
-                "score": item.score,
-                "candidate_name": item.candidate.name if item.candidate else "",
-                "recommendation": "",
-                "status": "COMPLETED",
-            }
-            for item in items
-        ],
+        "candidates": candidates,
     }

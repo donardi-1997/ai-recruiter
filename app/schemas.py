@@ -31,10 +31,12 @@ class JobResponse(BaseModel):
 class RankingItemSchema(BaseModel):
     position: int
     candidate_id: str
-    score: float
+    match_score: float
     candidate_name: str = ""
     recommendation: str = ""
     status: str = "COMPLETED"
+    strengths: list[str] = Field(default_factory=list)
+    gaps: list[str] = Field(default_factory=list)
 
     model_config = {"from_attributes": True}
 
