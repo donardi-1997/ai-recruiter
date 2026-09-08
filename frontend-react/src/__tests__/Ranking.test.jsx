@@ -56,6 +56,73 @@ const CANDIDATES_RANKING = {
   },
 };
 
+const SCOPE_MISMATCH_RANKING = {
+  data: {
+    candidates: [],
+    ranking_generated_at: "2026-09-08T10:00:00Z",
+    ranking_version: 2,
+    ranking_scope: "assigned",
+    scope_mismatch: true,
+    ranking_total: 0,
+    total: 0,
+    total_pages: 0,
+    page: 1,
+    page_size: 10,
+    pending_candidates: 0,
+  },
+};
+
+const ALL_CANDIDATES_RANKING = {
+  data: {
+    candidates: [
+      { candidate_id: "c1", candidate_name: "Ana", position: 1, status: "COMPLETED", match_score: 85, recommendation: "GOOD_MATCH", strengths: ["Python"], gaps: [] },
+      { candidate_id: "c2", candidate_name: "Bob", position: 2, status: "COMPLETED", match_score: 75, recommendation: "GOOD_MATCH", strengths: ["Java"], gaps: [] },
+      { candidate_id: "c3", candidate_name: "Carlos", position: 3, status: "COMPLETED", match_score: 65, recommendation: "PARTIAL_MATCH", strengths: ["JS"], gaps: [] },
+      { candidate_id: "c4", candidate_name: "Diana", position: 4, status: "COMPLETED", match_score: 55, recommendation: "LOW_MATCH", strengths: ["Go"], gaps: [] },
+      { candidate_id: "c5", candidate_name: "Eva", position: 5, status: "COMPLETED", match_score: 45, recommendation: "LOW_MATCH", strengths: ["Rust"], gaps: [] },
+    ],
+    ranking_generated_at: "2026-09-06T12:00:00Z",
+    ranking_version: 1,
+    ranking_scope: "all",
+    scope_mismatch: false,
+    ranking_total: 5,
+    total: 5,
+    total_pages: 1,
+    page: 1,
+    page_size: 10,
+    pending_candidates: 0,
+    score_min: 45,
+    score_max: 85,
+  },
+};
+
+const PAGINATED_RANKING = {
+  data: {
+    candidates: Array.from({ length: 10 }, (_, i) => ({
+      candidate_id: `c${i + 1}`,
+      candidate_name: `Candidate ${i + 1}`,
+      position: i + 1,
+      status: "COMPLETED",
+      match_score: 90 - i,
+      recommendation: "GOOD_MATCH",
+      strengths: [],
+      gaps: [],
+    })),
+    ranking_generated_at: "2026-09-06T12:00:00Z",
+    ranking_version: 1,
+    ranking_scope: "all",
+    scope_mismatch: false,
+    ranking_total: 25,
+    total: 10,
+    total_pages: 3,
+    page: 1,
+    page_size: 10,
+    pending_candidates: 0,
+    score_min: 81,
+    score_max: 90,
+  },
+};
+
 describe("Ranking page", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -402,6 +469,16 @@ describe("Ranking page", () => {
   // ============================================================
 
   it("shows correct feedback messages for each action", async () => {
+    let rankingCalls = 0;
+    api.get.mockImplementation((url) => {
+      if (url === "/jobs") return Promise.resolve({ data: [{ job_id: "job-1", title: "Dev Python" }] });
+      if (url.includes("/ranking")) {
+        rankingCalls += 1;
+        if (rankingCalls <= 1) return Promise.resolve(EMPTY_RANKING);
+        return Promise.resolve(CANDIDATES_RANKING);
+      }
+      return Promise.resolve({ data: [] });
+    });
     api.post.mockResolvedValueOnce({ data: { total_candidates: 2, evaluated: 2, failed: 0 } });
     renderRanking();
     await waitFor(() => { expect(screen.getByRole("button", { name: "Evaluar candidatos" })).not.toBeDisabled(); });
@@ -429,21 +506,7 @@ describe("Ranking page", () => {
         const scope = config?.params?.scope || "assigned";
 
         if (scope === "all") {
-          return Promise.resolve({
-            data: {
-              candidates: [],
-              ranking_generated_at: "2026-09-08T10:00:00Z",
-              ranking_version: 2,
-              ranking_scope: "assigned",
-              scope_mismatch: true,
-              ranking_total: 0,
-              total: 0,
-              total_pages: 0,
-              page: 1,
-              page_size: 10,
-              pending_candidates: 0,
-            },
-          });
+          return Promise.resolve(SCOPE_MISMATCH_RANKING);
         }
 
         return Promise.resolve(EMPTY_RANKING);
@@ -471,6 +534,247 @@ describe("Ranking page", () => {
         ),
       ).toBeInTheDocument();
     });
+  });
+
+  // ============================================================
+  // NEW TESTS FOR FALSE POSITIVE FIXES
+  // ============================================================
+
+  // TEST 1: scope=all + Recalcular
+  it("Recalcular ranking with scope=all sends correct POST", async () => {
+    window.confirm = vi.fn(() => true);
+    api.get.mockImplementation((url) => {
+      if (url === "/jobs") return Promise.resolve({ data: [{ job_id: "job-1", title: "Dev Python" }] });
+      if (url.includes("/ranking")) return Promise.resolve(ALL_CANDIDATES_RANKING);
+      return Promise.resolve({ data: [] });
+    });
+    api.post.mockResolvedValueOnce({ data: { total_candidates: 5, evaluated: 5, failed: 0 } });
+    renderRanking();
+    await waitFor(() => { expect(screen.getByRole("button", { name: "Recalcular ranking" })).not.toBeDisabled(); });
+    fireEvent.change(screen.getByDisplayValue("Solo esta vacante"), { target: { value: "all" } });
+    await waitFor(() => { expect(screen.getByDisplayValue("Todos mis candidatos")).toBeInTheDocument(); });
+    fireEvent.click(screen.getByRole("button", { name: "Recalcular ranking" }));
+    await waitFor(() => {
+      expect(api.post).toHaveBeenCalledWith(
+        "/jobs/job-1/ranking/recalculate",
+        null,
+        { params: { mode: "full", scope: "all" } },
+      );
+    });
+  });
+
+  // TEST 2: scope=all + Evaluar
+  it("Evaluar candidatos with scope=all sends correct POST", async () => {
+    api.get.mockImplementation((url) => {
+      if (url === "/jobs") return Promise.resolve({ data: [{ job_id: "job-1", title: "Dev Python" }] });
+      if (url.includes("/ranking")) return Promise.resolve(ALL_CANDIDATES_RANKING);
+      return Promise.resolve({ data: [] });
+    });
+    api.post.mockResolvedValueOnce({ data: { total_candidates: 5, evaluated: 5, failed: 0 } });
+    renderRanking();
+    await waitFor(() => { expect(screen.getByRole("button", { name: "Evaluar candidatos" })).not.toBeDisabled(); });
+    fireEvent.change(screen.getByDisplayValue("Solo esta vacante"), { target: { value: "all" } });
+    await waitFor(() => { expect(screen.getByDisplayValue("Todos mis candidatos")).toBeInTheDocument(); });
+    fireEvent.click(screen.getByRole("button", { name: "Evaluar candidatos" }));
+    await waitFor(() => {
+      expect(api.post).toHaveBeenCalledWith(
+        "/jobs/job-1/ranking/recalculate",
+        null,
+        { params: { mode: "incremental", scope: "all" } },
+      );
+    });
+  });
+
+  // TEST 3: POST success + GET success = success message
+  it("shows success when POST and GET both succeed with candidates", async () => {
+    window.confirm = vi.fn(() => true);
+    let rankingCalls = 0;
+    api.get.mockImplementation((url) => {
+      if (url === "/jobs") return Promise.resolve({ data: [{ job_id: "job-1", title: "Dev Python" }] });
+      if (url.includes("/ranking")) {
+        rankingCalls += 1;
+        if (rankingCalls <= 1) return Promise.resolve(EMPTY_RANKING);
+        return Promise.resolve(ALL_CANDIDATES_RANKING);
+      }
+      return Promise.resolve({ data: [] });
+    });
+    api.post.mockResolvedValueOnce({ data: { total_candidates: 5, evaluated: 5, failed: 0 } });
+    renderRanking();
+    await waitFor(() => { expect(screen.getByRole("button", { name: "Recalcular ranking" })).not.toBeDisabled(); });
+    fireEvent.click(screen.getByRole("button", { name: "Recalcular ranking" }));
+    await waitFor(() => { expect(screen.getByText("Ranking recalculado correctamente.")).toBeInTheDocument(); });
+  });
+
+  // TEST 4: POST success + GET scope_mismatch = NO success message
+  it("does NOT show success when POST succeeds but GET returns scope_mismatch", async () => {
+    window.confirm = vi.fn(() => true);
+    let rankingCalls = 0;
+    api.get.mockImplementation((url) => {
+      if (url === "/jobs") return Promise.resolve({ data: [{ job_id: "job-1", title: "Dev Python" }] });
+      if (url.includes("/ranking")) {
+        rankingCalls += 1;
+        if (rankingCalls <= 1) return Promise.resolve(EMPTY_RANKING);
+        return Promise.resolve(SCOPE_MISMATCH_RANKING);
+      }
+      return Promise.resolve({ data: [] });
+    });
+    api.post.mockResolvedValueOnce({ data: { total_candidates: 5, evaluated: 5, failed: 0 } });
+    renderRanking();
+    await waitFor(() => { expect(screen.getByRole("button", { name: "Recalcular ranking" })).not.toBeDisabled(); });
+    // Change scope to "all" to trigger scope_mismatch (ranking was generated for "assigned")
+    fireEvent.change(screen.getByDisplayValue("Solo esta vacante"), { target: { value: "all" } });
+    await waitFor(() => { expect(screen.getByDisplayValue("Todos mis candidatos")).toBeInTheDocument(); });
+    fireEvent.click(screen.getByRole("button", { name: "Recalcular ranking" }));
+    await waitFor(() => {
+      expect(screen.queryByText("Ranking recalculado correctamente.")).not.toBeInTheDocument();
+      const messages = screen.getAllByText(/El ranking actual fue generado solo para los candidatos asignados/i);
+      expect(messages.length).toBeGreaterThan(0);
+    });
+  });
+
+  // TEST 5: POST reports candidates but GET returns empty ranking_total
+  it("shows error when POST reports candidates but GET returns empty ranking", async () => {
+    window.confirm = vi.fn(() => true);
+    let rankingCalls = 0;
+    const EMPTY_GET_RANKING = {
+      data: {
+        candidates: [],
+        ranking_generated_at: "2026-09-08T10:00:00Z",
+        ranking_version: 1,
+        ranking_scope: "all",
+        scope_mismatch: false,
+        ranking_total: 0,
+        total: 0,
+        total_pages: 0,
+        page: 1,
+        page_size: 10,
+        pending_candidates: 0,
+      },
+    };
+    api.get.mockImplementation((url) => {
+      if (url === "/jobs") return Promise.resolve({ data: [{ job_id: "job-1", title: "Dev Python" }] });
+      if (url.includes("/ranking")) {
+        rankingCalls += 1;
+        if (rankingCalls <= 1) return Promise.resolve(EMPTY_RANKING);
+        return Promise.resolve(EMPTY_GET_RANKING);
+      }
+      return Promise.resolve({ data: [] });
+    });
+    api.post.mockResolvedValueOnce({ data: { total_candidates: 5, evaluated: 5, failed: 0 } });
+    renderRanking();
+    await waitFor(() => { expect(screen.getByRole("button", { name: "Recalcular ranking" })).not.toBeDisabled(); });
+    fireEvent.click(screen.getByRole("button", { name: "Recalcular ranking" }));
+    await waitFor(() => {
+      expect(screen.queryByText("Ranking recalculado correctamente.")).not.toBeInTheDocument();
+      expect(screen.getByText(/El ranking se procesó, pero no fue posible cargar los resultados/i)).toBeInTheDocument();
+    });
+  });
+
+  // TEST 6: POST scope=all with total_candidates=0
+  it("shows correct message when POST scope=all returns total_candidates=0", async () => {
+    window.confirm = vi.fn(() => true);
+    let rankingCalls = 0;
+    api.get.mockImplementation((url) => {
+      if (url === "/jobs") return Promise.resolve({ data: [{ job_id: "job-1", title: "Dev Python" }] });
+      if (url.includes("/ranking")) {
+        rankingCalls += 1;
+        if (rankingCalls <= 1) return Promise.resolve(EMPTY_RANKING);
+        return Promise.resolve(EMPTY_RANKING);
+      }
+      return Promise.resolve({ data: [] });
+    });
+    api.post.mockResolvedValueOnce({ data: { total_candidates: 0, evaluated: 0, failed: 0 } });
+    renderRanking();
+    await waitFor(() => { expect(screen.getByRole("button", { name: "Recalcular ranking" })).not.toBeDisabled(); });
+    fireEvent.change(screen.getByDisplayValue("Solo esta vacante"), { target: { value: "all" } });
+    await waitFor(() => { expect(screen.getByDisplayValue("Todos mis candidatos")).toBeInTheDocument(); });
+    fireEvent.click(screen.getByRole("button", { name: "Recalcular ranking" }));
+    await waitFor(() => {
+      expect(screen.getByText("No hay candidatos registrados en tu cuenta.")).toBeInTheDocument();
+    });
+  });
+
+  // TEST 7: POST scope=assigned with total_candidates=0
+  it("shows correct message when POST scope=assigned returns total_candidates=0", async () => {
+    window.confirm = vi.fn(() => true);
+    let rankingCalls = 0;
+    api.get.mockImplementation((url) => {
+      if (url === "/jobs") return Promise.resolve({ data: [{ job_id: "job-1", title: "Dev Python" }] });
+      if (url.includes("/ranking")) {
+        rankingCalls += 1;
+        if (rankingCalls <= 1) return Promise.resolve(EMPTY_RANKING);
+        return Promise.resolve(EMPTY_RANKING);
+      }
+      return Promise.resolve({ data: [] });
+    });
+    api.post.mockResolvedValueOnce({ data: { total_candidates: 0, evaluated: 0, failed: 0 } });
+    renderRanking();
+    await waitFor(() => { expect(screen.getByRole("button", { name: "Recalcular ranking" })).not.toBeDisabled(); });
+    fireEvent.click(screen.getByRole("button", { name: "Recalcular ranking" }));
+    await waitFor(() => {
+      expect(screen.getByText("No hay candidatos asignados a esta vacante.")).toBeInTheDocument();
+    });
+  });
+
+  // TEST 8: Refresh ranking with scope_mismatch = NO "Ranking actualizado"
+  it("does NOT show 'Ranking actualizado' when refresh returns scope_mismatch", async () => {
+    api.get.mockImplementation((url, config) => {
+      if (url === "/jobs") return Promise.resolve({ data: [{ job_id: "job-1", title: "Dev Python" }] });
+      if (url.includes("/ranking")) {
+        const scope = config?.params?.scope || "assigned";
+        if (scope === "all") return Promise.resolve(SCOPE_MISMATCH_RANKING);
+        return Promise.resolve(EMPTY_RANKING);
+      }
+      return Promise.resolve({ data: [] });
+    });
+    renderRanking();
+    await waitFor(() => { expect(screen.getByRole("button", { name: "Actualizar ranking" })).not.toBeDisabled(); });
+    fireEvent.change(screen.getByDisplayValue("Solo esta vacante"), { target: { value: "all" } });
+    await waitFor(() => { expect(screen.getByDisplayValue("Todos mis candidatos")).toBeInTheDocument(); });
+    fireEvent.click(screen.getByRole("button", { name: "Actualizar ranking" }));
+    await waitFor(() => {
+      expect(screen.queryByText("Ranking actualizado.")).not.toBeInTheDocument();
+      const messages = screen.getAllByText(/El ranking actual fue generado solo para los candidatos asignados/i);
+      expect(messages.length).toBeGreaterThan(0);
+    });
+  });
+
+  // TEST 9: Refresh ranking with valid GET = "Ranking actualizado"
+  it("shows 'Ranking actualizado' when refresh returns valid data", async () => {
+    let rankingCalls = 0;
+    api.get.mockImplementation((url) => {
+      if (url === "/jobs") return Promise.resolve({ data: [{ job_id: "job-1", title: "Dev Python" }] });
+      if (url.includes("/ranking")) {
+        rankingCalls += 1;
+        if (rankingCalls <= 1) return Promise.resolve(EMPTY_RANKING);
+        return Promise.resolve(CANDIDATES_RANKING);
+      }
+      return Promise.resolve({ data: [] });
+    });
+    renderRanking();
+    await waitFor(() => { expect(screen.getByRole("button", { name: "Actualizar ranking" })).not.toBeDisabled(); });
+    fireEvent.click(screen.getByRole("button", { name: "Actualizar ranking" }));
+    await waitFor(() => { expect(screen.getByText("Ranking actualizado.")).toBeInTheDocument(); });
+  });
+
+  // TEST 10: Pagination - ranking_total=25, candidates.length=10 = valid
+  it("considers paginated GET with ranking_total > candidates.length as valid", async () => {
+    window.confirm = vi.fn(() => true);
+    let rankingCalls = 0;
+    api.get.mockImplementation((url) => {
+      if (url === "/jobs") return Promise.resolve({ data: [{ job_id: "job-1", title: "Dev Python" }] });
+      if (url.includes("/ranking")) {
+        rankingCalls += 1;
+        if (rankingCalls <= 1) return Promise.resolve(EMPTY_RANKING);
+        return Promise.resolve(PAGINATED_RANKING);
+      }
+      return Promise.resolve({ data: [] });
+    });
+    api.post.mockResolvedValueOnce({ data: { total_candidates: 25, evaluated: 25, failed: 0 } });
+    renderRanking();
+    await waitFor(() => { expect(screen.getByRole("button", { name: "Recalcular ranking" })).not.toBeDisabled(); });
+    fireEvent.click(screen.getByRole("button", { name: "Recalcular ranking" }));
+    await waitFor(() => { expect(screen.getByText("Ranking recalculado correctamente.")).toBeInTheDocument(); });
   });
 
 });

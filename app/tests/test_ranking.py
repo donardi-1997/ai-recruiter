@@ -20,7 +20,7 @@ from app.db import Base
 from app.deps import acquire_job_lock, _advisory_lock_key, get_current_user, get_db
 from app.main import app
 from app.models import Candidate, Evaluation, Job, JobCandidate, Ranking, RankingItem
-from app.crud import build_ranking_response, get_ranking_metadata, get_ranking_items
+from app.crud import build_ranking_response, get_ranking_metadata, get_ranking_items, insert_ranking_items
 
 
 # ============================================================
@@ -108,12 +108,12 @@ def _seed_job(db, job_id=None, title="Dev Python"):
     return job
 
 
-def _seed_candidate(db, candidate_id=None, name="Ana García", email=None):
+def _seed_candidate(db, candidate_id=None, name="Ana García", email=None, owner_sub="test-user-123"):
     cand = Candidate(
         id=candidate_id or _uuid(),
         name=name,
         email=email,
-        owner_sub="test-user-123",
+        owner_sub=owner_sub,
     )
     db.add(cand)
     db.commit()
@@ -594,3 +594,358 @@ def test_recalculate_scope_all_includes_unassigned(
     assert assigned_response.json()[
         "total_candidates"
     ] == 1
+
+
+# ============================================================
+# TESTS — E2E POST recalculate -> GET ranking
+# ============================================================
+
+def test_recalculate_all_then_get_all_returns_all_candidates(
+    client, db_session, monkeypatch,
+):
+    """Full E2E: POST scope=all -> GET scope=all returns all candidates."""
+    import app.evaluation as evaluation_module
+
+    job = _seed_job(db_session)
+
+    assigned = _seed_candidate(db_session, name="Asignado")
+    unassigned = _seed_candidate(db_session, name="No asignado")
+
+    db_session.add(JobCandidate(job_id=job.id, candidate_id=assigned.id))
+    db_session.commit()
+
+    monkeypatch.setattr(
+        evaluation_module,
+        "retrieve_candidate",
+        lambda **kwargs: [{"content": {"text": "CV de prueba"}}],
+    )
+
+    long_summary = (
+        "El candidato presenta experiencia suficiente para "
+        "realizar una evaluación completa de su ajuste frente "
+        "a los requisitos técnicos de esta vacante."
+    )
+
+    monkeypatch.setattr(
+        evaluation_module,
+        "evaluate_candidate",
+        lambda **kwargs: {
+            "status": "COMPLETED",
+            "match_score": 50,
+            "recommendation": "LOW_MATCH",
+            "summary": long_summary,
+            "strengths": [],
+            "gaps": [],
+        },
+    )
+
+    # POST scope=all
+    post_resp = client.post(
+        f"/api/jobs/{job.id}/ranking/recalculate",
+        params={"mode": "full", "scope": "all"},
+    )
+    assert post_resp.status_code == 200
+    post_data = post_resp.json()
+    assert post_data["scope"] == "all"
+    assert post_data["total_candidates"] == 2
+    assert post_data["ranking_version"] >= 1
+
+    # Immediately GET scope=all
+    get_resp = client.get(
+        f"/api/jobs/{job.id}/ranking",
+        params={"scope": "all", "min_score": 0, "max_score": 100, "page": 1, "page_size": 10},
+    )
+    assert get_resp.status_code == 200
+    get_data = get_resp.json()
+
+    assert get_data["scope_mismatch"] is False
+    assert get_data["ranking_scope"] == "all"
+    assert get_data["ranking_total"] == 2
+    assert get_data["total"] == 2
+    assert len(get_data["candidates"]) == 2
+
+    candidate_ids = {c["candidate_id"] for c in get_data["candidates"]}
+    assert assigned.id in candidate_ids
+    assert unassigned.id in candidate_ids
+
+
+def test_recalculate_assigned_then_get_assigned_returns_only_assigned(
+    client, db_session, monkeypatch,
+):
+    """Full E2E: POST scope=assigned -> GET scope=assigned returns only assigned."""
+    import app.evaluation as evaluation_module
+
+    job = _seed_job(db_session)
+
+    assigned = _seed_candidate(db_session, name="Asignado")
+    unassigned = _seed_candidate(db_session, name="No asignado")
+
+    db_session.add(JobCandidate(job_id=job.id, candidate_id=assigned.id))
+    db_session.commit()
+
+    monkeypatch.setattr(
+        evaluation_module,
+        "retrieve_candidate",
+        lambda **kwargs: [{"content": {"text": "CV de prueba"}}],
+    )
+
+    long_summary = (
+        "El candidato presenta experiencia suficiente para "
+        "realizar una evaluación completa de su ajuste frente "
+        "a los requisitos técnicos de esta vacante."
+    )
+
+    monkeypatch.setattr(
+        evaluation_module,
+        "evaluate_candidate",
+        lambda **kwargs: {
+            "status": "COMPLETED",
+            "match_score": 50,
+            "recommendation": "LOW_MATCH",
+            "summary": long_summary,
+            "strengths": [],
+            "gaps": [],
+        },
+    )
+
+    # POST scope=assigned
+    post_resp = client.post(
+        f"/api/jobs/{job.id}/ranking/recalculate",
+        params={"mode": "full", "scope": "assigned"},
+    )
+    assert post_resp.status_code == 200
+    post_data = post_resp.json()
+    assert post_data["scope"] == "assigned"
+    assert post_data["total_candidates"] == 1
+
+    # GET scope=assigned
+    get_resp = client.get(
+        f"/api/jobs/{job.id}/ranking",
+        params={"scope": "assigned", "min_score": 0, "max_score": 100, "page": 1, "page_size": 10},
+    )
+    assert get_resp.status_code == 200
+    get_data = get_resp.json()
+
+    assert get_data["scope_mismatch"] is False
+    assert get_data["ranking_scope"] == "assigned"
+    assert get_data["ranking_total"] == 1
+    assert get_data["total"] == 1
+    assert len(get_data["candidates"]) == 1
+    assert get_data["candidates"][0]["candidate_id"] == assigned.id
+
+
+def test_ranking_scope_transition_replaces_items_correctly(
+    client, db_session, monkeypatch,
+):
+    """Scope transition: assigned -> all -> assigned verifies items replaced correctly."""
+    import app.evaluation as evaluation_module
+
+    job = _seed_job(db_session)
+
+    assigned = _seed_candidate(db_session, name="Asignado")
+    unassigned = _seed_candidate(db_session, name="No asignado")
+
+    db_session.add(JobCandidate(job_id=job.id, candidate_id=assigned.id))
+    db_session.commit()
+
+    monkeypatch.setattr(
+        evaluation_module,
+        "retrieve_candidate",
+        lambda **kwargs: [{"content": {"text": "CV de prueba"}}],
+    )
+
+    long_summary = (
+        "El candidato presenta experiencia suficiente para "
+        "realizar una evaluación completa de su ajuste frente "
+        "a los requisitos técnicos de esta vacante."
+    )
+
+    monkeypatch.setattr(
+        evaluation_module,
+        "evaluate_candidate",
+        lambda **kwargs: {
+            "status": "COMPLETED",
+            "match_score": 50,
+            "recommendation": "LOW_MATCH",
+            "summary": long_summary,
+            "strengths": [],
+            "gaps": [],
+        },
+    )
+
+    # 1. POST scope=assigned
+    resp1 = client.post(
+        f"/api/jobs/{job.id}/ranking/recalculate",
+        params={"mode": "full", "scope": "assigned"},
+    )
+    assert resp1.status_code == 200
+    assert resp1.json()["total_candidates"] == 1
+
+    get1 = client.get(
+        f"/api/jobs/{job.id}/ranking",
+        params={"scope": "assigned", "min_score": 0, "max_score": 100, "page": 1, "page_size": 10},
+    )
+    assert get1.json()["ranking_total"] == 1
+    assert get1.json()["candidates"][0]["candidate_id"] == assigned.id
+
+    # 2. POST scope=all
+    resp2 = client.post(
+        f"/api/jobs/{job.id}/ranking/recalculate",
+        params={"mode": "full", "scope": "all"},
+    )
+    assert resp2.status_code == 200
+    assert resp2.json()["total_candidates"] == 2
+
+    get2 = client.get(
+        f"/api/jobs/{job.id}/ranking",
+        params={"scope": "all", "min_score": 0, "max_score": 100, "page": 1, "page_size": 10},
+    )
+    assert get2.json()["ranking_total"] == 2
+    candidate_ids_2 = {c["candidate_id"] for c in get2.json()["candidates"]}
+    assert assigned.id in candidate_ids_2
+    assert unassigned.id in candidate_ids_2
+
+    # 3. GET assigned WITHOUT recalculating -> scope_mismatch
+    get3 = client.get(
+        f"/api/jobs/{job.id}/ranking",
+        params={"scope": "assigned", "min_score": 0, "max_score": 100, "page": 1, "page_size": 10},
+    )
+    assert get3.json()["scope_mismatch"] is True
+    assert get3.json()["ranking_total"] == 0
+    assert get3.json()["candidates"] == []
+
+    # 4. POST scope=assigned again -> back to 1 candidate
+    resp4 = client.post(
+        f"/api/jobs/{job.id}/ranking/recalculate",
+        params={"mode": "full", "scope": "assigned"},
+    )
+    assert resp4.status_code == 200
+    assert resp4.json()["total_candidates"] == 1
+
+    get4 = client.get(
+        f"/api/jobs/{job.id}/ranking",
+        params={"scope": "assigned", "min_score": 0, "max_score": 100, "page": 1, "page_size": 10},
+    )
+    assert get4.json()["scope_mismatch"] is False
+    assert get4.json()["ranking_scope"] == "assigned"
+    assert get4.json()["ranking_total"] == 1
+    assert get4.json()["candidates"][0]["candidate_id"] == assigned.id
+
+
+def test_scope_all_excludes_other_tenant_candidates(
+    client, db_session, monkeypatch,
+):
+    """Multi-tenant: User A scope=all should NOT see User B's candidates."""
+    import app.evaluation as evaluation_module
+
+    job = _seed_job(db_session, title="Job A")
+
+    # User A's candidates
+    cand_a1 = _seed_candidate(db_session, name="UserA Cand 1")
+    cand_a2 = _seed_candidate(db_session, name="UserA Cand 2")
+    db_session.add(JobCandidate(job_id=job.id, candidate_id=cand_a1.id))
+    db_session.commit()
+
+    # User B's candidate (different owner_sub)
+    cand_b = _seed_candidate(db_session, name="UserB Cand", owner_sub="other-user-456")
+    db_session.commit()
+
+    monkeypatch.setattr(
+        evaluation_module,
+        "retrieve_candidate",
+        lambda **kwargs: [{"content": {"text": "CV de prueba"}}],
+    )
+
+    long_summary = (
+        "El candidato presenta experiencia suficiente para "
+        "realizar una evaluación completa de su ajuste frente "
+        "a los requisitos técnicos de esta vacante."
+    )
+
+    monkeypatch.setattr(
+        evaluation_module,
+        "evaluate_candidate",
+        lambda **kwargs: {
+            "status": "COMPLETED",
+            "match_score": 50,
+            "recommendation": "LOW_MATCH",
+            "summary": long_summary,
+            "strengths": [],
+            "gaps": [],
+        },
+    )
+
+    # POST scope=all as User A (test-user-123)
+    post_resp = client.post(
+        f"/api/jobs/{job.id}/ranking/recalculate",
+        params={"mode": "full", "scope": "all"},
+    )
+    assert post_resp.status_code == 200
+    assert post_resp.json()["total_candidates"] == 2  # Only User A's candidates
+
+    # GET scope=all
+    get_resp = client.get(
+        f"/api/jobs/{job.id}/ranking",
+        params={"scope": "all", "min_score": 0, "max_score": 100, "page": 1, "page_size": 10},
+    )
+    assert get_resp.status_code == 200
+    get_data = get_resp.json()
+
+    assert get_data["ranking_total"] == 2
+    assert get_data["total"] == 2
+    candidate_ids = {c["candidate_id"] for c in get_data["candidates"]}
+    assert cand_a1.id in candidate_ids
+    assert cand_a2.id in candidate_ids
+    assert cand_b.id not in candidate_ids  # User B's candidate excluded
+
+
+def test_insert_ranking_items_replaces_previous_items(db_session):
+    """insert_ranking_items deletes old items and inserts new ones atomically."""
+    job = _seed_job(db_session)
+
+    # Create initial ranking
+    ranking = Ranking(
+        id=_uuid(),
+        job_id=job.id,
+        ranking_version=1,
+        mode="full",
+        notes="scope:assigned",
+    )
+    db_session.add(ranking)
+    db_session.commit()
+
+    # Seed 3 candidates
+    cand1 = _seed_candidate(db_session, name="Cand 1")
+    cand2 = _seed_candidate(db_session, name="Cand 2")
+    cand3 = _seed_candidate(db_session, name="Cand 3")
+
+    # Insert initial items (assigned scope - 2 candidates)
+    initial_items = [
+        {"candidate_id": cand1.id, "score": 80.0, "position": 1},
+        {"candidate_id": cand2.id, "score": 70.0, "position": 2},
+    ]
+    count1 = insert_ranking_items(db_session, ranking_id=ranking.id, items=initial_items)
+    assert count1 == 2
+
+    # Verify initial items
+    items1 = get_ranking_items(db_session, ranking.id)
+    assert len(items1) == 2
+    assert {i.candidate_id for i in items1} == {cand1.id, cand2.id}
+
+    # Insert new items (all scope - 3 candidates) - should replace
+    new_items = [
+        {"candidate_id": cand1.id, "score": 85.0, "position": 1},
+        {"candidate_id": cand2.id, "score": 75.0, "position": 2},
+        {"candidate_id": cand3.id, "score": 65.0, "position": 3},
+    ]
+    count2 = insert_ranking_items(db_session, ranking_id=ranking.id, items=new_items)
+    assert count2 == 3
+
+    # Verify new items replaced old ones
+    items2 = get_ranking_items(db_session, ranking.id)
+    assert len(items2) == 3
+    assert {i.candidate_id for i in items2} == {cand1.id, cand2.id, cand3.id}
+
+    # Verify no duplicate items from previous insert
+    all_items = db_session.query(RankingItem).filter(RankingItem.ranking_id == ranking.id).all()
+    assert len(all_items) == 3

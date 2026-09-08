@@ -89,39 +89,41 @@ function Ranking() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // ============================================================
-  // LOAD RANKING
-  // ============================================================
+// ============================================================
+// LOAD RANKING
+// ============================================================
 
-  async function loadRanking(
+async function loadRanking(
     targetPage = page,
     targetPageSize = pageSize,
     targetJob = selectedJob,
     targetScope = rankingScope,
     targetRecommendation = recommendationFilter,
-  ) {
-    if (!targetJob) return false;
+) {
+    if (!targetJob) {
+      return { ok: false, data: null, candidates: [], scopeMismatch: false };
+    }
 
     if (minScore < 0 || minScore > 100) {
       setActionFeedback({
         type: "error",
         message: "El puntaje mínimo debe estar entre 0 y 100.",
       });
-      return false;
+      return { ok: false, data: null, candidates: [], scopeMismatch: false };
     }
     if (maxScore < 0 || maxScore > 100) {
       setActionFeedback({
         type: "error",
         message: "El puntaje máximo debe estar entre 0 y 100.",
       });
-      return false;
+      return { ok: false, data: null, candidates: [], scopeMismatch: false };
     }
     if (minScore > maxScore) {
       setActionFeedback({
         type: "error",
         message: "El puntaje mínimo no puede ser mayor que el puntaje máximo.",
       });
-      return false;
+      return { ok: false, data: null, candidates: [], scopeMismatch: false };
     }
 
     try {
@@ -140,12 +142,29 @@ function Ranking() {
       const candidates = data.candidates || data.ranking || data.items || [];
 
       if (data.scope_mismatch) {
+        setRanking([]);
         setRankingMessage(
           targetScope === "all"
             ? "El ranking actual fue generado solo para los candidatos asignados. Recalcula usando «Todos mis candidatos» para incluir toda tu base."
             : "El ranking actual fue generado para todos tus candidatos. Recalcula usando «Solo esta vacante» para reconstruir este alcance.",
         );
-      } else if (candidates.length > 0) {
+        setRankingGeneratedAt(data.ranking_generated_at || null);
+        setRankingVersion(data.ranking_version ?? null);
+        setRankingLoadedScope(data.ranking_scope ?? targetScope);
+        setRankingBaseTotal(0);
+        setPage(data.page ?? targetPage);
+        setTotalPages(data.total_pages ?? 0);
+        setRankingInfo({ total: 0, pending: 0, minimum: null, maximum: null });
+
+        return {
+          ok: false,
+          data,
+          candidates: [],
+          scopeMismatch: true,
+        };
+      }
+
+      if (candidates.length > 0) {
         setRankingMessage("");
       }
 
@@ -173,7 +192,12 @@ function Ranking() {
           (visibleScores.length > 0 ? Math.max(...visibleScores) : null),
       });
 
-      return true;
+      return {
+        ok: true,
+        data,
+        candidates,
+        scopeMismatch: false,
+      };
     } catch (error) {
       console.error("ERROR LOADING RANKING:", error.response?.data || error);
       setActionFeedback({
@@ -182,17 +206,17 @@ function Ranking() {
           error.response?.data?.detail ||
           "No fue posible cargar el ranking.",
       });
-      return false;
+      return { ok: false, data: null, candidates: [], scopeMismatch: false };
     } finally {
       setLoading(false);
     }
-  }
+}
 
-  // ============================================================
-  // EVALUAR CANDIDATOS
-  // ============================================================
+// ============================================================
+// EVALUAR CANDIDATOS
+// ============================================================
 
-  async function evaluateCandidates() {
+async function evaluateCandidates() {
     if (!selectedJob) {
       setActionFeedback({
         type: "info",
@@ -224,17 +248,53 @@ function Ranking() {
       const result = response.data;
 
       setPage(1);
-      await loadRanking(1, pageSize, selectedJob, rankingScope);
+      const refreshed = await loadRanking(1, pageSize, selectedJob, rankingScope);
+
+      if (!refreshed.ok) {
+        if (refreshed.scopeMismatch) {
+          setActionFeedback({
+            type: "error",
+            message:
+              rankingScope === "all"
+                ? "El ranking actual fue generado solo para los candidatos asignados. Recalcula usando «Todos mis candidatos» para incluir toda tu base."
+                : "El ranking actual fue generado para todos tus candidatos. Recalcula usando «Solo esta vacante» para reconstruir este alcance.",
+          });
+        } else {
+          setActionFeedback({
+            type: "error",
+            message:
+              "Los candidatos fueron procesados, pero no fue posible actualizar la vista del ranking.",
+          });
+        }
+        return;
+      }
 
       if (result.total_candidates === 0) {
+        const message =
+          rankingScope === "all"
+            ? "No hay candidatos registrados en tu cuenta."
+            : "No hay candidatos asignados a esta vacante.";
         setActionFeedback({
           type: "info",
-          message: "No hay candidatos asignados a esta vacante.",
+          message,
         });
       } else if (result.failed > 0) {
         setActionFeedback({
           type: "error",
           message: `Evaluación completada: ${result.evaluated} candidatos procesados y ${result.failed} con error.`,
+        });
+      } else if (refreshed.data.ranking_total === 0 || refreshed.data.total === 0) {
+        console.error("EVALUATE: POST reported candidates but GET returned empty", {
+          requestedScope: rankingScope,
+          postTotalCandidates: result.total_candidates,
+          rankingScope: refreshed.data.ranking_scope,
+          rankingTotal: refreshed.data.ranking_total,
+          scopeMismatch: refreshed.scopeMismatch,
+        });
+        setActionFeedback({
+          type: "error",
+          message:
+            "La evaluación se procesó, pero no fue posible cargar los resultados. Actualiza el ranking o intenta nuevamente.",
         });
       } else {
         setActionFeedback({
@@ -256,15 +316,15 @@ function Ranking() {
     } finally {
       setIsEvaluatingCandidates(false);
     }
-  }
+}
 
-  // ============================================================
-  // ACTUALIZAR RANKING
-  // ============================================================
+// ============================================================
+// ACTUALIZAR RANKING
+// ============================================================
 
-  // Refresh only: GET current persisted ranking.
-  // This action must never call the LLM or Bedrock.
-  async function refreshRanking() {
+// Refresh only: GET current persisted ranking.
+// This action must never call the LLM or Bedrock.
+async function refreshRanking() {
     if (!selectedJob) {
       setActionFeedback({
         type: "info",
@@ -290,12 +350,23 @@ function Ranking() {
         rankingScope,
       );
 
-      if (refreshed) {
-        setActionFeedback({
-          type: "success",
-          message: "Ranking actualizado.",
-        });
+      if (!refreshed.ok) {
+        if (refreshed.scopeMismatch) {
+          setActionFeedback({
+            type: "error",
+            message:
+              rankingScope === "all"
+                ? "El ranking actual fue generado solo para los candidatos asignados. Recalcula usando «Todos mis candidatos» para incluir toda tu base."
+                : "El ranking actual fue generado para todos tus candidatos. Recalcula usando «Solo esta vacante» para reconstruir este alcance.",
+          });
+        }
+        return;
       }
+
+      setActionFeedback({
+        type: "success",
+        message: "Ranking actualizado.",
+      });
     } catch (error) {
       console.error(
         "ERROR REFRESHING RANKING:",
@@ -310,15 +381,15 @@ function Ranking() {
     } finally {
       setIsRefreshingRanking(false);
     }
-  }
+}
 
-  // ============================================================
-  // RECALCULAR RANKING
-  // ============================================================
+// ============================================================
+// RECALCULAR RANKING
+// ============================================================
 
-  // Full recalculation forces evaluation of all assigned
-  // candidates and therefore may invoke Bedrock/LLM.
-  async function recalculateRanking() {
+// Full recalculation forces evaluation of all assigned
+// candidates and therefore may invoke Bedrock/LLM.
+async function recalculateRanking() {
     if (!selectedJob) {
       setActionFeedback({
         type: "info",
@@ -363,9 +434,60 @@ function Ranking() {
       const result = response.data;
 
       setPage(1);
-      await loadRanking(1, pageSize, selectedJob, rankingScope);
+      const refreshed = await loadRanking(1, pageSize, selectedJob, rankingScope);
 
-      if (result.failed > 0) {
+      if (!refreshed.ok) {
+        if (refreshed.scopeMismatch) {
+          setActionFeedback({
+            type: "error",
+            message:
+              rankingScope === "all"
+                ? "El ranking actual fue generado solo para los candidatos asignados. Recalcula usando «Todos mis candidatos» para incluir toda tu base."
+                : "El ranking actual fue generado para todos tus candidatos. Recalcula usando «Solo esta vacante» para reconstruir este alcance.",
+          });
+        } else {
+          setActionFeedback({
+            type: "error",
+            message:
+              "El ranking se procesó, pero no fue posible cargar los resultados. Actualiza el ranking o intenta nuevamente.",
+          });
+        }
+        console.error("RECALCULATE: POST succeeded but GET failed", {
+          requestedScope: rankingScope,
+          postTotalCandidates: result.total_candidates,
+          rankingScope: refreshed.data?.ranking_scope,
+          rankingTotal: refreshed.data?.ranking_total,
+          scopeMismatch: refreshed.scopeMismatch,
+        });
+        return;
+      }
+
+      if (result.total_candidates > 0 && (refreshed.data.ranking_total === 0 || refreshed.data.total === 0)) {
+        console.error("RECALCULATE: POST reported candidates but GET returned empty", {
+          requestedScope: rankingScope,
+          postTotalCandidates: result.total_candidates,
+          rankingScope: refreshed.data.ranking_scope,
+          rankingTotal: refreshed.data.ranking_total,
+          scopeMismatch: refreshed.scopeMismatch,
+        });
+        setActionFeedback({
+          type: "error",
+          message:
+            "El ranking se procesó, pero no fue posible cargar los resultados. Actualiza el ranking o intenta nuevamente.",
+        });
+        return;
+      }
+
+      if (result.total_candidates === 0) {
+        const message =
+          rankingScope === "all"
+            ? "No hay candidatos registrados en tu cuenta."
+            : "No hay candidatos asignados a esta vacante.";
+        setActionFeedback({
+          type: "info",
+          message,
+        });
+      } else if (result.failed > 0) {
         setActionFeedback({
           type: "error",
           message: `Ranking recalculado, pero ${result.failed} candidato(s) no pudieron evaluarse.`,
@@ -390,7 +512,7 @@ function Ranking() {
     } finally {
       setIsRecalculating(false);
     }
-  }
+}
 
   // ============================================================
   // PAGINATION / FILTERS
