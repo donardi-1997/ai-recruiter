@@ -4,7 +4,7 @@ Aplicación web para gestionar vacantes y candidatos, cargar hojas de vida en PD
 
 La plataforma centraliza el proceso de selección: almacena los CV, los indexa en Amazon Bedrock Knowledge Bases y genera rankings, fortalezas, brechas, evidencias y recomendaciones para cada vacante.
 
-**Aplicación:** [ai.adrianguerra.net](https://ai.adrianguerra.net)
+**Aplicación:** [air.adrianguerra.net](https://air.adrianguerra.net)
 
 ## Capturas de pantalla
 
@@ -55,14 +55,14 @@ flowchart LR
     LS --> NGINX[Nginx + React]
     NGINX --> API[FastAPI]
     API --> COG[Amazon Cognito]
-    API --> DDB[Amazon DynamoDB]
+    API --> PG[PostgreSQL]
     API --> S3CV[S3 - Hojas de vida]
     S3CV --> KB[Bedrock Knowledge Base]
     API --> KB
     API --> LLM[Amazon Nova Lite]
 ```
 
-La aplicación se ejecuta en una instancia Lightsail con Docker Compose. Nginx sirve el frontend React y enruta `/api/*` al backend FastAPI en la misma instancia. Cognito, DynamoDB, S3 y Bedrock se mantienen como servicios administrados de AWS: contienen los datos actuales y no tienen un equivalente local compatible en Lightsail.
+La aplicación se ejecuta en una instancia Lightsail con Docker. Nginx sirve el frontend React y enruta `/api/*` al backend FastAPI en la misma instancia. Cognito, PostgreSQL, S3 y Bedrock se mantienen como servicios administrados de AWS: contienen los datos actuales y no tienen un equivalente local compatible en Lightsail.
 
 Para iniciar localmente la arquitectura simplificada:
 
@@ -92,6 +92,8 @@ La aplicación queda disponible en `http://localhost` y la API en `http://localh
 - Pydantic
 - Boto3
 - LangChain AWS
+- SQLAlchemy
+- PostgreSQL
 
 ### AWS e infraestructura
 
@@ -99,7 +101,7 @@ La aplicación queda disponible en `http://localhost` y la API en `http://localh
 - Amazon Bedrock y Amazon Nova Lite
 - Bedrock Knowledge Bases
 - Amazon S3
-- Amazon DynamoDB
+- Amazon RDS (PostgreSQL)
 - Amazon Lightsail
 - AWS CloudFormation
 
@@ -108,7 +110,6 @@ La aplicación queda disponible en `http://localhost` y la API en `http://localh
 ```text
 ai-recruiter/
 |-- .github/workflows/       # CI/CD del frontend y de la API
-|-- cognito-lambda/          # Funciones asociadas al flujo de Cognito
 |-- frontend-react/          # SPA en React y Vite
 |   |-- public/
 |   `-- src/
@@ -117,13 +118,16 @@ ai-recruiter/
 |       |-- components/      # Layout, navegación y pie de página
 |       `-- pages/           # Dashboard, vacantes, candidatos y ranking
 |-- iam/                     # Políticas IAM para despliegue
-|-- infra/                   # Infraestructura CloudFormation del frontend
-|-- tests/                   # Pruebas del proyecto
-|-- auth.py                  # Integración con Amazon Cognito
-|-- main.py                  # API FastAPI y lógica de negocio
+|-- infra/                   # Infraestructura CloudFormation y scripts
+|-- scripts/                 # Scripts de despliegue y utilidades
+|-- tests/                   # Pruebas unitarias (app/tests/)
+|-- app/                     # Backend FastAPI modular
+|   |-- domains/             # Dominios de negocio (jobs, candidates, evaluations, ranking)
+|   |-- infrastructure/      # Infraestructura AWS (Bedrock, storage)
+|   `-- main.py              # Punto de entrada FastAPI
 |-- Dockerfile               # Imagen del backend
 |-- requirements.txt         # Dependencias de Python
-`-- api-task-definition.json # Definición de tarea de ECS
+|-- docker-compose.yml       # Desarrollo local
 ```
 
 ## Requisitos
@@ -160,6 +164,7 @@ Crea un archivo `.env` en la raíz:
 AWS_REGION=us-east-2
 COGNITO_USER_POOL_ID=<user-pool-id>
 COGNITO_CLIENT_ID=<app-client-id>
+DATABASE_URL=postgresql://postgres:postgres@host.docker.internal:5432/ai_recruiter
 ```
 
 La aplicación obtiene las credenciales de AWS mediante la cadena de proveedores estándar de Boto3. Para desarrollo local puedes usar un perfil configurado con AWS CLI:
@@ -174,7 +179,7 @@ No almacenes claves de acceso, secretos ni tokens en Git.
 Inicia la API:
 
 ```powershell
-uvicorn main:app --reload --host 0.0.0.0 --port 8000
+uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 ```
 
 La documentación interactiva queda disponible en:
@@ -220,7 +225,7 @@ Ejecuta el contenedor:
 docker run --rm -p 8000:8000 --env-file .env ai-recruiter-api
 ```
 
-El contenedor también necesita credenciales de AWS. En producción, ECS las proporciona mediante el rol de tarea; en desarrollo utiliza un mecanismo de credenciales seguro y evita incluir secretos en la imagen.
+El contenedor también necesita credenciales de AWS. En producción, Lightsail las proporciona mediante Roles Anywhere; en desarrollo utiliza un mecanismo de credenciales seguro y evita incluir secretos en la imagen.
 
 ## Flujo principal
 
@@ -230,7 +235,7 @@ El contenedor también necesita credenciales de AWS. En producción, ECS las pro
 4. La API almacena el documento y sus metadatos en S3.
 5. Bedrock inicia la ingesta del documento en la base de conocimiento.
 6. La aplicación recupera evidencia del CV y la compara con la vacante.
-7. El resultado se guarda en DynamoDB y se presenta como puntaje, recomendación, fortalezas y brechas.
+7. El resultado se guarda en PostgreSQL y se presenta como puntaje, recomendación, fortalezas y brechas.
 
 ## API
 
@@ -255,10 +260,8 @@ Consulta Swagger UI para conocer los parámetros y esquemas vigentes de cada end
 ### Backend
 
 ```powershell
-python -m py_compile main.py auth.py
+python -m py_compile app/main.py
 ```
-
-Los scripts `test_kb.py` y `test_multi_kb.py` realizan pruebas de integración contra la base de conocimiento configurada y, por tanto, pueden consumir servicios AWS.
 
 ### Frontend
 
@@ -272,8 +275,8 @@ npm run build
 
 El repositorio contiene dos flujos de GitHub Actions:
 
-- **API CI/CD:** valida Python y Docker, publica la imagen en Amazon ECR, registra una nueva definición de tarea y actualiza el servicio de ECS.
-- **Frontend CI/CD:** instala dependencias, compila React, sincroniza los archivos con S3 e invalida la distribución de CloudFront.
+- **API CI/CD:** valida Python y Docker, publica la imagen en Amazon ECR y despliega a Lightsail mediante `scripts/deploy-api.sh`.
+- **Frontend CI/CD:** instala dependencias, compila React, construye imagen Docker y despliega a Lightsail con invalidación de CloudFront.
 
 Los despliegues de producción se ejecutan al enviar cambios a `main` en las rutas correspondientes. Las credenciales de GitHub se intercambian por permisos temporales de AWS mediante OIDC; el entorno de producción debe definir `AWS_DEPLOY_ROLE_ARN` como variable del repositorio o del entorno.
 
@@ -284,7 +287,7 @@ La plantilla `infra/frontend-static.yml` administra el bucket privado del fronte
 - La API valida tokens JWT emitidos por Cognito.
 - Los registros se filtran por el identificador del usuario autenticado.
 - El bucket del frontend bloquea el acceso público y CloudFront usa Origin Access Control.
-- El backend obtiene permisos mediante roles IAM, sin credenciales incrustadas en la imagen.
+- El backend obtiene permisos mediante roles IAM y Roles Anywhere, sin credenciales incrustadas en la imagen.
 - Los secretos y valores sensibles deben mantenerse fuera del repositorio.
 
 ## Licencia
