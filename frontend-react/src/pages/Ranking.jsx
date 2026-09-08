@@ -139,6 +139,16 @@ function Ranking() {
       const data = response.data;
       const candidates = data.candidates || data.ranking || data.items || [];
 
+      if (data.scope_mismatch) {
+        setRankingMessage(
+          targetScope === "all"
+            ? "El ranking actual fue generado solo para los candidatos asignados. Recalcula usando «Todos mis candidatos» para incluir toda tu base."
+            : "El ranking actual fue generado para todos tus candidatos. Recalcula usando «Solo esta vacante» para reconstruir este alcance.",
+        );
+      } else if (candidates.length > 0) {
+        setRankingMessage("");
+      }
+
       setRanking(candidates);
       setRankingGeneratedAt(data.ranking_generated_at || null);
       setRankingVersion(data.ranking_version ?? null);
@@ -163,7 +173,6 @@ function Ranking() {
           (visibleScores.length > 0 ? Math.max(...visibleScores) : null),
       });
 
-      if (candidates.length > 0) setRankingMessage("");
       return true;
     } catch (error) {
       console.error("ERROR LOADING RANKING:", error.response?.data || error);
@@ -207,7 +216,7 @@ function Ranking() {
         {
           params: {
             mode: "incremental",
-            scope: "assigned",
+            scope: rankingScope,
           },
         },
       );
@@ -322,8 +331,13 @@ function Ranking() {
       return;
     }
 
+    const scopeLabel =
+      rankingScope === "all"
+        ? "todos tus candidatos"
+        : "todos los candidatos asignados a esta vacante";
+
     const confirmed = window.confirm(
-      "Se volverán a evaluar todos los candidatos asignados a esta vacante y se reconstruirá el ranking. Esta operación puede tardar y consumir recursos de IA. ¿Deseas continuar?",
+      `Se volverán a evaluar ${scopeLabel} y se reconstruirá el ranking. Esta operación puede tardar y consumir recursos de IA. ¿Deseas continuar?`,
     );
 
     if (!confirmed) {
@@ -341,7 +355,7 @@ function Ranking() {
         {
           params: {
             mode: "full",
-            scope: "assigned",
+            scope: rankingScope,
           },
         },
       );

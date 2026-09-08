@@ -110,7 +110,7 @@ describe("Ranking page", () => {
   // TEST 3 — EVALUAR IGNORA rankingScope
   // ============================================================
 
-  it("always uses scope=assigned regardless of rankingScope", async () => {
+  it("Evaluar candidatos uses the selected rankingScope", async () => {
     api.get.mockImplementation((url) => {
       if (url === "/jobs") return Promise.resolve({ data: [{ job_id: "job-1", title: "Dev Python" }] });
       if (url.includes("/ranking")) return Promise.resolve({ data: { candidates: [], ranking_generated_at: null, ranking_version: null, ranking_scope: "all", ranking_total: 0, total: 0, total_pages: 0, page: 1, page_size: 10, pending_candidates: 0 } });
@@ -126,7 +126,7 @@ describe("Ranking page", () => {
       expect(api.post).toHaveBeenCalledWith(
         "/jobs/job-1/ranking/recalculate",
         null,
-        { params: { mode: "incremental", scope: "assigned" } },
+        { params: { mode: "incremental", scope: "all" } },
       );
     });
   });
@@ -216,7 +216,7 @@ describe("Ranking page", () => {
   // TEST 8 — RECALCULAR IGNORA rankingScope
   // ============================================================
 
-  it("Recalcular ranking always uses scope=assigned, not rankingScope", async () => {
+  it("Recalcular ranking uses the selected rankingScope", async () => {
     window.confirm = vi.fn(() => true);
     api.get.mockImplementation((url) => {
       if (url === "/jobs") return Promise.resolve({ data: [{ job_id: "job-1", title: "Dev Python" }] });
@@ -233,7 +233,7 @@ describe("Ranking page", () => {
       expect(api.post).toHaveBeenCalledWith(
         "/jobs/job-1/ranking/recalculate",
         null,
-        { params: { mode: "full", scope: "assigned" } },
+        { params: { mode: "full", scope: "all" } },
       );
     });
   });
@@ -416,4 +416,61 @@ describe("Ranking page", () => {
     fireEvent.click(screen.getByRole("button", { name: "Recalcular ranking" }));
     await waitFor(() => { expect(screen.getByText("Ranking recalculado correctamente.")).toBeInTheDocument(); });
   });
+
+  it("shows useful feedback when persisted ranking scope does not match", async () => {
+    api.get.mockImplementation((url, config) => {
+      if (url === "/jobs") {
+        return Promise.resolve({
+          data: [{ job_id: "job-1", title: "Dev Python" }],
+        });
+      }
+
+      if (url.includes("/ranking")) {
+        const scope = config?.params?.scope || "assigned";
+
+        if (scope === "all") {
+          return Promise.resolve({
+            data: {
+              candidates: [],
+              ranking_generated_at: "2026-09-08T10:00:00Z",
+              ranking_version: 2,
+              ranking_scope: "assigned",
+              scope_mismatch: true,
+              ranking_total: 0,
+              total: 0,
+              total_pages: 0,
+              page: 1,
+              page_size: 10,
+              pending_candidates: 0,
+            },
+          });
+        }
+
+        return Promise.resolve(EMPTY_RANKING);
+      }
+
+      return Promise.resolve({ data: [] });
+    });
+
+    renderRanking();
+
+    await screen.findByRole(
+      "button",
+      { name: "Actualizar ranking" },
+    );
+
+    fireEvent.change(
+      screen.getByDisplayValue("Solo esta vacante"),
+      { target: { value: "all" } },
+    );
+
+    await waitFor(() => {
+      expect(
+        screen.getByText(
+          /El ranking actual fue generado solo para los candidatos asignados/i,
+        ),
+      ).toBeInTheDocument();
+    });
+  });
+
 });
