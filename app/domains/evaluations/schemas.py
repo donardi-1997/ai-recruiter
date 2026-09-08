@@ -2,16 +2,7 @@
 
 from pydantic import BaseModel
 
-VALID_RECOMMENDATIONS = {
-    "STRONG_MATCH",
-    "GOOD_MATCH",
-    "PARTIAL_MATCH",
-    "LOW_MATCH",
-    "EVALUATION_FAILED",
-    "PENDING",
-}
-
-MIN_SUMMARY_LENGTH = 100
+from app.domains.evaluations.rules import VALID_RECOMMENDATIONS, MIN_SUMMARY_LENGTH
 
 
 class EvaluateRequest(BaseModel):
@@ -30,3 +21,11 @@ class EvaluationResponse(BaseModel):
     gaps: list[str] = []
     requirements: list[dict] = []
     error_message: str | None = None
+
+# Re-export for backward compatibility
+__all__ = [
+    "EvaluateRequest",
+    "EvaluationResponse",
+    "VALID_RECOMMENDATIONS",
+    "MIN_SUMMARY_LENGTH",
+]
