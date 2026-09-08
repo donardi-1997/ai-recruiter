@@ -100,3 +100,47 @@ def normalize_completed_evaluation_result(result: dict) -> dict:
         "gaps": gaps,
         "requirements": requirements,
     }
+
+
+def normalize_requirement(requirement: str) -> str:
+    """Normalize requirement names to canonical form.
+
+    Maps common variations to standard terms.
+    """
+    requirement = str(requirement).strip()
+    lower = requirement.lower()
+    if "python" in lower:
+        return "Python"
+    if any(x in lower for x in ("api rest", "apis rest", "rest api", "rest apis")):
+        return "APIs REST"
+    if "aws" in lower:
+        return "AWS"
+    if "kubernetes" in lower:
+        return "Kubernetes"
+    if any(
+        x in lower
+        for x in (
+            "backend developer",
+            "backend development",
+            "desarrollo backend",
+            "desarrollador backend",
+        )
+    ) or lower == "backend":
+        return "Backend Developer"
+    return requirement
+
+
+def recommendation_for_score(match_score: float) -> str:
+    """Map a 0-100 score to the four public recommendation bands."""
+    score = float(match_score)
+
+    if score >= 80:
+        return "STRONG_MATCH"
+
+    if score >= 60:
+        return "GOOD_MATCH"
+
+    if score >= 40:
+        return "PARTIAL_MATCH"
+
+    return "LOW_MATCH"
