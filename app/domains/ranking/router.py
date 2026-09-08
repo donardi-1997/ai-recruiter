@@ -6,6 +6,11 @@ from sqlalchemy.orm import Session
 from app.deps import get_current_user, get_db
 from app import crud
 from app.domains.ranking.service import recalculate_ranking, build_latest_ranking
+from app.domains.ranking.exceptions import (
+    RankingJobNotFound,
+    RankingNotFound,
+    RankingAlreadyRunning,
+)
 
 router = APIRouter(prefix="/api/jobs", tags=["ranking"])
 
@@ -57,13 +62,18 @@ def recalculate_ranking_endpoint(
     db: Session = Depends(get_db),
     _user: dict = Depends(get_current_user),
 ):
-    return recalculate_ranking(
-        db,
-        job_id=job_id,
-        owner_sub=_user["sub"],
-        mode=mode,
-        scope=scope,
-    )
+    try:
+        return recalculate_ranking(
+            db,
+            job_id=job_id,
+            owner_sub=_user["sub"],
+            mode=mode,
+            scope=scope,
+        )
+    except RankingAlreadyRunning as exc:
+        raise HTTPException(status_code=409, detail=exc.message)
+    except RankingJobNotFound as exc:
+        raise HTTPException(status_code=404, detail=exc.message)
 
 
 @router.get("/{job_id}/ranking/latest")
@@ -72,4 +82,9 @@ def get_latest_ranking_endpoint(
     db: Session = Depends(get_db),
     _user: dict = Depends(get_current_user),
 ):
-    return build_latest_ranking(db, job_id=job_id, owner_sub=_user["sub"])
+    try:
+        return build_latest_ranking(db, job_id=job_id, owner_sub=_user["sub"])
+    except RankingJobNotFound as exc:
+        raise HTTPException(status_code=404, detail=exc.message)
+    except RankingNotFound as exc:
+        raise HTTPException(status_code=404, detail=exc.message)

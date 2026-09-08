@@ -949,3 +949,136 @@ def test_insert_ranking_items_replaces_previous_items(db_session):
     # Verify no duplicate items from previous insert
     all_items = db_session.query(RankingItem).filter(RankingItem.ranking_id == ranking.id).all()
     assert len(all_items) == 3
+
+
+# ============================================================
+# TESTS — LOCK RELEASE REGRESSION
+# ============================================================
+
+def test_recalculate_releases_lock_on_success(client, db_session, monkeypatch):
+    """Lock is released after successful recalculation."""
+    import app.domains.ranking.service as ranking_service
+
+    # Track lock acquire/release calls
+    lock_calls = {"acquire": 0, "release": 0}
+
+    original_acquire = ranking_service.acquire_job_lock
+    original_release = ranking_service.release_job_lock
+
+    def tracking_acquire(db, job_id):
+        lock_calls["acquire"] += 1
+        return original_acquire(db, job_id)
+
+    def tracking_release(db, job_id):
+        lock_calls["release"] += 1
+        return original_release(db, job_id)
+
+    monkeypatch.setattr(ranking_service, "acquire_job_lock", tracking_acquire)
+    monkeypatch.setattr(ranking_service, "release_job_lock", tracking_release)
+
+    # Mock evaluation to return success
+    import app.evaluation as evaluation_module
+    monkeypatch.setattr(
+        evaluation_module,
+        "retrieve_candidate",
+        lambda **kwargs: [{"content": {"text": "CV de prueba"}}],
+    )
+    long_summary = "El candidato presenta experiencia suficiente para realizar una evaluación completa de su ajuste frente a los requisitos técnicos de esta vacante."
+    monkeypatch.setattr(
+        evaluation_module,
+        "evaluate_candidate",
+        lambda **kwargs: {
+            "status": "COMPLETED",
+            "match_score": 50,
+            "recommendation": "LOW_MATCH",
+            "summary": long_summary,
+            "strengths": [],
+            "gaps": [],
+        },
+    )
+
+    job = _seed_job(db_session)
+    candidate = _seed_candidate(db_session, name="Test Candidate")
+    db_session.add(JobCandidate(job_id=job.id, candidate_id=candidate.id))
+    db_session.commit()
+
+    resp = client.post(
+        f"/api/jobs/{job.id}/ranking/recalculate",
+        params={"mode": "full", "scope": "assigned"},
+    )
+
+    assert resp.status_code == 200
+    # Lock should be acquired and released exactly once
+    assert lock_calls["acquire"] == 1
+    assert lock_calls["release"] == 1
+
+
+def test_recalculate_releases_lock_on_unexpected_exception(client, db_session, monkeypatch):
+    """Lock is released even when an unexpected exception occurs during recalculation."""
+    import app.domains.ranking.service as ranking_service
+
+    # Track lock acquire/release calls
+    lock_calls = {"acquire": 0, "release": 0}
+
+    original_acquire = ranking_service.acquire_job_lock
+    original_release = ranking_service.release_job_lock
+
+    def tracking_acquire(db, job_id):
+        lock_calls["acquire"] += 1
+        return original_acquire(db, job_id)
+
+    def tracking_release(db, job_id):
+        lock_calls["release"] += 1
+        return original_release(db, job_id)
+
+    monkeypatch.setattr(ranking_service, "acquire_job_lock", tracking_acquire)
+    monkeypatch.setattr(ranking_service, "release_job_lock", tracking_release)
+
+    # Mock evaluation service to return success (avoid real AWS calls)
+    import app.evaluation as evaluation_module
+    monkeypatch.setattr(
+        evaluation_module,
+        "retrieve_candidate",
+        lambda **kwargs: [{"content": {"text": "CV de prueba"}}],
+    )
+    long_summary = "El candidato presenta experiencia suficiente para realizar una evaluación completa de su ajuste frente a los requisitos técnicos de esta vacante."
+    monkeypatch.setattr(
+        evaluation_module,
+        "evaluate_candidate",
+        lambda **kwargs: {
+            "status": "COMPLETED",
+            "match_score": 50,
+            "recommendation": "LOW_MATCH",
+            "summary": long_summary,
+            "strengths": [],
+            "gaps": [],
+            "requirements": [],
+        },
+    )
+
+    # Make the repository insert_ranking_items raise an exception
+    # after lock is acquired
+    original_insert = ranking_service.ranking_repository.insert_ranking_items
+
+    def failing_insert(*args, **kwargs):
+        raise RuntimeError("Simulated database error")
+
+    monkeypatch.setattr(ranking_service.ranking_repository, "insert_ranking_items", failing_insert)
+
+    job = _seed_job(db_session)
+    candidate = _seed_candidate(db_session, name="Test Candidate")
+    db_session.add(JobCandidate(job_id=job.id, candidate_id=candidate.id))
+    db_session.commit()
+
+    # The test client raises server exceptions by default, so we expect the exception
+    # to be raised. We verify the lock was released by checking our tracking.
+    import pytest
+    with pytest.raises(RuntimeError, match="Simulated database error"):
+        client.post(
+            f"/api/jobs/{job.id}/ranking/recalculate",
+            params={"mode": "full", "scope": "assigned"},
+        )
+
+    # Lock should still be released exactly once
+    assert lock_calls["acquire"] == 1
+    assert lock_calls["release"] == 1

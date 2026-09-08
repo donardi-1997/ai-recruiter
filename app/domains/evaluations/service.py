@@ -9,7 +9,10 @@ import logging
 from sqlalchemy.orm import Session
 
 from app.domains.evaluations import repository as evaluations_repository
-from app.domains.evaluations.rules import validate_completed_evaluation_result
+from app.domains.evaluations.rules import (
+    validate_completed_evaluation_result,
+    normalize_completed_evaluation_result,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -21,12 +24,15 @@ FAILED_EVALUATION_PUBLIC_MESSAGE = (
 def evaluate_candidate_for_job(
     db: Session,
     *,
-    candidate_id: str,
-    job_id: str,
-    job_description: str,
-    owner_sub: str,
+    candidate,
+    job,
 ) -> tuple[object, bool, str | None]:
     """Evaluate a candidate for a specific job.
+
+    Args:
+        db: Database session
+        candidate: Already-authorized Candidate domain object
+        job: Already-authorized Job domain object
 
     Returns:
         tuple: (evaluation, newly_evaluated, internal_error)
@@ -44,13 +50,13 @@ def evaluate_candidate_for_job(
 
     try:
         results = retrieve_candidate(
-            candidate_id=candidate_id,
-            question=job_description,
+            candidate_id=candidate.id,
+            question=job.description or job.title,
         )
 
         llm_result = llm_evaluate(
-            candidate_id=candidate_id,
-            job_description=job_description,
+            candidate_id=candidate.id,
+            job_description=job.description or job.title,
             results=results,
         )
 
@@ -60,8 +66,8 @@ def evaluate_candidate_for_job(
             # LLM explicitly returned FAILED
             evaluation = evaluations_repository.create_evaluation(
                 db,
-                candidate_id=candidate_id,
-                job_id=job_id,
+                candidate_id=candidate.id,
+                job_id=job.id,
                 match_score=0.0,
                 recommendation=llm_result.get("recommendation", "EVALUATION_FAILED"),
                 summary=llm_result.get("summary", FAILED_EVALUATION_PUBLIC_MESSAGE),
@@ -73,57 +79,24 @@ def evaluate_candidate_for_job(
             )
             return evaluation, True, None
 
-        # Validate the supposedly completed result
-        match_score = llm_result.get("match_score")
-        recommendation = llm_result.get("recommendation")
-        summary = str(llm_result.get("summary") or "").strip()
-        strengths = llm_result.get("strengths", [])
-        gaps = llm_result.get("gaps", [])
-        requirements = llm_result.get("requirements", [])
+        # Validate the supposedly completed result using canonical rules
+        is_valid, error_msg = validate_completed_evaluation_result(llm_result)
+        if not is_valid:
+            raise ValueError(error_msg)
 
-        if not isinstance(requirements, list):
-            raise ValueError("INVALID_EVALUATION_REQUIREMENTS")
-
-        if match_score is None:
-            raise ValueError("INVALID_EVALUATION_SCORE")
-
-        try:
-            numeric_score = float(match_score)
-        except (TypeError, ValueError) as exc:
-            raise ValueError("INVALID_EVALUATION_SCORE") from exc
-
-        if not 0 <= numeric_score <= 100:
-            raise ValueError("INVALID_EVALUATION_SCORE")
-
-        valid_recommendations = {
-            "STRONG_MATCH",
-            "GOOD_MATCH",
-            "PARTIAL_MATCH",
-            "LOW_MATCH",
-        }
-
-        if recommendation not in valid_recommendations:
-            raise ValueError("INVALID_EVALUATION_RECOMMENDATION")
-
-        if len(summary) < evaluations_repository.MIN_SUMMARY_LENGTH:
-            raise ValueError("INVALID_EVALUATION_SUMMARY")
-
-        if not isinstance(strengths, list):
-            raise ValueError("INVALID_EVALUATION_STRENGTHS")
-
-        if not isinstance(gaps, list):
-            raise ValueError("INVALID_EVALUATION_GAPS")
+        # Normalize the validated result for persistence
+        normalized = normalize_completed_evaluation_result(llm_result)
 
         evaluation = evaluations_repository.create_evaluation(
             db,
-            candidate_id=candidate_id,
-            job_id=job_id,
-            match_score=numeric_score,
-            recommendation=recommendation,
-            summary=summary,
-            strengths=strengths,
-            gaps=gaps,
-            requirements=requirements,
+            candidate_id=candidate.id,
+            job_id=job.id,
+            match_score=normalized["match_score"],
+            recommendation=normalized["recommendation"],
+            summary=normalized["summary"],
+            strengths=normalized["strengths"],
+            gaps=normalized["gaps"],
+            requirements=normalized["requirements"],
             status="COMPLETED",
             error_message=None,
         )
@@ -132,7 +105,7 @@ def evaluate_candidate_for_job(
     except Exception as exc:
         logger.error(
             "LLM evaluation failed for candidate %s: %s",
-            candidate_id,
+            candidate.id,
             exc,
             exc_info=True,
         )
@@ -141,8 +114,8 @@ def evaluate_candidate_for_job(
 
         evaluation = evaluations_repository.create_evaluation(
             db,
-            candidate_id=candidate_id,
-            job_id=job_id,
+            candidate_id=candidate.id,
+            job_id=job.id,
             match_score=0.0,
             recommendation="EVALUATION_FAILED",
             summary=FAILED_EVALUATION_PUBLIC_MESSAGE,

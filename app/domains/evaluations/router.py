@@ -38,10 +38,8 @@ def evaluate_candidate_endpoint(
 
     evaluation, _, _ = evaluate_candidate_for_job(
         db,
-        candidate_id=candidate_id,
-        job_id=body.job_id,
-        job_description=job.description or job.title,
-        owner_sub=_user["sub"],
+        candidate=candidate,
+        job=job,
     )
 
     return public_evaluation_payload(evaluation)

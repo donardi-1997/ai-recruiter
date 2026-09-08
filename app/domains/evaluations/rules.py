@@ -77,3 +77,26 @@ def validate_completed_evaluation_result(result: dict) -> tuple[bool, str | None
         return False, "INVALID_EVALUATION_REQUIREMENTS"
 
     return True, None
+
+
+def normalize_completed_evaluation_result(result: dict) -> dict:
+    """Normalize a validated completed evaluation result for persistence.
+
+    Assumes the result has already passed validate_completed_evaluation_result.
+    Returns a dict with normalized values ready for repository persistence.
+    """
+    match_score = float(result.get("match_score"))
+    recommendation = result.get("recommendation")
+    summary = str(result.get("summary") or "").strip()
+    strengths = result.get("strengths", [])
+    gaps = result.get("gaps", [])
+    requirements = result.get("requirements", [])
+
+    return {
+        "match_score": match_score,
+        "recommendation": recommendation,
+        "summary": summary,
+        "strengths": strengths,
+        "gaps": gaps,
+        "requirements": requirements,
+    }

@@ -13,6 +13,10 @@ from app.domains.jobs import repository as jobs_repository
 from app.domains.candidates import repository as candidates_repository
 from app.domains.evaluations import repository as evaluations_repository
 from app.domains.ranking import repository as ranking_repository
+from app.domains.ranking.exceptions import (
+    RankingJobNotFound,
+    RankingAlreadyRunning,
+)
 from app.deps import acquire_job_lock, release_job_lock
 from app.domains.evaluations.service import evaluate_candidate_for_job
 
@@ -50,22 +54,18 @@ def recalculate_ranking(
         dict with recalculation results including version, counts, and failures.
 
     Raises:
-        HTTPException: 409 if another recalculation is in progress.
+        RankingJobNotFound: if job not found or not accessible.
+        RankingAlreadyRunning: if another recalculation is in progress.
     """
     # Verify job ownership
     job = jobs_repository.get_job(db, job_id, owner_sub=owner_sub)
     if not job:
-        from fastapi import HTTPException
-        raise HTTPException(status_code=404, detail="Vacante no encontrada.")
+        raise RankingJobNotFound()
 
     acquired = acquire_job_lock(db, job_id)
 
     if not acquired:
-        from fastapi import HTTPException
-        raise HTTPException(
-            status_code=409,
-            detail="Otro proceso esta recalculando el ranking.",
-        )
+        raise RankingAlreadyRunning()
 
     try:
         meta = ranking_repository.get_ranking_metadata(db, job_id)
@@ -111,13 +111,11 @@ def recalculate_ranking(
 
             if evaluations_repository.needs_evaluation(evaluation, force=(effective_mode == "full")):
                 try:
-                    # Use the shared evaluation service
+                    # Use the shared evaluation service with authorized domain objects
                     evaluation, _, internal_error = evaluate_candidate_for_job(
                         db,
-                        candidate_id=candidate.id,
-                        job_id=job_id,
-                        job_description=job.description or job.title,
-                        owner_sub=owner_sub,
+                        candidate=candidate,
+                        job=job,
                     )
 
                     if evaluation.status == "FAILED":
@@ -216,15 +214,15 @@ def build_latest_ranking(
 
     This extracts the logic from GET /{job_id}/ranking/latest endpoint.
     """
-    from fastapi import HTTPException
+    from app.domains.ranking.exceptions import RankingJobNotFound, RankingNotFound
 
     job = jobs_repository.get_job(db, job_id, owner_sub=owner_sub)
     if not job:
-        raise HTTPException(status_code=404, detail="Vacante no encontrada.")
+        raise RankingJobNotFound()
 
     meta = ranking_repository.get_ranking_metadata(db, job_id)
     if not meta or meta.ranking_version == 0:
-        raise HTTPException(status_code=404, detail="No existe ranking para esta vacante.")
+        raise RankingNotFound()
 
     items = ranking_repository.get_ranking_items(db, meta.id)
 

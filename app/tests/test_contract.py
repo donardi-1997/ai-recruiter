@@ -306,6 +306,7 @@ def test_evaluate_candidate_completed_has_status_and_long_summary(
             "summary": summary,
             "strengths": ["Python", "APIs REST"],
             "gaps": ["Kubernetes"],
+            "requirements": [],
         },
     )
 
