@@ -11,12 +11,17 @@ from datetime import datetime, timezone
 
 from sqlalchemy.orm import Session
 
-from app.config import get_import_evaluation_concurrency
+from app.config import (
+    get_import_evaluation_concurrency,
+    get_import_lease_timeout_seconds,
+)
 from app.db import SessionLocal
 from app.domains.candidate_imports import repository, service as import_service
 from app.domains.candidate_imports.exceptions import IdentityConflict
 from app.domains.evaluations import repository as evaluations_repository
 from app.domains.evaluations import service as evaluations_service
+from app.domains.ranking import service as ranking_service
+from app.domains.ranking.exceptions import RankingAlreadyRunning, RankingJobNotFound
 from app.infrastructure.imports import documents, ingestion, queue, storage
 from app.infrastructure.imports.documents import DocumentImportError
 from app.infrastructure.imports.queue import ReceivedImportMessage
@@ -36,12 +41,20 @@ TRANSIENT_EVALUATION_ERRORS = (
     "InternalServerException",
 )
 EVALUATION_RETRY_DELAYS = (1, 2, 4)
+RANKING_RETRY_DELAYS = (1, 2, 4)
 PUBLIC_RETRY_EXHAUSTED_MESSAGE = (
     "No fue posible completar la importacion. Intenta nuevamente."
 )
 PUBLIC_ITEM_FAILURE_MESSAGE = "No fue posible procesar este documento."
 PUBLIC_INGESTION_FAILURE_MESSAGE = (
     "No fue posible indexar los documentos del lote. Intenta nuevamente."
+)
+PUBLIC_RANKING_FAILURE_MESSAGE = (
+    "No fue posible generar el ranking. Intenta nuevamente."
+)
+PUBLIC_JOB_NOT_FOUND_MESSAGE = "La vacante ya no esta disponible."
+PUBLIC_NO_USABLE_CANDIDATES_MESSAGE = (
+    "No fue posible preparar candidatos utilizables para esta importacion."
 )
 
 
@@ -641,6 +654,85 @@ def _run_evaluation_stage(db: Session, batch) -> None:
     db.commit()
 
 
+def _run_ranking_stage(db: Session, batch) -> None:
+    """Materialize ranking from persisted evaluations and terminalize the batch."""
+    if batch is None:
+        raise BatchMissing()
+    if batch.status in repository.TERMINAL_BATCH_STATUSES:
+        return
+    if batch.current_stage != "RANKING":
+        return
+
+    ranking_result = None
+    for attempt in range(len(RANKING_RETRY_DELAYS) + 1):
+        try:
+            ranking_result = ranking_service.materialize_ranking_from_evaluations(
+                db,
+                job_id=batch.job_id,
+                owner_sub=batch.owner_sub,
+                scope="assigned",
+            )
+            break
+        except RankingAlreadyRunning:
+            db.rollback()
+            if attempt >= len(RANKING_RETRY_DELAYS):
+                _fail_batch(
+                    db,
+                    batch,
+                    error_code="RANKING_LOCK_TIMEOUT",
+                    error_message=PUBLIC_RANKING_FAILURE_MESSAGE,
+                )
+                return
+            time.sleep(RANKING_RETRY_DELAYS[attempt])
+        except RankingJobNotFound:
+            db.rollback()
+            batch = repository.get_batch_for_worker(db, batch.id)
+            if batch is None:
+                raise BatchMissing()
+            _fail_batch(
+                db,
+                batch,
+                error_code="JOB_NOT_FOUND",
+                error_message=PUBLIC_JOB_NOT_FOUND_MESSAGE,
+            )
+            return
+        except Exception:
+            db.rollback()
+            raise
+
+    if ranking_result is None:
+        raise RuntimeError("ranking materialization returned no result")
+
+    batch = repository.get_batch_for_worker(db, batch.id)
+    if batch is None:
+        raise BatchMissing()
+    batch.ranking_ready = True
+    batch.ranking_version = ranking_result["ranking_version"]
+    batch.status = (
+        "COMPLETED_WITH_ERRORS"
+        if batch.failed_items > 0 or batch.evaluation_failed_items > 0
+        else "COMPLETED"
+    )
+    batch.current_stage = "COMPLETED"
+    batch.completed_at = datetime.now(timezone.utc)
+    batch.last_error_code = None
+    batch.last_error_message = None
+    batch.processing_token = None
+    batch.heartbeat_at = None
+    db.commit()
+
+
+def _cleanup_terminal_batch(batch_id: str) -> None:
+    """Best-effort eager staging cleanup; S3 lifecycle remains the fallback."""
+    try:
+        storage.delete_staging_prefix(batch_id)
+    except Exception:
+        logger.exception(
+            "Candidate import staging cleanup failed for terminal batch %s",
+            batch_id,
+        )
+
+
 def _mark_retry_exhausted(batch_id: str) -> None:
     """Persist a public-safe terminal failure while preserving the failed stage."""
     with SessionLocal() as db:
@@ -657,20 +749,109 @@ def _mark_retry_exhausted(batch_id: str) -> None:
 
 
 def process_batch(batch_id: str, *, receipt_handle: str | None = None) -> None:
-    """Process one durable import batch.
-
-    The queue/lease boundary is intentionally established before the pipeline
-    stages are added. Until ranking/terminalization is implemented, a prepared
-    batch remains unacknowledged rather than being falsely completed.
-    """
+    """Claim and resume one durable import pipeline until a terminal checkpoint."""
     with SessionLocal() as db:
         batch = repository.get_batch_for_worker(db, batch_id)
         if batch is None:
             raise BatchMissing(batch_id)
         if batch.status in repository.TERMINAL_BATCH_STATUSES:
+            _cleanup_terminal_batch(batch_id)
             return
 
-    raise NotImplementedError("candidate import ranking stage is not implemented yet")
+    token = uuid.uuid4().hex
+    with SessionLocal() as db:
+        claimed = repository.claim_batch(
+            db,
+            batch_id=batch_id,
+            token=token,
+            now=datetime.now(timezone.utc),
+            lease_seconds=get_import_lease_timeout_seconds(),
+        )
+    if not claimed:
+        return
+
+    keeper = LeaseKeeper(
+        batch_id=batch_id,
+        token=token,
+        receipt_handle=receipt_handle,
+    )
+    keeper.start()
+
+    try:
+        with SessionLocal() as db:
+            batch = repository.get_batch_for_worker(db, batch_id)
+            if batch is None:
+                raise BatchMissing(batch_id)
+
+            if batch.current_stage in {"UPLOADING", "VALIDATING", "DEDUPLICATING"}:
+                _prepare_batch_documents(db, batch)
+                db.expire_all()
+                batch = repository.get_batch_for_worker(db, batch_id)
+                if batch is None:
+                    raise BatchMissing(batch_id)
+
+            if batch.status in repository.TERMINAL_BATCH_STATUSES:
+                _cleanup_terminal_batch(batch_id)
+                return
+
+            if batch.successful_items <= 0:
+                _fail_batch(
+                    db,
+                    batch,
+                    error_code="NO_USABLE_CANDIDATES",
+                    error_message=PUBLIC_NO_USABLE_CANDIDATES_MESSAGE,
+                )
+                _cleanup_terminal_batch(batch_id)
+                return
+
+            if batch.current_stage in {"DEDUPLICATING", "INGESTING"}:
+                _run_ingestion_stage(db, batch)
+                db.expire_all()
+                batch = repository.get_batch_for_worker(db, batch_id)
+                if batch is None:
+                    raise BatchMissing(batch_id)
+
+            if batch.status in repository.TERMINAL_BATCH_STATUSES:
+                _cleanup_terminal_batch(batch_id)
+                return
+
+            if batch.current_stage == "EVALUATING":
+                _run_evaluation_stage(db, batch)
+                db.expire_all()
+                batch = repository.get_batch_for_worker(db, batch_id)
+                if batch is None:
+                    raise BatchMissing(batch_id)
+
+            if batch.status in repository.TERMINAL_BATCH_STATUSES:
+                _cleanup_terminal_batch(batch_id)
+                return
+
+            if batch.current_stage == "RANKING":
+                _run_ranking_stage(db, batch)
+                db.expire_all()
+                batch = repository.get_batch_for_worker(db, batch_id)
+                if batch is None:
+                    raise BatchMissing(batch_id)
+
+            if batch.status in repository.TERMINAL_BATCH_STATUSES:
+                _cleanup_terminal_batch(batch_id)
+                return
+
+            raise RuntimeError("candidate import pipeline did not reach terminal state")
+    finally:
+        keeper.stop()
+        try:
+            with SessionLocal() as db:
+                repository.release_batch_lease(
+                    db,
+                    batch_id=batch_id,
+                    token=token,
+                )
+        except Exception:
+            logger.exception(
+                "Candidate import lease release failed for batch %s",
+                batch_id,
+            )
 
 
 def handle_message(message: ReceivedImportMessage) -> None:
