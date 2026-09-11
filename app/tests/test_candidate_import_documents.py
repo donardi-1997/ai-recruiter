@@ -66,7 +66,29 @@ def test_extract_pdf_reads_header_contacts_name_and_hash():
     assert parsed.email == "ana@example.com"
     assert parsed.phone == "+573001234567"
     assert "Backend Engineer" in parsed.text
+    assert "ana@example.com" in parsed.header_text
     assert len(parsed.sha256) == 64
+
+
+def test_header_region_uses_up_to_40_non_empty_lines_not_only_name_window():
+    documents = _documents()
+    lines = ["Ana Gomez"] + [f"Section {index}" for index in range(1, 10)] + ["ana@example.com"]
+    payload = _docx_bytes(lines)
+
+    parsed = documents.extract_document(payload, "ana.docx")
+
+    assert parsed.display_name == "Ana Gomez"
+    assert parsed.email == "ana@example.com"
+    assert "ana@example.com" in parsed.header_text
+
+
+def test_header_region_is_capped_at_4000_characters():
+    documents = _documents()
+    payload = _docx_bytes(["Ana Gomez"] + ["X" * 500 for _ in range(20)])
+
+    parsed = documents.extract_document(payload, "ana.docx")
+
+    assert len(parsed.header_text) <= 4000
 
 
 def test_extract_docx_reads_contact_header():
@@ -187,11 +209,29 @@ def test_expand_zip_rejects_nested_archives():
         documents.expand_zip(payload, remaining_documents=500, remaining_bytes=GIB)
 
 
+@pytest.mark.parametrize("nested_name", ["nested.tar", "nested.gz", "nested.rar", "nested.7z"])
+def test_expand_zip_rejects_other_nested_archive_suffixes(nested_name):
+    documents = _documents()
+    payload = _zip_bytes({nested_name: b"archive payload"})
+
+    with pytest.raises(documents.UnsafeArchive, match="NESTED_ARCHIVE"):
+        documents.expand_zip(payload, remaining_documents=500, remaining_bytes=GIB)
+
+
 def test_expand_zip_rejects_malformed_archive():
     documents = _documents()
 
     with pytest.raises(documents.InvalidArchive):
         documents.expand_zip(b"not-a-zip", remaining_documents=500, remaining_bytes=GIB)
+
+
+def test_expand_zip_enforces_compressed_size_limit(monkeypatch):
+    documents = _documents()
+    payload = _zip_bytes({"a.pdf": _pdf_bytes("A")})
+    monkeypatch.setattr(documents, "MAX_ARCHIVE_BYTES", len(payload) - 1)
+
+    with pytest.raises(documents.ArchiveTooLarge):
+        documents.expand_zip(payload, remaining_documents=500, remaining_bytes=GIB)
 
 
 def test_expand_zip_enforces_remaining_document_limit():
