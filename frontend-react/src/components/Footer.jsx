@@ -1,8 +1,8 @@
 function Footer() {
   return (
     <footer className="site-footer">
-      <span>AI Recruiter</span>
-      <span>Evaluación inteligente, decisiones humanas.</span>
+      <span>ASIATI · Talent Intelligence</span>
+      <span>Talento que impulsa el cambio.</span>
     </footer>
   );
 }
