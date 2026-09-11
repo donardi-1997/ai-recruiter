@@ -2,7 +2,7 @@ from app.main import app
 
 
 def test_current_app_exposes_critical_routes():
-    paths = {route.path for route in app.routes}
+    paths = {route.path for route in app.routes if hasattr(route, "path")}
     assert "/health" in paths
     assert "/api/jobs" in paths
     assert "/api/candidates" in paths
