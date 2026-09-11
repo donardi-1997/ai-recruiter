@@ -1,3 +1,6 @@
+// eslint-disable-next-line no-unused-vars
+import React from "react";
+
 import "./candidate-import.css";
 
 const STAGE_COPY = {
