@@ -1,19 +1,19 @@
-"""Candidates router."""
+"""Candidates HTTP router."""
+
+import logging
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
 from sqlalchemy.orm import Session
 
 from app.deps import get_current_user, get_db
-from app import crud
-from app.domains.candidates.schemas import (
-    CandidateResponse,
-    BulkUploadResponse,
-    CandidateEvaluationsResponse,
-)
+from app.domains.candidates import presenter, service
+from app.domains.candidates.exceptions import CandidateNotFound, JobNotFound
 from app.domains.jobs.schemas import AssignCandidatesRequest
-from app.infrastructure.storage.candidate_documents import index_candidate_document
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/candidates", tags=["candidates"])
+assign_router = APIRouter(prefix="/api/jobs", tags=["job-candidates"])
 
 
 def _require_candidate(
@@ -21,24 +21,41 @@ def _require_candidate(
     candidate_id: str,
     owner_sub: str,
 ):
-    candidate = crud.get_candidate(db, candidate_id, owner_sub=owner_sub)
-    if not candidate:
+    try:
+        return service.require_candidate(db, candidate_id, owner_sub)
+    except CandidateNotFound:
         raise HTTPException(status_code=404, detail="Candidato no encontrado.")
-    return candidate
 
 
 def _require_job(db: Session, job_id: str, owner_sub: str):
-    job = crud.get_job(db, job_id, owner_sub=owner_sub)
-    if not job:
+    try:
+        return service.require_job(db, job_id, owner_sub)
+    except JobNotFound:
         raise HTTPException(status_code=404, detail="Vacante no encontrada.")
-    return job
+
+
+def _get_job_candidate_evaluation(
+    db: Session,
+    job_id: str,
+    candidate_id: str,
+    owner_sub: str,
+):
+    try:
+        return service.get_job_candidate_evaluation(
+            db,
+            job_id,
+            candidate_id,
+            owner_sub,
+        )
+    except JobNotFound:
+        raise HTTPException(status_code=404, detail="Vacante no encontrada.")
+    except CandidateNotFound:
+        raise HTTPException(status_code=404, detail="Candidato no encontrado.")
 
 
 # ============================================================
 # JOB-CANDIDATE ASSIGNMENT (under /api/jobs/{job_id}/candidates)
 # ============================================================
-
-assign_router = APIRouter(prefix="/api/jobs", tags=["job-candidates"])
 
 
 @assign_router.post("/{job_id}/candidates")
@@ -51,12 +68,17 @@ def assign_candidates_to_job(
     _require_job(db, job_id, _user["sub"])
     if not body.candidate_ids:
         raise HTTPException(status_code=400, detail="candidate_ids requerido.")
-    assigned, skipped = crud.assign_candidates_to_job(
-        db,
-        job_id,
-        body.candidate_ids,
-        owner_sub=_user["sub"],
-    )
+
+    try:
+        assigned, skipped = service.assign_candidates(
+            db,
+            job_id,
+            body.candidate_ids,
+            _user["sub"],
+        )
+    except JobNotFound:
+        raise HTTPException(status_code=404, detail="Vacante no encontrada.")
+
     return {"assigned": assigned, "skipped": skipped}
 
 
@@ -68,26 +90,18 @@ def get_job_candidates(
     db: Session = Depends(get_db),
     _user: dict = Depends(get_current_user),
 ):
-    _require_job(db, job_id, _user["sub"])
-    items, total = crud.list_candidates_for_job(
-        db,
-        job_id,
-        page=page,
-        page_size=page_size,
-        owner_sub=_user["sub"],
-    )
-    return [
-        {
-            "candidate_id": c.id,
-            "id": c.id,
-            "name": c.name,
-            "email": c.email,
-            "created_at": c.created_at.isoformat() if c.created_at else None,
-            "metadata": c.metadata_,
-            "filename": c.metadata_.get("filename") if c.metadata_ else None,
-        }
-        for c in items
-    ]
+    try:
+        items, _total = service.list_job_candidates(
+            db,
+            job_id,
+            _user["sub"],
+            page=page,
+            page_size=page_size,
+        )
+    except JobNotFound:
+        raise HTTPException(status_code=404, detail="Vacante no encontrada.")
+
+    return [presenter.candidate_to_dict(candidate) for candidate in items]
 
 
 @assign_router.get("/{job_id}/candidates/{candidate_id}")
@@ -97,31 +111,17 @@ def get_job_candidate_detail(
     db: Session = Depends(get_db),
     _user: dict = Depends(get_current_user),
 ):
-    _require_job(db, job_id, _user["sub"])
-    _require_candidate(db, candidate_id, _user["sub"])
-
-    evaluation = crud.get_evaluation_for_job_candidate(
+    evaluation = _get_job_candidate_evaluation(
         db,
         job_id,
         candidate_id,
+        _user["sub"],
     )
 
     if not evaluation:
         raise HTTPException(status_code=404, detail="Evaluacion no encontrada.")
 
-    return {
-        "evaluation_id": evaluation.id,
-        "candidate_id": evaluation.candidate_id,
-        "job_id": evaluation.job_id,
-        "status": evaluation.status,
-        "match_score": None if evaluation.status == "FAILED" else evaluation.match_score,
-        "recommendation": "EVALUATION_FAILED" if evaluation.status == "FAILED" else evaluation.recommendation,
-        "summary": "No fue posible completar la evaluación. Intenta nuevamente." if evaluation.status == "FAILED" else (evaluation.summary or ""),
-        "strengths": [] if evaluation.status == "FAILED" else (evaluation.strengths or []),
-        "gaps": [] if evaluation.status == "FAILED" else (evaluation.gaps or []),
-        "requirements": [] if evaluation.status == "FAILED" else (evaluation.requirements or []),
-        "error_message": "No fue posible completar la evaluación. Intenta nuevamente." if evaluation.status == "FAILED" else None,
-    }
+    return presenter.evaluation_to_dict(evaluation)
 
 
 @assign_router.get("/{job_id}/candidates/{candidate_id}/explanation")
@@ -131,28 +131,13 @@ def get_candidate_explanation(
     db: Session = Depends(get_db),
     _user: dict = Depends(get_current_user),
 ):
-    _require_job(db, job_id, _user["sub"])
-    _require_candidate(db, candidate_id, _user["sub"])
-
-    evaluation = crud.get_evaluation_for_job_candidate(db, job_id, candidate_id)
-
-    if not evaluation:
-        return {
-            "status": "PENDING",
-            "explanation": "Sin evaluacion.",
-            "summary": None,
-            "analysis": None,
-        }
-
-    failed = evaluation.status == "FAILED"
-    FAILED_EVALUATION_PUBLIC_MESSAGE = "No fue posible completar la evaluación. Intenta nuevamente."
-
-    return {
-        "status": evaluation.status,
-        "explanation": FAILED_EVALUATION_PUBLIC_MESSAGE if failed else (evaluation.summary or ""),
-        "summary": FAILED_EVALUATION_PUBLIC_MESSAGE if failed else (evaluation.summary or ""),
-        "analysis": None,
-    }
+    evaluation = _get_job_candidate_evaluation(
+        db,
+        job_id,
+        candidate_id,
+        _user["sub"],
+    )
+    return presenter.evaluation_explanation_to_dict(evaluation)
 
 
 @assign_router.get("/{job_id}/candidates/{candidate_id}/requirements")
@@ -162,24 +147,13 @@ def get_candidate_requirements(
     db: Session = Depends(get_db),
     _user: dict = Depends(get_current_user),
 ):
-    _require_job(db, job_id, _user["sub"])
-    _require_candidate(db, candidate_id, _user["sub"])
-
-    evaluation = crud.get_evaluation_for_job_candidate(db, job_id, candidate_id)
-
-    if not evaluation:
-        return {"requirements": []}
-
-    if evaluation.requirements:
-        return {"requirements": evaluation.requirements}
-
-    requirements = []
-    for strength in evaluation.strengths or []:
-        requirements.append({"requirement": strength, "status": "MATCH", "evidence": None})
-    for gap in evaluation.gaps or []:
-        requirements.append({"requirement": gap, "status": "MISSING", "evidence": None})
-
-    return {"requirements": requirements}
+    evaluation = _get_job_candidate_evaluation(
+        db,
+        job_id,
+        candidate_id,
+        _user["sub"],
+    )
+    return presenter.evaluation_requirements_to_dict(evaluation)
 
 
 @router.get("")
@@ -187,19 +161,8 @@ def list_candidates(
     db: Session = Depends(get_db),
     _user: dict = Depends(get_current_user),
 ):
-    candidates = crud.list_candidates(db, owner_sub=_user["sub"])
-    return [
-        {
-            "candidate_id": c.id,
-            "id": c.id,
-            "name": c.name,
-            "email": c.email,
-            "created_at": c.created_at.isoformat() if c.created_at else None,
-            "metadata": c.metadata_,
-            "filename": c.metadata_.get("filename") if c.metadata_ else None,
-        }
-        for c in candidates
-    ]
+    candidates = service.list_candidates(db, _user["sub"])
+    return [presenter.candidate_to_dict(candidate) for candidate in candidates]
 
 
 @router.get("/{candidate_id}")
@@ -208,16 +171,8 @@ def get_candidate(
     db: Session = Depends(get_db),
     _user: dict = Depends(get_current_user),
 ):
-    c = _require_candidate(db, candidate_id, _user["sub"])
-    return {
-        "candidate_id": c.id,
-        "id": c.id,
-        "name": c.name,
-        "email": c.email,
-        "created_at": c.created_at.isoformat() if c.created_at else None,
-        "metadata": c.metadata_,
-        "filename": c.metadata_.get("filename") if c.metadata_ else None,
-    }
+    candidate = _require_candidate(db, candidate_id, _user["sub"])
+    return presenter.candidate_to_dict(candidate)
 
 
 @router.post("/bulk")
@@ -228,38 +183,49 @@ async def upload_candidates_bulk(
 ):
     results = []
     errors = []
-    for f in files:
+
+    for upload in files:
         try:
-            name = f.filename or "Unknown"
-            import os
-            name = os.path.splitext(name)[0]
-            file_content = await f.read()
+            file_content = await upload.read()
             if not file_content:
-                errors.append({"original_filename": f.filename, "error": "Empty file"})
+                errors.append(
+                    {
+                        "original_filename": upload.filename,
+                        "error": "Empty file",
+                    }
+                )
                 continue
 
-            candidate = crud.create_candidate(
+            candidate, indexing = service.create_and_index_candidate(
                 db,
-                name=name,
-                metadata={"filename": f.filename},
                 owner_sub=_user["sub"],
+                original_filename=upload.filename,
+                file_content=file_content,
             )
 
-            indexing = index_candidate_document(candidate, file_content, f.filename)
-
-            results.append({
-                "candidate_id": candidate.id,
-                "name": candidate.name,
-                "original_filename": f.filename,
-                "ingestion_status": indexing.get("status", "UNKNOWN"),
-                "ingestion_job_id": indexing.get("ingestion_job_id"),
-                "error": indexing.get("error"),
-            })
+            results.append(
+                {
+                    "candidate_id": candidate.id,
+                    "name": candidate.name,
+                    "original_filename": upload.filename,
+                    "ingestion_status": indexing.get("status", "UNKNOWN"),
+                    "ingestion_job_id": indexing.get("ingestion_job_id"),
+                    "error": indexing.get("error"),
+                }
+            )
         except Exception as exc:
-            import logging
-            logger = logging.getLogger(__name__)
-            logger.error("Error processing %s: %s", f.filename, exc, exc_info=True)
-            errors.append({"original_filename": f.filename, "error": str(exc)})
+            logger.error(
+                "Error processing %s: %s",
+                upload.filename,
+                exc,
+                exc_info=True,
+            )
+            errors.append(
+                {
+                    "original_filename": upload.filename,
+                    "error": str(exc),
+                }
+            )
 
     return {
         "processed": len(files),
@@ -276,14 +242,9 @@ def delete_all_candidates(
     _user: dict = Depends(get_current_user),
 ):
     try:
-        deleted, failed = crud.delete_all_candidates(
-            db,
-            owner_sub=_user["sub"],
-        )
+        deleted, failed = service.delete_all_candidates(db, _user["sub"])
         return {"deleted": deleted, "failed": failed}
     except Exception as exc:
-        import logging
-        logger = logging.getLogger(__name__)
         logger.error("Error deleting all candidates: %s", exc)
         raise HTTPException(status_code=500, detail="Error al eliminar candidatos.")
 
@@ -294,13 +255,12 @@ def delete_candidate(
     db: Session = Depends(get_db),
     _user: dict = Depends(get_current_user),
 ):
-    _require_candidate(db, candidate_id, _user["sub"])
     try:
-        crud.delete_candidate(db, candidate_id)
+        service.delete_candidate(db, candidate_id, _user["sub"])
         return {"detail": "Candidato eliminado."}
+    except CandidateNotFound:
+        raise HTTPException(status_code=404, detail="Candidato no encontrado.")
     except Exception as exc:
-        import logging
-        logger = logging.getLogger(__name__)
         logger.error("Error deleting candidate %s: %s", candidate_id, exc)
         raise HTTPException(status_code=500, detail="Error al eliminar candidato.")
 
@@ -321,23 +281,18 @@ def get_candidate_evaluations(
     db: Session = Depends(get_db),
     _user: dict = Depends(get_current_user),
 ):
-    _require_candidate(db, candidate_id, _user["sub"])
-    evaluations = crud.get_evaluations_for_candidate(db, candidate_id)
+    try:
+        evaluations = service.get_candidate_evaluations(
+            db,
+            candidate_id,
+            _user["sub"],
+        )
+    except CandidateNotFound:
+        raise HTTPException(status_code=404, detail="Candidato no encontrado.")
+
     return {
         "evaluations": [
-            {
-                "evaluation_id": e.id,
-                "candidate_id": e.candidate_id,
-                "job_id": e.job_id,
-                "status": e.status,
-                "match_score": None if e.status == "FAILED" else e.match_score,
-                "recommendation": "EVALUATION_FAILED" if e.status == "FAILED" else e.recommendation,
-                "summary": "No fue posible completar la evaluación. Intenta nuevamente." if e.status == "FAILED" else (e.summary or ""),
-                "strengths": [] if e.status == "FAILED" else (e.strengths or []),
-                "gaps": [] if e.status == "FAILED" else (e.gaps or []),
-                "requirements": [] if e.status == "FAILED" else (e.requirements or []),
-                "error_message": "No fue posible completar la evaluación. Intenta nuevamente." if e.status == "FAILED" else None,
-            }
-            for e in evaluations
+            presenter.evaluation_to_dict(evaluation)
+            for evaluation in evaluations
         ]
     }
