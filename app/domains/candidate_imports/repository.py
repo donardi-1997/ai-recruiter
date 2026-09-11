@@ -2,12 +2,17 @@
 
 from __future__ import annotations
 
-from sqlalchemy import func
+from datetime import datetime, timedelta
+
+from sqlalchemy import func, or_
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.domains.candidate_imports.exceptions import IdentityConflict
 from app.models import Candidate, CandidateIdentity, ImportBatch, ImportItem
+
+
+TERMINAL_BATCH_STATUSES = ("COMPLETED", "COMPLETED_WITH_ERRORS", "FAILED")
 
 
 def create_batch_record(
@@ -65,6 +70,109 @@ def get_batch(db: Session, batch_id: str, owner_sub: str) -> ImportBatch | None:
         db.query(ImportBatch)
         .filter(ImportBatch.id == batch_id, ImportBatch.owner_sub == owner_sub)
         .first()
+    )
+
+
+def get_batch_for_worker(db: Session, batch_id: str) -> ImportBatch | None:
+    """Load a batch by its durable queue identifier for trusted worker code."""
+    return db.query(ImportBatch).filter(ImportBatch.id == batch_id).first()
+
+
+def claim_batch(
+    db: Session,
+    *,
+    batch_id: str,
+    token: str,
+    now: datetime,
+    lease_seconds: int,
+) -> bool:
+    """Atomically claim an unleased or stale non-terminal import batch."""
+    if lease_seconds <= 0:
+        raise ValueError("lease_seconds must be positive")
+
+    stale_before = now - timedelta(seconds=lease_seconds)
+    updated = (
+        db.query(ImportBatch)
+        .filter(
+            ImportBatch.id == batch_id,
+            ~ImportBatch.status.in_(TERMINAL_BATCH_STATUSES),
+            or_(
+                ImportBatch.processing_token.is_(None),
+                ImportBatch.heartbeat_at.is_(None),
+                ImportBatch.heartbeat_at < stale_before,
+            ),
+        )
+        .update(
+            {
+                ImportBatch.processing_token: token,
+                ImportBatch.heartbeat_at: now,
+                ImportBatch.attempt_count: ImportBatch.attempt_count + 1,
+                ImportBatch.started_at: func.coalesce(ImportBatch.started_at, now),
+            },
+            synchronize_session=False,
+        )
+    )
+    db.commit()
+    return updated == 1
+
+
+def heartbeat_batch(
+    db: Session,
+    *,
+    batch_id: str,
+    token: str,
+    now: datetime,
+) -> None:
+    """Refresh a lease only when the caller still owns its processing token."""
+    (
+        db.query(ImportBatch)
+        .filter(
+            ImportBatch.id == batch_id,
+            ImportBatch.processing_token == token,
+            ~ImportBatch.status.in_(TERMINAL_BATCH_STATUSES),
+        )
+        .update(
+            {ImportBatch.heartbeat_at: now},
+            synchronize_session=False,
+        )
+    )
+    db.commit()
+
+
+def release_batch_lease(
+    db: Session,
+    *,
+    batch_id: str,
+    token: str,
+) -> None:
+    """Release a lease only when the supplied token still owns it."""
+    (
+        db.query(ImportBatch)
+        .filter(
+            ImportBatch.id == batch_id,
+            ImportBatch.processing_token == token,
+        )
+        .update(
+            {
+                ImportBatch.processing_token: None,
+                ImportBatch.heartbeat_at: None,
+            },
+            synchronize_session=False,
+        )
+    )
+    db.commit()
+
+
+def list_undispatched_queued_batches(db: Session) -> list[ImportBatch]:
+    """Return durable queued batches whose SQS dispatch was not checkpointed."""
+    return (
+        db.query(ImportBatch)
+        .filter(
+            ImportBatch.status == "QUEUED",
+            ImportBatch.queue_dispatched_at.is_(None),
+        )
+        .order_by(ImportBatch.created_at.asc(), ImportBatch.id.asc())
+        .all()
     )
 
 
