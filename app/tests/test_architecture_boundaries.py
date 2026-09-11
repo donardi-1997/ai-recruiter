@@ -8,7 +8,6 @@ APP_ROOT = Path(__file__).resolve().parents[1]
 
 CRUD_ROUTER_ALLOWLIST = {
     "domains/jobs/router.py",
-    "domains/candidates/router.py",
     "domains/evaluations/router.py",
     "domains/ranking/router.py",
 }
