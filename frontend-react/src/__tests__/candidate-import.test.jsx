@@ -1,4 +1,5 @@
-import { readFileSync } from "node:fs";
+// eslint-disable-next-line no-unused-vars
+import React from "react";
 
 import { act, render, renderHook, screen } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
@@ -20,13 +21,14 @@ vi.mock("../features/candidate-import/api.js", async () => {
 });
 
 import * as candidateImportApi from "../features/candidate-import/api.js";
-import {
-  validateSelectedFile,
-  validateSelectedFiles,
-} from "../features/candidate-import/CandidateImportModal.jsx";
+import candidateImportCss from "../features/candidate-import/candidate-import.css?raw";
 import ImportProgress from "../features/candidate-import/ImportProgress.jsx";
 import ImportSummary from "../features/candidate-import/ImportSummary.jsx";
 import { useCandidateImport } from "../features/candidate-import/useCandidateImport.js";
+import {
+  validateSelectedFile,
+  validateSelectedFiles,
+} from "../features/candidate-import/validation.js";
 
 let actualApi;
 
@@ -433,12 +435,8 @@ describe("candidate import UX", () => {
   });
 
   it("disables nonessential candidate-import motion for reduced-motion users", () => {
-    const css = readFileSync(
-      new URL("../features/candidate-import/candidate-import.css", import.meta.url),
-      "utf8",
-    );
-    expect(css).toMatch(/@media\s*\(prefers-reduced-motion:\s*reduce\)/);
-    expect(css).toMatch(/animation:\s*none\s*!important/);
-    expect(css).toMatch(/transition:\s*none\s*!important/);
+    expect(candidateImportCss).toMatch(/@media\s*\(prefers-reduced-motion:\s*reduce\)/);
+    expect(candidateImportCss).toMatch(/animation:\s*none\s*!important/);
+    expect(candidateImportCss).toMatch(/transition:\s*none\s*!important/);
   });
 });
