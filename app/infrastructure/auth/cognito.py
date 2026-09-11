@@ -1,9 +1,10 @@
 """AWS Cognito access-token validation infrastructure."""
 
 import logging
-import os
 
 import boto3
+
+from app.config import get_aws_region
 
 logger = logging.getLogger(__name__)
 
@@ -21,7 +22,7 @@ def get_cognito_client():
     if _cognito_client is None:
         _cognito_client = boto3.client(
             "cognito-idp",
-            region_name=os.getenv("AWS_REGION", "us-east-2"),
+            region_name=get_aws_region(),
         )
     return _cognito_client
 

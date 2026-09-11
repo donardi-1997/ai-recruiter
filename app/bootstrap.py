@@ -1,13 +1,13 @@
 """FastAPI application factory and composition root."""
 
 import logging
-import os
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from app.auth_routes import router as auth_router
+from app.config import CORS_ORIGINS, get_database_url
 from app.db import Base, get_engine
 from app.domains.candidates.router import assign_router, router as candidates_router
 from app.domains.evaluations.router import router as evaluations_router
@@ -16,14 +16,6 @@ from app.domains.ranking.router import router as ranking_router
 from app.health import router as health_router
 
 logger = logging.getLogger(__name__)
-
-CORS_ORIGINS = [
-    "http://localhost:5173",
-    "http://localhost:5174",
-    "http://localhost:5175",
-    "https://ai.adrianguerra.net",
-    "https://air.adrianguerra.net",
-]
 
 
 def create_app() -> FastAPI:
@@ -36,7 +28,7 @@ def create_app() -> FastAPI:
 
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=CORS_ORIGINS,
+        allow_origins=list(CORS_ORIGINS),
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
@@ -66,7 +58,7 @@ def create_app() -> FastAPI:
 
     @app.on_event("startup")
     def on_startup() -> None:
-        db_url = os.getenv("DATABASE_URL", "")
+        db_url = get_database_url()
         if "sqlite" in db_url or not db_url:
             logger.info("Skipping table creation (non-PostgreSQL URL).")
             return
