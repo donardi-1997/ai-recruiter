@@ -90,6 +90,18 @@ def test_jobs_router_uses_application_boundary_only():
     assert not any(name.startswith("app.infrastructure") for name in imports)
 
 
+def test_candidate_import_router_uses_application_boundary_only():
+    imports = _imports(APP_ROOT / "domains" / "candidate_imports" / "router.py")
+
+    assert "app.crud" not in imports
+    assert "app.models" not in imports
+    assert not any(
+        name.startswith("app.domains.") and ".repository" in name
+        for name in imports
+    )
+    assert not any(name.startswith("app.infrastructure") for name in imports)
+
+
 def test_domain_non_router_modules_do_not_import_domain_routers():
     violations = []
 
