@@ -16,6 +16,7 @@ from sqlalchemy.orm import sessionmaker
 
 from app.db import Base
 from app.deps import get_current_user, get_db
+from app.infrastructure.locking.job_lock import advisory_lock_key
 from app.main import app
 from app.models import Candidate, Job, Ranking, RankingItem
 
@@ -241,16 +242,13 @@ class TestCandidates:
 
 class TestAdvisoryLock:
     def test_lock_key_is_deterministic(self):
-        from app.deps import _advisory_lock_key
-        assert _advisory_lock_key("x") == _advisory_lock_key("x")
+        assert advisory_lock_key("x") == advisory_lock_key("x")
 
     def test_lock_key_differs_per_job(self):
-        from app.deps import _advisory_lock_key
-        assert _advisory_lock_key("a") != _advisory_lock_key("b")
+        assert advisory_lock_key("a") != advisory_lock_key("b")
 
     def test_lock_key_is_64bit(self):
-        from app.deps import _advisory_lock_key
-        key = _advisory_lock_key("test")
+        key = advisory_lock_key("test")
         assert -(2**63) <= key < 2**63
 
 
