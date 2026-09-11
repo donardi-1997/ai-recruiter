@@ -7,7 +7,6 @@ from pathlib import Path
 APP_ROOT = Path(__file__).resolve().parents[1]
 
 CRUD_ROUTER_ALLOWLIST = {
-    "domains/jobs/router.py",
     "domains/ranking/router.py",
 }
 
@@ -71,6 +70,17 @@ def test_candidates_router_uses_application_boundary_only():
 
 def test_evaluations_router_uses_application_boundary_only():
     imports = _imports(APP_ROOT / "domains" / "evaluations" / "router.py")
+
+    assert "app.crud" not in imports
+    assert not any(
+        name.startswith("app.domains.") and ".repository" in name
+        for name in imports
+    )
+    assert not any(name.startswith("app.infrastructure") for name in imports)
+
+
+def test_jobs_router_uses_application_boundary_only():
+    imports = _imports(APP_ROOT / "domains" / "jobs" / "router.py")
 
     assert "app.crud" not in imports
     assert not any(
