@@ -23,13 +23,13 @@ The workflow must be durable across API/worker restarts, tenant-safe, idempotent
 - Up to **500 candidate documents per import batch**.
 - Input formats: **PDF, DOCX, ZIP**.
 - A batch is always associated with one selected job before processing starts.
-- Direct browser-to-S3 upload through presigned S3 forms/URLs.
+- Direct browser-to-S3 upload through presigned S3 POSTs.
 - Durable asynchronous execution through **Amazon SQS Standard**.
 - An SQS **dead-letter queue (DLQ)**.
 - A separate Docker worker running the same backend image as the API.
 - Automatic conservative deduplication.
 - Automatic candidate creation/reuse and job assignment.
-- One Bedrock Knowledge Base ingestion per batch when canonical candidate documents changed.
+- One logical Bedrock Knowledge Base ingestion job per batch when canonical candidate documents changed.
 - Automatic candidate evaluation against the selected job.
 - Automatic ranking update after evaluation.
 - Persisted batch/item states in PostgreSQL.
@@ -146,7 +146,7 @@ app/infrastructure/imports/
   storage.py       # presigning, staging reads/deletes, canonical document writes
   queue.py         # SQS send/receive/delete/change-visibility
   documents.py     # PDF/DOCX validation + text/contact extraction + safe ZIP expansion
-  ingestion.py     # one Bedrock KB ingestion start/poll operation
+  ingestion.py     # one idempotent Bedrock KB ingestion start/poll operation
 ```
 
 ### Worker
@@ -155,7 +155,7 @@ app/infrastructure/imports/
 app/workers/candidate_imports.py
 ```
 
-The worker consumes SQS messages, claims a batch, runs/resumes its state machine, checkpoints progress, and acknowledges the SQS message only after a terminal state or intentional handoff/retry.
+The worker dispatches any durable queued batches that were not successfully sent to SQS, consumes SQS messages, claims a batch, runs/resumes its state machine, checkpoints progress, and acknowledges the SQS message only after a terminal state or intentional retry behavior.
 
 ### Frontend
 
@@ -181,7 +181,7 @@ A new Alembic migration follows the existing `002` migration as `003`.
 Required fields:
 
 - `id` UUID primary key
-- `job_id` FK -> jobs, non-null
+- `job_id` FK -> jobs with `ON DELETE CASCADE`, non-null
 - `owner_sub` text, non-null
 - `status` text, non-null
 - `current_stage` text, non-null
@@ -198,13 +198,28 @@ Required fields:
 - `ranking_version` integer nullable
 - `bedrock_ingestion_job_id` text nullable
 - `attempt_count` integer, default 0
+- `queue_dispatched_at` timestamp nullable
 - `processing_token` text nullable
 - `heartbeat_at` timestamp nullable
 - `last_error_code` text nullable
 - `last_error_message` text nullable; public-safe text only
 - `created_at`, `started_at`, `completed_at`, `updated_at`
 
+`ON DELETE CASCADE` preserves the existing job-deletion behavior: import history must not prevent deleting a job. A worker that receives a message for a batch deleted by job cascade acknowledges/discards that message without recreating state.
+
 Indexes support owner/job/recent-batch queries and worker state queries.
+
+Counter semantics are fixed:
+
+- `upload_total`: user-selected top-level uploads (documents + ZIP containers)
+- `uploaded_items`: successfully uploaded top-level objects
+- `total_items`: discovered processable `DOCUMENT` items after ZIP expansion
+- `processed_items`: document items that reached a preparation terminal state
+- `successful_items`: prepared/assigned document items, including reused candidates
+- `reused_items`: subset of `successful_items` whose candidate already existed
+- `failed_items`: document items that failed preparation/deduplication
+- `evaluated_items`: successful items whose evaluation attempt reached a terminal result
+- `evaluation_failed_items`: subset of `evaluated_items` whose evaluation is `FAILED`
 
 ### 6.2 `ImportItem`
 
@@ -213,7 +228,7 @@ One row represents either a direct candidate document or an archive container. Z
 Required fields:
 
 - `id` UUID primary key
-- `batch_id` FK -> import_batches, cascade delete
+- `batch_id` FK -> import_batches with cascade delete
 - `parent_item_id` self-FK nullable; used for documents expanded from a ZIP
 - `kind`: `DOCUMENT` or `ARCHIVE`
 - `original_filename`
@@ -221,13 +236,15 @@ Required fields:
 - `content_type`
 - `size_bytes`
 - `document_sha256` nullable until validated
-- `candidate_id` FK -> candidates nullable
+- `candidate_id` FK -> candidates with `ON DELETE SET NULL`, nullable
 - `status`
 - `current_stage`
 - `outcome`: nullable, `CREATED` or `REUSED` for successful document items
 - `error_code` nullable
 - `error_message` nullable; public-safe text only
 - `created_at`, `updated_at`, `completed_at`
+
+Deleting a candidate must not break import-history rows; the nullable candidate FK is cleared instead.
 
 Batch counters count only `DOCUMENT` rows after archive expansion. Archive rows are containers and do not represent candidates.
 
@@ -239,7 +256,7 @@ Required fields:
 
 - `id` UUID primary key
 - `owner_sub` text, non-null
-- `candidate_id` FK -> candidates, cascade delete
+- `candidate_id` FK -> candidates with cascade delete
 - `kind`: `DOCUMENT_SHA256`, `EMAIL`, or `PHONE`
 - `value` normalized text, non-null
 - `created_at`
@@ -250,7 +267,23 @@ Constraint:
 
 This prevents two candidates owned by the same tenant from claiming the same strong identity. Identical values in different tenants are independent.
 
+Identity insertion is race-safe: on a unique-constraint collision, re-read the identity. If it now points to the same candidate, treat the operation as idempotent; if it points to a different candidate, stop that item as `IDENTITY_CONFLICT` rather than merging.
+
 There is **no source/origin column** in any import or candidate identity table.
+
+### 6.4 Existing-candidate identity bootstrap
+
+The new identity table must work with candidates created before migration `003`.
+
+Deliver an idempotent application backfill command that:
+
+1. reads existing candidates owner-by-owner
+2. seeds normalized email identities from non-empty existing `Candidate.email` values when unambiguous
+3. hashes the existing canonical S3 candidate document when available and seeds `DOCUMENT_SHA256`
+4. skips ambiguous legacy identity collisions instead of choosing a winner
+5. emits counts/IDs in logs without raw CV text
+
+The importer additionally treats an ambiguous legacy normalized email match as `IDENTITY_CONFLICT` until the legacy data is resolved. No migration invents phone values that are not already known.
 
 ## 7. Batch and item state machines
 
@@ -277,6 +310,8 @@ Terminal:
 - `EVALUATING`
 - `RANKING`
 - `COMPLETED`
+
+For `FAILED`, `current_stage` remains the stage that failed. `COMPLETED` and `COMPLETED_WITH_ERRORS` end with `current_stage=COMPLETED`.
 
 ### Item status
 
@@ -323,21 +358,26 @@ Response includes:
 - S3 presigned POST URL + signed fields
 - expiration timestamp
 
-Presigned upload credentials expire after one hour.
+Presigned upload credentials expire after one hour. Signed POST conditions enforce the expected object key and an appropriate content-length range; worker validation remains authoritative for file type/content.
 
-### 8.2 Complete uploads / enqueue
+### 8.2 Complete uploads / durable enqueue
 
 `POST /api/import-batches/{batch_id}/complete`
+
+Database commit and SQS delivery are not falsely treated as one atomic transaction.
 
 Behavior:
 
 1. owner-scope batch
 2. verify every declared staging object exists and has an acceptable size
 3. mark items uploaded
-4. atomically transition batch `UPLOADING -> QUEUED`
-5. send an SQS message containing only `batch_id` and a small schema version
+4. commit batch as `QUEUED` with `queue_dispatched_at=NULL`
+5. attempt to send the SQS message
+6. after a successful send, persist `queue_dispatched_at`
 
-The operation is idempotent. Repeating it after the batch has already been queued or started returns current batch state and does not create a second logical batch.
+The operation is idempotent. Repeating it after the batch has already been queued or started returns current state; if the batch is queued but `queue_dispatched_at` is still null, it safely retries dispatch.
+
+For crash/network gaps, the worker loop also scans `QUEUED` batches with `queue_dispatched_at=NULL` before/around long polling and dispatches them. If a send succeeds but the sender crashes before persisting `queue_dispatched_at`, a later retry may create a duplicate SQS message; the batch lease/state machine makes that duplicate harmless.
 
 ### 8.3 Batch progress
 
@@ -387,7 +427,7 @@ The staging bucket has:
 - private access only
 - Block Public Access enabled
 - server-side encryption
-- CORS restricted to the production frontend origin and required methods/headers
+- CORS restricted to the production frontend origin and explicitly configured development origins only
 - a lifecycle rule that removes abandoned staging objects after 24 hours
 
 Worker cleanup deletes terminal-batch staging objects eagerly; lifecycle is the fallback.
@@ -410,13 +450,15 @@ PDF/DOCX text extraction uses deterministic local parsing, not an extra LLM call
 
 To reduce false matches from references or unrelated people, email/phone identity extraction is limited to the document's contact/header region. If multiple conflicting values of the same identity type are found in that region, that identity type is considered ambiguous and is not used for automatic deduplication.
 
+For a new candidate, the display name is derived deterministically from a plausible document header when available, with the normalized filename stem as fallback. Display name is never an identity key. An unambiguous extracted email populates `Candidate.email` for a new candidate. Reusing a candidate does not overwrite a different non-empty existing email merely because a newly uploaded CV contains another address.
+
 ### Resolution algorithm
 
 For each document:
 
 1. calculate SHA-256
 2. extract/normalize unambiguous email and phone when available
-3. resolve all strong identities against `CandidateIdentity` for the current owner
+3. resolve all strong identities against `CandidateIdentity` for the current owner, with legacy-email fallback during transition
 4. if no identity matches, create a new Candidate
 5. if every matched identity resolves to the same Candidate, reuse it
 6. if strong identities resolve to more than one existing Candidate, do **not** merge; fail only that item with `IDENTITY_CONFLICT`
@@ -438,15 +480,19 @@ Successful new/updated candidate documents are copied/written to the existing ca
 
 If a canonical document changes extension, stale canonical variants for that candidate are removed so the Knowledge Base does not retain multiple active CV objects for the same candidate.
 
-### One ingestion per batch
+### One logical ingestion job per batch
 
 After all documents are prepared:
 
-- if at least one canonical candidate document changed, call `start_ingestion_job` **once** for the batch
-- persist `bedrock_ingestion_job_id`
+- if at least one canonical candidate document changed, call `start_ingestion_job` for the batch
+- use a deterministic Bedrock `clientToken` derived from the batch ID so retrying the start request cannot create a second logical ingestion job
+- persist `bedrock_ingestion_job_id` immediately from the successful response
+- persist a short batch-ID description for operations/debugging
 - poll the real Bedrock ingestion job state
 - only enter `EVALUATING` when ingestion completes successfully
 - if every item was an unchanged reused candidate, skip ingestion and move directly to evaluation
+
+Transport/API retries reuse the same client token. A Bedrock job that itself reaches `FAILED` is treated as a fatal ingestion-stage failure in V1 rather than starting a second ingestion job with a different token.
 
 The UI must show Bedrock ingestion as an indeterminate active stage because Bedrock does not provide a trustworthy per-document percentage through the existing flow.
 
@@ -496,6 +542,8 @@ The worker periodically extends the SQS message visibility timeout while the bat
 
 On an unhandled retryable error, the message is not acknowledged. On the fifth receive, the worker records a public-safe `FAILED` batch state before allowing the message to move to the DLQ.
 
+If a message references a missing/cascade-deleted batch, the worker acknowledges it as obsolete.
+
 ## 13. Evaluation strategy
 
 After successful ingestion, evaluate every successfully prepared candidate against the selected job automatically.
@@ -530,6 +578,8 @@ Add a Ranking application-service entry point that materializes a new ranking ve
 
 The existing `recalculate_ranking()` public behavior remains unchanged. This small service addition prevents duplicate Bedrock evaluation calls after the import worker has already evaluated all candidates.
 
+If another ranking operation temporarily owns the job lock, the import worker treats that as retryable with bounded backoff instead of immediately failing the batch.
+
 When ranking persistence succeeds, set `ranking_ready=true` and persist `ranking_version` on the batch.
 
 ## 15. Progress and animation semantics
@@ -555,7 +605,7 @@ Display stage-specific measurable progress:
 - **UPLOADING:** actual bytes uploaded / declared bytes from browser upload progress events
 - **VALIDATING / DEDUPLICATING:** processed document count / total discovered document count
 - **INGESTING:** indeterminate animated indicator using real Bedrock job state
-- **EVALUATING:** evaluated items / eligible items
+- **EVALUATING:** evaluated items / successful items
 - **RANKING:** indeterminate animated indicator until ranking commit succeeds
 
 ### Motion
@@ -594,7 +644,7 @@ Examples:
 
 - unsafe/oversized archive invalidates the batch before candidate creation
 - no candidate document can be prepared
-- Bedrock ingestion repeatedly fails/times out when changed documents require ingestion
+- Bedrock ingestion fails/times out when changed documents require ingestion
 - selected job no longer exists/is no longer visible
 - retry ceiling is exhausted by a fatal worker failure
 
@@ -604,10 +654,13 @@ Technical errors remain in structured logs. API-visible `error_message` values a
 
 Every external stage is designed to be replay-safe:
 
-- completing uploads twice does not enqueue two logical batches
+- completing uploads twice does not create two logical batches
+- DB/SQS dispatch gaps are recovered through `queue_dispatched_at` scanning
 - SQS duplicate delivery does not create duplicate candidates because identity constraints + batch lease apply
+- identity unique-constraint races are re-read and resolved conservatively
 - candidate/job assignment is already idempotent
 - candidate/job evaluation updates existing evaluation instead of creating duplicates
+- Bedrock ingestion start uses a deterministic client token
 - unchanged canonical CVs are not reuploaded/reingested
 - completed item stages are skipped on resume
 - ranking is materialized once at the terminal ranking stage for a claimed execution
@@ -634,19 +687,21 @@ Do not broaden permissions to wildcard resources where resource-level scoping is
 
 The existing deploy workflow/script is the operational source of truth for the current Lightsail Docker deployment. Historical infrastructure documentation must not cause this feature to reintroduce an old ECS deployment path.
 
-## 19. Deployment changes
+## 19. Deployment and migration changes
 
 Add a worker deploy script and extend CI/CD so a successful main deploy verifies:
 
 1. backend image built/pushed by immutable SHA as today
-2. API container healthy
-3. worker container uses the same SHA image
-4. worker container is running with required Roles Anywhere mounts/env
-5. frontend deployment remains healthy
+2. migration `003` is applied before code that requires the new tables becomes active
+3. existing-candidate identity bootstrap is safe/idempotent and can be executed during controlled deployment
+4. API container healthy
+5. worker container uses the same SHA image
+6. worker container is running with required Roles Anywhere mounts/env
+7. frontend deployment remains healthy
 
 Worker deployment must preserve/allow rollback of the previous worker image in the same spirit as API/frontend rollback.
 
-Database migration `003` is applied before code that requires the new tables becomes active.
+Migration/backfill ordering must not leave the existing API unable to start. The schema migration creates structures first; the identity backfill is idempotent application work and must not be required for ORM import/startup correctness.
 
 ## 20. Testing strategy
 
@@ -657,6 +712,7 @@ Implementation follows strict RED -> GREEN TDD.
 Cover:
 
 - legal/illegal batch transitions
+- counter semantics
 - 500-document ceiling
 - normalization of email/phone
 - SHA-256 identity handling
@@ -665,6 +721,7 @@ Cover:
 - cross-tenant isolation
 - multi-identity same-candidate reuse
 - multi-identity different-candidate `IDENTITY_CONFLICT`
+- identity unique-race resolution
 - first-document-wins behavior for multiple documents resolving to one candidate in a batch
 - terminal counters/status calculation
 
@@ -691,10 +748,23 @@ Cover:
 - owner-scoped job requirement
 - batch creation/presign contract
 - upload completion verification
+- queued state committed before external SQS dispatch
+- dispatch recovery when `queue_dispatched_at` is null
+- duplicate dispatch safety
 - idempotent completion/enqueue
 - owner cannot read/complete another tenant batch
 - status and item pagination contracts
 - public error sanitization
+
+### Legacy identity bootstrap tests
+
+Cover:
+
+- normalized existing email identity creation
+- canonical S3 hash identity creation
+- idempotent rerun
+- ambiguous legacy email skip/conflict behavior
+- cross-tenant same email remains independent
 
 ### Queue/worker tests
 
@@ -705,9 +775,11 @@ Use mocked AWS clients and real service boundaries where practical. Cover:
 - fresh lease blocks second worker
 - stale lease recovery
 - visibility extension
+- missing/cascade-deleted batch acknowledgement
 - stage resume after simulated crash
 - fifth-attempt failure behavior
-- one Bedrock ingestion start per changed batch
+- deterministic Bedrock ingestion `clientToken`
+- one logical Bedrock ingestion start per changed batch under retries
 - no ingestion when all candidates are unchanged reuses
 
 ### Evaluation/ranking tests
@@ -717,8 +789,17 @@ Cover:
 - evaluation progress accounting
 - partial evaluation failures produce `COMPLETED_WITH_ERRORS`
 - ranking materialization does not invoke evaluation/LLM again
-- ranking lock behavior
+- ranking lock retry behavior
 - ranking version persisted onto ImportBatch
+
+### Compatibility/deletion tests
+
+Cover:
+
+- deleting a job with import history still preserves the established Jobs delete contract
+- import batch/items cascade with job deletion
+- deleting a candidate sets historical `ImportItem.candidate_id` to null
+- CandidateIdentity rows cascade with candidate deletion
 
 ### Frontend tests
 
@@ -771,18 +852,21 @@ Batch APIs expose only sanitized errors suitable for recruiters.
 V1 is complete when all of the following are true:
 
 1. A recruiter can select a job and submit PDF/DOCX/ZIP input that resolves to at most 500 CV documents.
-2. Uploads go directly from browser to private staging S3 using expiring presigned credentials.
+2. Uploads go directly from browser to private staging S3 using expiring presigned POST credentials.
 3. Closing/reloading the browser does not cancel processing or lose recoverable status.
-4. SQS + a separate worker execute the pipeline durably.
-5. Duplicate candidates are automatically reused by owner-scoped hash/email/phone rules; names alone never merge.
-6. Identity conflicts do not merge people and do not abort unrelated items.
-7. Candidate links to the selected job are idempotent.
-8. Changed canonical CVs trigger exactly one Bedrock KB ingestion for the batch; unchanged-only batches trigger none.
-9. Successful candidates are automatically evaluated against the selected job.
-10. The final ranking is materialized without a second evaluation pass.
-11. The UI displays real upload/document/evaluation counters and indeterminate states where the provider exposes no measurable percentage.
-12. Animations respect reduced-motion preferences.
-13. Partial item/evaluation failures produce a useful `COMPLETED_WITH_ERRORS` result and ranking when possible.
-14. Worker/API restart and duplicate SQS delivery do not create duplicate candidates/evaluations or lose the batch.
-15. No source/origin tracking and no Browser Use are introduced.
-16. Full SQLite, PostgreSQL, contract, architecture, frontend, migration, and deployment verification is green before merge.
+4. DB-to-SQS dispatch gaps recover without losing a queued batch.
+5. SQS + a separate worker execute the pipeline durably.
+6. Duplicate candidates are automatically reused by owner-scoped hash/email/phone rules; names alone never merge.
+7. Pre-existing candidates participate in deduplication through safe identity bootstrap/legacy fallback.
+8. Identity conflicts do not merge people and do not abort unrelated items.
+9. Candidate links to the selected job are idempotent.
+10. Changed canonical CVs trigger one logical Bedrock KB ingestion job for the batch using an idempotent client token; unchanged-only batches trigger none.
+11. Successful candidates are automatically evaluated against the selected job.
+12. The final ranking is materialized without a second evaluation pass.
+13. The UI displays real upload/document/evaluation counters and indeterminate states where the provider exposes no measurable percentage.
+14. Animations respect reduced-motion preferences.
+15. Partial item/evaluation failures produce a useful `COMPLETED_WITH_ERRORS` result and ranking when possible.
+16. Worker/API restart and duplicate SQS delivery do not create duplicate candidates/evaluations or lose the batch.
+17. Existing job/candidate deletion contracts continue to work with the new foreign keys.
+18. No source/origin tracking and no Browser Use are introduced.
+19. Full SQLite, PostgreSQL, contract, architecture, frontend, migration, and deployment verification is green before merge.
