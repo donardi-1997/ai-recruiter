@@ -1,4 +1,7 @@
-import { act, renderHook } from "@testing-library/react";
+import { readFileSync } from "node:fs";
+
+import { act, render, renderHook, screen } from "@testing-library/react";
+import { MemoryRouter } from "react-router-dom";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 
 import apiClient from "../api/client.js";
@@ -17,6 +20,12 @@ vi.mock("../features/candidate-import/api.js", async () => {
 });
 
 import * as candidateImportApi from "../features/candidate-import/api.js";
+import {
+  validateSelectedFile,
+  validateSelectedFiles,
+} from "../features/candidate-import/CandidateImportModal.jsx";
+import ImportProgress from "../features/candidate-import/ImportProgress.jsx";
+import ImportSummary from "../features/candidate-import/ImportSummary.jsx";
 import { useCandidateImport } from "../features/candidate-import/useCandidateImport.js";
 
 let actualApi;
@@ -291,5 +300,145 @@ describe("useCandidateImport", () => {
     expect(result.current.uploadProgress).toBeNull();
     expect(result.current.batch.status).toBe("COMPLETED");
     unmount();
+  });
+});
+
+describe("candidate import UX", () => {
+  it("renders evaluation count and indeterminate ingestion without a fake overall percent", () => {
+    const { rerender } = render(
+      <ImportProgress
+        batch={processingBatch({
+          successful_items: 327,
+          evaluated_items: 143,
+        })}
+        uploadProgress={null}
+      />,
+    );
+
+    expect(screen.getByText(/143 \/ 327/)).toBeInTheDocument();
+    expect(screen.queryByText(/68%/)).not.toBeInTheDocument();
+
+    rerender(
+      <ImportProgress
+        batch={processingBatch({ current_stage: "INGESTING" })}
+        uploadProgress={null}
+      />,
+    );
+    expect(screen.getByTestId("indeterminate-progress")).toBeInTheDocument();
+  });
+
+  it("shows only measured byte percentage during browser upload", () => {
+    render(
+      <ImportProgress
+        batch={{ status: "UPLOADING", current_stage: "UPLOADING" }}
+        uploadProgress={{ loadedBytes: 50, totalBytes: 100, percent: 50 }}
+      />,
+    );
+
+    expect(screen.getByText("50%")).toBeInTheDocument();
+    expect(screen.getByText(/50 B de 100 B/)).toBeInTheDocument();
+  });
+
+  it("accepts PDF DOCX and ZIP but rejects unsupported direct files", () => {
+    expect(
+      validateSelectedFile({
+        name: "a.pdf",
+        size: 1024,
+        type: "application/pdf",
+      }),
+    ).toBeNull();
+    expect(
+      validateSelectedFile({
+        name: "a.docx",
+        size: 1024,
+        type: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+      }),
+    ).toBeNull();
+    expect(
+      validateSelectedFile({
+        name: "a.zip",
+        size: 1024,
+        type: "application/zip",
+      }),
+    ).toBeNull();
+    expect(
+      validateSelectedFile({
+        name: "a.txt",
+        size: 1024,
+        type: "text/plain",
+      }),
+    ).toMatch(/PDF, DOCX o ZIP/);
+  });
+
+  it("enforces the 15 MiB direct-document limit and 500 direct-document ceiling", () => {
+    expect(
+      validateSelectedFile({
+        name: "large.pdf",
+        size: 15 * 1024 * 1024 + 1,
+        type: "application/pdf",
+      }),
+    ).toMatch(/15 MB/);
+
+    const tooMany = Array.from({ length: 501 }, (_, index) => ({
+      name: `candidate-${index}.pdf`,
+      size: 1024,
+      type: "application/pdf",
+    }));
+    expect(validateSelectedFiles(tooMany)).toMatch(/500/);
+  });
+
+  it("renders completed-with-errors summary and ranking deep link", () => {
+    render(
+      <MemoryRouter>
+        <ImportSummary
+          batch={completedBatch({
+            status: "COMPLETED_WITH_ERRORS",
+            job_id: "job-1",
+            successful_items: 8,
+            reused_items: 3,
+            failed_items: 2,
+            evaluation_failed_items: 1,
+          })}
+        />
+      </MemoryRouter>,
+    );
+
+    expect(screen.getByText(/completada con novedades/i)).toBeInTheDocument();
+    expect(screen.getByText(/8/)).toBeInTheDocument();
+    expect(screen.getByText(/3/)).toBeInTheDocument();
+    expect(screen.getByText(/2/)).toBeInTheDocument();
+    expect(screen.getByText(/1/)).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /ver ranking/i })).toHaveAttribute(
+      "href",
+      "/ranking?job_id=job-1",
+    );
+  });
+
+  it("does not offer ranking when the batch failed before ranking", () => {
+    render(
+      <MemoryRouter>
+        <ImportSummary
+          batch={processingBatch({
+            status: "FAILED",
+            current_stage: "INGESTING",
+            ranking_ready: false,
+            last_error_message: "No se pudo completar la ingestión.",
+          })}
+        />
+      </MemoryRouter>,
+    );
+
+    expect(screen.getByText(/no se pudo completar la ingestión/i)).toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: /ver ranking/i })).not.toBeInTheDocument();
+  });
+
+  it("disables nonessential candidate-import motion for reduced-motion users", () => {
+    const css = readFileSync(
+      new URL("../features/candidate-import/candidate-import.css", import.meta.url),
+      "utf8",
+    );
+    expect(css).toMatch(/@media\s*\(prefers-reduced-motion:\s*reduce\)/);
+    expect(css).toMatch(/animation:\s*none\s*!important/);
+    expect(css).toMatch(/transition:\s*none\s*!important/);
   });
 });
