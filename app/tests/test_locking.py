@@ -1,17 +1,21 @@
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 
-from app.deps import _advisory_lock_key, acquire_job_lock, release_job_lock
+from app.infrastructure.locking.job_lock import (
+    advisory_lock_key,
+    acquire_job_lock,
+    release_job_lock,
+)
 
 
 def test_lock_key_is_deterministic_and_signed_64_bit():
-    key = _advisory_lock_key("job-123")
-    assert key == _advisory_lock_key("job-123")
+    key = advisory_lock_key("job-123")
+    assert key == advisory_lock_key("job-123")
     assert -(2**63) <= key < 2**63
 
 
 def test_lock_key_changes_between_jobs():
-    assert _advisory_lock_key("job-a") != _advisory_lock_key("job-b")
+    assert advisory_lock_key("job-a") != advisory_lock_key("job-b")
 
 
 def test_sqlite_lock_acquire_is_true_and_release_is_noop():
