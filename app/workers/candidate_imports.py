@@ -4,21 +4,27 @@ from __future__ import annotations
 
 import logging
 import threading
+import uuid
 from datetime import datetime, timezone
 
 from sqlalchemy.orm import Session
 
 from app.db import SessionLocal
-from app.domains.candidate_imports import repository
-from app.infrastructure.imports import queue
+from app.domains.candidate_imports import repository, service as import_service
+from app.domains.candidate_imports.exceptions import IdentityConflict
+from app.infrastructure.imports import documents, queue, storage
+from app.infrastructure.imports.documents import DocumentImportError
 from app.infrastructure.imports.queue import ReceivedImportMessage
 
 logger = logging.getLogger(__name__)
 
 MAX_RECEIVE_COUNT = 5
+MAX_BATCH_DOCUMENTS = 500
+MAX_BATCH_EXPANDED_BYTES = 1024 * 1024 * 1024
 PUBLIC_RETRY_EXHAUSTED_MESSAGE = (
     "No fue posible completar la importacion. Intenta nuevamente."
 )
+PUBLIC_ITEM_FAILURE_MESSAGE = "No fue posible procesar este documento."
 
 
 class BatchMissing(Exception):
@@ -114,6 +120,249 @@ def dispatch_undispatched_batches(db: Session) -> int:
     return dispatched
 
 
+def _as_utc(value: datetime | None) -> datetime | None:
+    if value is None:
+        return None
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
+
+
+def _identity_was_created_in_batch(db: Session, batch, item) -> bool:
+    """Infer whether a successful item's document identity is new to this batch."""
+    if not item.candidate_id or not item.document_sha256 or batch.started_at is None:
+        return False
+    identity = repository.find_identity(
+        db,
+        owner_sub=batch.owner_sub,
+        kind="DOCUMENT_SHA256",
+        value=item.document_sha256.casefold(),
+    )
+    if identity is None or identity.candidate_id != item.candidate_id:
+        return False
+    created_at = _as_utc(identity.created_at)
+    started_at = _as_utc(batch.started_at)
+    return bool(created_at and started_at and created_at >= started_at)
+
+
+def _canonicalized_candidate_ids(db: Session, batch) -> set[str]:
+    """Recover canonical updates already checkpointed before a worker restart."""
+    candidate_ids: set[str] = set()
+    for item in repository.list_items_for_worker(
+        db,
+        batch_id=batch.id,
+        kind="DOCUMENT",
+    ):
+        if item.status != "COMPLETED":
+            continue
+        if _identity_was_created_in_batch(db, batch, item):
+            candidate_ids.add(item.candidate_id)
+    return candidate_ids
+
+
+def _expand_archives_once(db: Session, batch) -> None:
+    """Persist ZIP children to staging and checkpoint the container exactly once."""
+    document_items = repository.list_items_for_worker(
+        db,
+        batch_id=batch.id,
+        kind="DOCUMENT",
+    )
+    discovered_documents = len(document_items)
+    discovered_bytes = sum(max(0, int(item.size_bytes or 0)) for item in document_items)
+
+    for archive in repository.list_items_for_worker(
+        db,
+        batch_id=batch.id,
+        kind="ARCHIVE",
+    ):
+        if archive.status in {"COMPLETED", "FAILED"}:
+            continue
+
+        archive.status = "PROCESSING"
+        archive.current_stage = "VALIDATING"
+        db.commit()
+
+        try:
+            payload = storage.read_staging_object(archive.staging_s3_key)
+            expanded = documents.expand_zip(
+                payload,
+                remaining_documents=max(0, MAX_BATCH_DOCUMENTS - discovered_documents),
+                remaining_bytes=max(0, MAX_BATCH_EXPANDED_BYTES - discovered_bytes),
+            )
+
+            created_children = []
+            for child in expanded:
+                child_id = str(uuid.uuid4())
+                staging_key = storage.write_staging_child(
+                    batch_id=batch.id,
+                    item_id=child_id,
+                    filename=child.filename,
+                    data=child.data,
+                    content_type=child.content_type,
+                )
+                child_item = repository.create_item(
+                    db,
+                    item_id=child_id,
+                    batch_id=batch.id,
+                    parent_item_id=archive.id,
+                    kind="DOCUMENT",
+                    original_filename=child.filename,
+                    staging_s3_key=staging_key,
+                    content_type=child.content_type,
+                    size_bytes=len(child.data),
+                )
+                child_item.status = "UPLOADED"
+                child_item.current_stage = "VALIDATING"
+                created_children.append(child_item)
+
+            archive.status = "COMPLETED"
+            archive.current_stage = "VALIDATING"
+            archive.completed_at = datetime.now(timezone.utc)
+            discovered_documents += len(created_children)
+            discovered_bytes += sum(item.size_bytes for item in created_children)
+            batch.total_items = discovered_documents
+            db.commit()
+        except Exception:
+            db.rollback()
+            raise
+
+
+def _mark_document_failed(
+    db: Session,
+    *,
+    batch_id: str,
+    item_id: str,
+    error_code: str,
+) -> None:
+    """Checkpoint one public-safe item failure without failing the whole batch."""
+    db.rollback()
+    batch = repository.get_batch_for_worker(db, batch_id)
+    item = repository.get_item_for_worker(
+        db,
+        batch_id=batch_id,
+        item_id=item_id,
+    )
+    if batch is None or item is None or item.status in {"COMPLETED", "FAILED"}:
+        return
+
+    item.status = "FAILED"
+    item.current_stage = "DEDUPLICATING"
+    item.error_code = error_code
+    item.error_message = PUBLIC_ITEM_FAILURE_MESSAGE
+    item.completed_at = datetime.now(timezone.utc)
+    batch.processed_items += 1
+    batch.failed_items += 1
+    db.commit()
+
+
+def _prepare_batch_documents(db: Session, batch) -> None:
+    """Expand, parse, deduplicate and checkpoint all document items idempotently."""
+    if batch is None:
+        raise BatchMissing()
+    if batch.status in repository.TERMINAL_BATCH_STATUSES:
+        return
+
+    batch.status = "PROCESSING"
+    batch.current_stage = "VALIDATING"
+    db.commit()
+
+    _expand_archives_once(db, batch)
+
+    batch = repository.get_batch_for_worker(db, batch.id)
+    if batch is None:
+        raise BatchMissing()
+    batch.status = "PROCESSING"
+    batch.current_stage = "DEDUPLICATING"
+    db.commit()
+
+    canonicalized = _canonicalized_candidate_ids(db, batch)
+    document_items = repository.list_items_for_worker(
+        db,
+        batch_id=batch.id,
+        kind="DOCUMENT",
+    )
+
+    for document_item in document_items:
+        if document_item.status in {"COMPLETED", "FAILED"}:
+            continue
+
+        item_id = document_item.id
+        try:
+            document_item.status = "PROCESSING"
+            document_item.current_stage = "DEDUPLICATING"
+            db.commit()
+
+            data = storage.read_staging_object(document_item.staging_s3_key)
+            parsed = documents.extract_document(data, document_item.original_filename)
+            preexisting_hash_identity = repository.find_identity(
+                db,
+                owner_sub=batch.owner_sub,
+                kind="DOCUMENT_SHA256",
+                value=parsed.sha256.casefold(),
+            )
+
+            candidate, outcome = import_service.resolve_or_create_candidate(
+                db,
+                owner_sub=batch.owner_sub,
+                parsed_document=parsed,
+                batch_id=batch.id,
+            )
+
+            if preexisting_hash_identity is None and candidate.id not in canonicalized:
+                canonical_result = storage.write_canonical_candidate_document(
+                    candidate_id=candidate.id,
+                    candidate_name=candidate.name,
+                    filename=parsed.filename,
+                    data=data,
+                    sha256=parsed.sha256,
+                )
+                if canonical_result.changed:
+                    canonicalized.add(candidate.id)
+
+            batch = repository.get_batch_for_worker(db, batch.id)
+            item = repository.get_item_for_worker(
+                db,
+                batch_id=batch.id,
+                item_id=item_id,
+            )
+            if batch is None or item is None:
+                raise BatchMissing()
+
+            item.document_sha256 = parsed.sha256
+            item.candidate_id = candidate.id
+            item.outcome = outcome
+            item.status = "COMPLETED"
+            item.current_stage = "DEDUPLICATING"
+            item.error_code = None
+            item.error_message = None
+            item.completed_at = datetime.now(timezone.utc)
+            batch.processed_items += 1
+            batch.successful_items += 1
+            if outcome == "REUSED":
+                batch.reused_items += 1
+            db.commit()
+        except IdentityConflict:
+            _mark_document_failed(
+                db,
+                batch_id=batch.id,
+                item_id=item_id,
+                error_code="IDENTITY_CONFLICT",
+            )
+            batch = repository.get_batch_for_worker(db, batch.id)
+        except DocumentImportError as exc:
+            error_code = str(exc).split(":", 1)[0].strip() or "INVALID_DOCUMENT"
+            _mark_document_failed(
+                db,
+                batch_id=batch.id,
+                item_id=item_id,
+                error_code=error_code,
+            )
+            batch = repository.get_batch_for_worker(db, batch.id)
+        except Exception:
+            db.rollback()
+            raise
+
+
 def _mark_retry_exhausted(batch_id: str) -> None:
     """Persist a public-safe terminal failure while preserving the failed stage."""
     with SessionLocal() as db:
@@ -134,8 +383,8 @@ def process_batch(batch_id: str, *, receipt_handle: str | None = None) -> None:
     """Process one durable import batch.
 
     The queue/lease boundary is intentionally established before the pipeline
-    stages are added. Until the stage implementation is present, existing
-    batches remain unacknowledged rather than being falsely completed.
+    stages are added. Until the remaining stages are implemented, a prepared
+    batch remains unacknowledged rather than being falsely completed.
     """
     with SessionLocal() as db:
         batch = repository.get_batch_for_worker(db, batch_id)
