@@ -1,3 +1,4 @@
+import app.config as config
 from app.config import CORS_ORIGINS, get_aws_region, get_database_url
 
 
@@ -29,3 +30,24 @@ def test_cors_origins_preserve_public_contract():
         "https://ai.adrianguerra.net",
         "https://air.adrianguerra.net",
     )
+
+
+def test_import_storage_and_queue_are_required(monkeypatch):
+    monkeypatch.setenv("IMPORT_STAGING_BUCKET", "staging")
+    monkeypatch.setenv("IMPORT_QUEUE_URL", "https://queue.example")
+    assert config.get_import_staging_bucket() == "staging"
+    assert config.get_import_queue_url() == "https://queue.example"
+
+
+def test_import_worker_defaults(monkeypatch):
+    monkeypatch.delenv("IMPORT_EVALUATION_CONCURRENCY", raising=False)
+    monkeypatch.delenv("IMPORT_LEASE_TIMEOUT_SECONDS", raising=False)
+    assert config.get_import_evaluation_concurrency() == 3
+    assert config.get_import_lease_timeout_seconds() == 300
+
+
+def test_import_worker_overrides(monkeypatch):
+    monkeypatch.setenv("IMPORT_EVALUATION_CONCURRENCY", "5")
+    monkeypatch.setenv("IMPORT_LEASE_TIMEOUT_SECONDS", "600")
+    assert config.get_import_evaluation_concurrency() == 5
+    assert config.get_import_lease_timeout_seconds() == 600
