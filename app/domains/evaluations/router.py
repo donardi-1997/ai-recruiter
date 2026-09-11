@@ -4,26 +4,15 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 from app.deps import get_current_user, get_db
-from app import crud
-from app.domains.evaluations.schemas import EvaluateRequest
-from app.domains.evaluations.service import evaluate_candidate_for_job
 from app.domains.evaluations.presenter import public_evaluation_payload
+from app.domains.evaluations.schemas import EvaluateRequest
+from app.domains.evaluations.service import (
+    CandidateNotFound,
+    JobNotFound,
+    evaluate_candidate_for_owner,
+)
 
 router = APIRouter(prefix="/api/candidates", tags=["evaluations"])
-
-
-def _require_candidate(db: Session, candidate_id: str, owner_sub: str):
-    candidate = crud.get_candidate(db, candidate_id, owner_sub=owner_sub)
-    if not candidate:
-        raise HTTPException(status_code=404, detail="Candidato no encontrado.")
-    return candidate
-
-
-def _require_job(db: Session, job_id: str, owner_sub: str):
-    job = crud.get_job(db, job_id, owner_sub=owner_sub)
-    if not job:
-        raise HTTPException(status_code=404, detail="Vacante no encontrada.")
-    return job
 
 
 @router.post("/{candidate_id}/evaluate-job")
@@ -33,13 +22,16 @@ def evaluate_candidate_endpoint(
     db: Session = Depends(get_db),
     _user: dict = Depends(get_current_user),
 ):
-    candidate = _require_candidate(db, candidate_id, _user["sub"])
-    job = _require_job(db, body.job_id, _user["sub"])
-
-    evaluation, _, _ = evaluate_candidate_for_job(
-        db,
-        candidate=candidate,
-        job=job,
-    )
+    try:
+        evaluation, _, _ = evaluate_candidate_for_owner(
+            db,
+            candidate_id=candidate_id,
+            job_id=body.job_id,
+            owner_sub=_user["sub"],
+        )
+    except CandidateNotFound as exc:
+        raise HTTPException(status_code=404, detail="Candidato no encontrado.") from exc
+    except JobNotFound as exc:
+        raise HTTPException(status_code=404, detail="Vacante no encontrada.") from exc
 
     return public_evaluation_payload(evaluation)
