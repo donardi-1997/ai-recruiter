@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import threading
 from datetime import datetime, timezone
 
 from sqlalchemy.orm import Session
@@ -22,6 +23,74 @@ PUBLIC_RETRY_EXHAUSTED_MESSAGE = (
 
 class BatchMissing(Exception):
     """The queued batch was deleted before its SQS message was consumed."""
+
+
+class LeaseKeeper:
+    """Refresh the durable DB lease and SQS visibility for one active batch."""
+
+    def __init__(
+        self,
+        *,
+        batch_id: str,
+        token: str,
+        receipt_handle: str | None,
+        interval_seconds: int = 60,
+        visibility_seconds: int = 300,
+    ) -> None:
+        self.batch_id = batch_id
+        self.token = token
+        self.receipt_handle = receipt_handle
+        self.interval_seconds = interval_seconds
+        self.visibility_seconds = visibility_seconds
+        self._stop_event = threading.Event()
+        self._thread: threading.Thread | None = None
+
+    def beat_once(self) -> None:
+        """Refresh heartbeat and visibility only while this token still owns the lease."""
+        with SessionLocal() as db:
+            repository.heartbeat_batch(
+                db,
+                batch_id=self.batch_id,
+                token=self.token,
+                now=datetime.now(timezone.utc),
+            )
+            batch = repository.get_batch_for_worker(db, self.batch_id)
+            if batch is None or batch.processing_token != self.token:
+                return
+
+        if self.receipt_handle:
+            queue.extend_visibility(
+                self.receipt_handle,
+                self.visibility_seconds,
+            )
+
+    def _run(self) -> None:
+        while not self._stop_event.wait(self.interval_seconds):
+            try:
+                self.beat_once()
+            except Exception:
+                logger.exception(
+                    "Candidate import lease heartbeat failed for batch %s",
+                    self.batch_id,
+                )
+
+    def start(self) -> None:
+        """Start the daemon heartbeat loop once."""
+        if self._thread is not None and self._thread.is_alive():
+            return
+        self._stop_event.clear()
+        self._thread = threading.Thread(
+            target=self._run,
+            name=f"candidate-import-lease-{self.batch_id}",
+            daemon=True,
+        )
+        self._thread.start()
+
+    def stop(self) -> None:
+        """Stop and join the heartbeat loop before returning."""
+        self._stop_event.set()
+        if self._thread is not None:
+            self._thread.join(timeout=max(1, self.interval_seconds + 1))
 
 
 def dispatch_undispatched_batches(db: Session) -> int:
