@@ -2,6 +2,8 @@
 
 import hashlib
 
+from app.domains.candidate_imports.exceptions import IdentityConflict
+
 
 TERMINAL_BATCH_STATUSES = {"COMPLETED", "COMPLETED_WITH_ERRORS", "FAILED"}
 
@@ -14,10 +16,6 @@ ALLOWED_STAGE_NEXT = {
     "RANKING": {"COMPLETED"},
     "COMPLETED": set(),
 }
-
-
-class IdentityConflict(Exception):
-    """Strong identities point to more than one existing candidate."""
 
 
 class InvalidTransition(Exception):
