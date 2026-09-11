@@ -2,7 +2,6 @@
 import React from "react";
 
 import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
 import { act, render, renderHook, screen } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
@@ -437,7 +436,7 @@ describe("candidate import UX", () => {
 
   it("disables nonessential candidate-import motion for reduced-motion users", () => {
     const css = readFileSync(
-      resolve(process.cwd(), "src/features/candidate-import/candidate-import.css"),
+      new URL("../features/candidate-import/candidate-import.css", import.meta.url),
       "utf8",
     );
     expect(css).toMatch(/@media\s*\(prefers-reduced-motion:\s*reduce\)/);
