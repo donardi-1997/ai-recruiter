@@ -21,12 +21,16 @@ from app.domains.candidate_imports.rules import (
 
 MIB = 1024 * 1024
 MAX_DOCUMENT_BYTES = 15 * MIB
+MAX_ARCHIVE_BYTES = 500 * MIB
 PDF_CONTENT_TYPE = "application/pdf"
 DOCX_CONTENT_TYPE = (
     "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
 )
 
-_HEADER_LINE_LIMIT = 8
+_HEADER_CONTACT_LINE_LIMIT = 40
+_HEADER_CHAR_LIMIT = 4000
+_NAME_LINE_LIMIT = 8
+_NESTED_ARCHIVE_SUFFIXES = {".zip", ".tar", ".gz", ".rar", ".7z"}
 _EMAIL_RE = re.compile(r"(?<![\w.+-])([A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,})(?![\w.-])", re.I)
 _PHONE_RE = re.compile(r"(?<!\w)(\+?\d[\d\s().-]{6,}\d)(?!\w)")
 _WINDOWS_ABSOLUTE_RE = re.compile(r"^[A-Za-z]:[\\/]")
@@ -56,6 +60,10 @@ class DocumentTooLarge(DocumentImportError):
     pass
 
 
+class ArchiveTooLarge(DocumentImportError):
+    pass
+
+
 class UnsafeArchive(DocumentImportError):
     pass
 
@@ -80,6 +88,7 @@ class ParsedDocument:
     email: str | None
     phone: str | None
     text: str
+    header_text: str
     sha256: str
 
 
@@ -142,8 +151,25 @@ def _extract_docx_text(data: bytes) -> str:
         raise InvalidDocument("INVALID_DOCX") from exc
 
 
-def _header_lines(text: str) -> list[str]:
-    return [line.strip() for line in text.splitlines() if line.strip()][:_HEADER_LINE_LIMIT]
+def _build_header(text: str) -> tuple[str, list[str]]:
+    selected: list[str] = []
+    used_chars = 0
+    for raw_line in text.splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        if len(selected) >= _HEADER_CONTACT_LINE_LIMIT or used_chars >= _HEADER_CHAR_LIMIT:
+            break
+
+        separator = 1 if selected else 0
+        remaining = _HEADER_CHAR_LIMIT - used_chars - separator
+        if remaining <= 0:
+            break
+        selected.append(line[:remaining])
+        used_chars += len(selected[-1]) + separator
+
+    header_text = "\n".join(selected)
+    return header_text, selected
 
 
 def _unique_header_email(lines: list[str]) -> str | None:
@@ -182,7 +208,7 @@ def _plausible_name(line: str) -> bool:
 
 
 def _display_name(lines: list[str], filename: str) -> str:
-    for line in lines:
+    for line in lines[:_NAME_LINE_LIMIT]:
         if _plausible_name(line):
             return re.sub(r"\s+", " ", line).strip()
     return _fallback_display_name(filename)
@@ -201,14 +227,15 @@ def extract_document(data: bytes, filename: str) -> ParsedDocument:
     else:
         text = _extract_docx_text(data)
 
-    lines = _header_lines(text)
+    header_text, header_lines = _build_header(text)
     return ParsedDocument(
         filename=_basename(filename),
         content_type=content_type,
-        display_name=_display_name(lines, filename),
-        email=_unique_header_email(lines),
-        phone=_unique_header_phone(lines),
+        display_name=_display_name(header_lines, filename),
+        email=_unique_header_email(header_lines),
+        phone=_unique_header_phone(header_lines),
         text=text,
+        header_text=header_text,
         sha256=document_sha256(data),
     )
 
@@ -240,6 +267,11 @@ def _ignore_archive_entry(name: str) -> bool:
     )
 
 
+def _nested_archive(name: str) -> bool:
+    suffix = PurePosixPath(name.replace("\\", "/")).suffix.casefold()
+    return suffix in _NESTED_ARCHIVE_SUFFIXES
+
+
 def expand_zip(
     data: bytes,
     *,
@@ -249,6 +281,8 @@ def expand_zip(
     """Expand supported CV files from a ZIP while enforcing safety budgets."""
     if remaining_documents < 0 or remaining_bytes < 0:
         raise ValueError("remaining import budgets must be non-negative")
+    if len(data) > MAX_ARCHIVE_BYTES:
+        raise ArchiveTooLarge("ARCHIVE_TOO_LARGE")
 
     try:
         archive = zipfile.ZipFile(io.BytesIO(data), "r")
@@ -267,10 +301,10 @@ def expand_zip(
                 raise UnsafeArchive("ARCHIVE_SYMLINK")
             if info.is_dir() or _ignore_archive_entry(name):
                 continue
+            if _nested_archive(name):
+                raise UnsafeArchive("NESTED_ARCHIVE")
 
             extension = _extension(name)
-            if extension == ".zip":
-                raise UnsafeArchive("NESTED_ARCHIVE")
             if extension not in {".pdf", ".docx"}:
                 continue
 
