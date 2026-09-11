@@ -46,6 +46,17 @@ def db_session():
         os.unlink(path)
 
 
+def _forbid_evaluation(monkeypatch):
+    def _must_not_evaluate(*args, **kwargs):
+        raise AssertionError("materialization must not evaluate candidates")
+
+    monkeypatch.setattr(
+        ranking_service,
+        "evaluate_candidate_for_job",
+        _must_not_evaluate,
+    )
+
+
 def test_materialize_ranking_uses_persisted_evaluations_only(db_session, monkeypatch):
     job = Job(id=_uuid(), title="Backend Developer", owner_sub="test-user-123")
     first = Candidate(id=_uuid(), name="Ana", owner_sub="test-user-123")
@@ -77,15 +88,7 @@ def test_materialize_ranking_uses_persisted_evaluations_only(db_session, monkeyp
         ),
     ])
     db_session.commit()
-
-    def _must_not_evaluate(*args, **kwargs):
-        raise AssertionError("materialization must not evaluate candidates")
-
-    monkeypatch.setattr(
-        ranking_service,
-        "evaluate_candidate_for_job",
-        _must_not_evaluate,
-    )
+    _forbid_evaluation(monkeypatch)
 
     result = ranking_service.materialize_ranking_from_evaluations(
         db_session,
@@ -108,3 +111,61 @@ def test_materialize_ranking_uses_persisted_evaluations_only(db_session, monkeyp
     items = db_session.query(RankingItem).order_by(RankingItem.position).all()
     assert [item.candidate_id for item in items] == [first.id, second.id]
     assert [item.score for item in items] == [90.0, 70.0]
+
+
+def test_materialize_ranking_preserves_completed_failed_pending_order(db_session, monkeypatch):
+    job = Job(id=_uuid(), title="Platform Engineer", owner_sub="test-user-123")
+    completed = Candidate(id=_uuid(), name="Zulu", owner_sub="test-user-123")
+    failed = Candidate(id=_uuid(), name="Aaron", owner_sub="test-user-123")
+    pending = Candidate(id=_uuid(), name="Beta", owner_sub="test-user-123")
+    db_session.add_all([job, completed, failed, pending])
+    db_session.flush()
+    db_session.add_all([
+        JobCandidate(job_id=job.id, candidate_id=completed.id),
+        JobCandidate(job_id=job.id, candidate_id=failed.id),
+        JobCandidate(job_id=job.id, candidate_id=pending.id),
+        Evaluation(
+            candidate_id=completed.id,
+            job_id=job.id,
+            status="COMPLETED",
+            match_score=80,
+            recommendation="GOOD_MATCH",
+            summary="c" * 120,
+            strengths=[],
+            gaps=[],
+        ),
+        Evaluation(
+            candidate_id=failed.id,
+            job_id=job.id,
+            status="FAILED",
+            match_score=0,
+            recommendation="EVALUATION_FAILED",
+            summary="No fue posible completar la evaluación. Intenta nuevamente.",
+            strengths=[],
+            gaps=[],
+            error_message="provider failed",
+        ),
+    ])
+    db_session.commit()
+    _forbid_evaluation(monkeypatch)
+
+    result = ranking_service.materialize_ranking_from_evaluations(
+        db_session,
+        job_id=job.id,
+        owner_sub="test-user-123",
+    )
+
+    assert result["total_candidates"] == 3
+    assert result["evaluated"] == 1
+    assert result["failed"] == 1
+    assert result["failures"] == [
+        {"candidate_id": failed.id, "error": "provider failed"}
+    ]
+
+    items = db_session.query(RankingItem).order_by(RankingItem.position).all()
+    assert [item.candidate_id for item in items] == [
+        completed.id,
+        failed.id,
+        pending.id,
+    ]
+    assert [item.score for item in items] == [80.0, 0.0, 0.0]
