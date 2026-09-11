@@ -6,13 +6,17 @@ import logging
 import threading
 import time
 import uuid
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 
 from sqlalchemy.orm import Session
 
+from app.config import get_import_evaluation_concurrency
 from app.db import SessionLocal
 from app.domains.candidate_imports import repository, service as import_service
 from app.domains.candidate_imports.exceptions import IdentityConflict
+from app.domains.evaluations import repository as evaluations_repository
+from app.domains.evaluations import service as evaluations_service
 from app.infrastructure.imports import documents, ingestion, queue, storage
 from app.infrastructure.imports.documents import DocumentImportError
 from app.infrastructure.imports.queue import ReceivedImportMessage
@@ -24,6 +28,14 @@ MAX_BATCH_DOCUMENTS = 500
 MAX_BATCH_EXPANDED_BYTES = 1024 * 1024 * 1024
 DEFAULT_INGESTION_POLL_SECONDS = 5
 DEFAULT_INGESTION_TIMEOUT_SECONDS = 30 * 60
+TRANSIENT_EVALUATION_ERRORS = (
+    "ThrottlingException",
+    "TooManyRequestsException",
+    "ServiceUnavailableException",
+    "ModelTimeoutException",
+    "InternalServerException",
+)
+EVALUATION_RETRY_DELAYS = (1, 2, 4)
 PUBLIC_RETRY_EXHAUSTED_MESSAGE = (
     "No fue posible completar la importacion. Intenta nuevamente."
 )
@@ -465,6 +477,170 @@ def _run_ingestion_stage(
         time.sleep(max(0.0, poll_interval_seconds))
 
 
+def _successful_candidate_ids(db: Session, batch) -> list[str]:
+    """Return unique successful candidate IDs in stable item order."""
+    candidate_ids: list[str] = []
+    seen: set[str] = set()
+    for item in repository.list_items_for_worker(
+        db,
+        batch_id=batch.id,
+        kind="DOCUMENT",
+    ):
+        if item.status != "COMPLETED" or not item.candidate_id:
+            continue
+        if item.candidate_id in seen:
+            continue
+        seen.add(item.candidate_id)
+        candidate_ids.append(item.candidate_id)
+    return candidate_ids
+
+
+def _candidate_document_changed_in_batch(
+    db: Session,
+    batch,
+    candidate_id: str,
+) -> bool:
+    for item in repository.list_items_for_worker(
+        db,
+        batch_id=batch.id,
+        kind="DOCUMENT",
+    ):
+        if (
+            item.status == "COMPLETED"
+            and item.candidate_id == candidate_id
+            and _identity_was_created_in_batch(db, batch, item)
+        ):
+            return True
+    return False
+
+
+def _evaluation_created_during_batch(batch, evaluation) -> bool:
+    if evaluation is None or batch.started_at is None:
+        return False
+    created_at = _as_utc(evaluation.created_at)
+    started_at = _as_utc(batch.started_at)
+    return bool(created_at and started_at and created_at >= started_at)
+
+
+def _terminal_evaluation_for_batch(
+    db: Session,
+    batch,
+    candidate_id: str,
+) -> tuple[bool, bool]:
+    """Return (terminal, failed) for this candidate in this batch."""
+    evaluation = evaluations_repository.get_evaluation_for_job_candidate(
+        db,
+        batch.job_id,
+        candidate_id,
+    )
+    if evaluation is None:
+        return False, False
+
+    current_batch_evaluation = _evaluation_created_during_batch(batch, evaluation)
+    if current_batch_evaluation:
+        if evaluations_repository.is_evaluation_complete(evaluation):
+            return True, False
+        if evaluation.status == "FAILED" or evaluation.recommendation == "EVALUATION_FAILED":
+            return True, True
+        return False, False
+
+    document_changed = _candidate_document_changed_in_batch(
+        db,
+        batch,
+        candidate_id,
+    )
+    if not document_changed and evaluations_repository.is_evaluation_complete(evaluation):
+        return True, False
+    return False, False
+
+
+def _is_transient_evaluation_error(internal_error: str | None) -> bool:
+    if not internal_error:
+        return False
+    return any(marker in internal_error for marker in TRANSIENT_EVALUATION_ERRORS)
+
+
+def _evaluate_candidate_with_retries(
+    *,
+    candidate_id: str,
+    job_id: str,
+    owner_sub: str,
+) -> None:
+    """Evaluate one candidate in its own session with bounded transient retries."""
+    for attempt in range(len(EVALUATION_RETRY_DELAYS) + 1):
+        with SessionLocal() as task_db:
+            _evaluation, _newly_evaluated, internal_error = (
+                evaluations_service.evaluate_candidate_for_owner(
+                    task_db,
+                    candidate_id=candidate_id,
+                    job_id=job_id,
+                    owner_sub=owner_sub,
+                )
+            )
+
+        if not _is_transient_evaluation_error(internal_error):
+            return
+        if attempt >= len(EVALUATION_RETRY_DELAYS):
+            return
+        time.sleep(EVALUATION_RETRY_DELAYS[attempt])
+
+
+def _run_evaluation_stage(db: Session, batch) -> None:
+    """Run or resume bounded candidate evaluation from durable checkpoints."""
+    if batch is None:
+        raise BatchMissing()
+    if batch.status in repository.TERMINAL_BATCH_STATUSES:
+        return
+    if batch.current_stage != "EVALUATING":
+        return
+
+    candidate_ids = _successful_candidate_ids(db, batch)
+    outstanding = [
+        candidate_id
+        for candidate_id in candidate_ids
+        if not _terminal_evaluation_for_batch(db, batch, candidate_id)[0]
+    ]
+
+    if outstanding:
+        max_workers = max(1, int(get_import_evaluation_concurrency()))
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            futures = [
+                executor.submit(
+                    _evaluate_candidate_with_retries,
+                    candidate_id=candidate_id,
+                    job_id=batch.job_id,
+                    owner_sub=batch.owner_sub,
+                )
+                for candidate_id in outstanding
+            ]
+            for future in as_completed(futures):
+                future.result()
+
+    db.expire_all()
+    batch = repository.get_batch_for_worker(db, batch.id)
+    if batch is None:
+        raise BatchMissing()
+
+    terminal_count = 0
+    failed_count = 0
+    for candidate_id in candidate_ids:
+        terminal, failed = _terminal_evaluation_for_batch(db, batch, candidate_id)
+        if terminal:
+            terminal_count += 1
+            if failed:
+                failed_count += 1
+
+    batch.evaluated_items = terminal_count
+    batch.evaluation_failed_items = failed_count
+    if terminal_count != len(candidate_ids):
+        db.commit()
+        raise RuntimeError("candidate evaluation stage did not reach terminal state")
+
+    batch.status = "PROCESSING"
+    batch.current_stage = "RANKING"
+    db.commit()
+
+
 def _mark_retry_exhausted(batch_id: str) -> None:
     """Persist a public-safe terminal failure while preserving the failed stage."""
     with SessionLocal() as db:
@@ -484,7 +660,7 @@ def process_batch(batch_id: str, *, receipt_handle: str | None = None) -> None:
     """Process one durable import batch.
 
     The queue/lease boundary is intentionally established before the pipeline
-    stages are added. Until the remaining stages are implemented, a prepared
+    stages are added. Until ranking/terminalization is implemented, a prepared
     batch remains unacknowledged rather than being falsely completed.
     """
     with SessionLocal() as db:
@@ -494,7 +670,7 @@ def process_batch(batch_id: str, *, receipt_handle: str | None = None) -> None:
         if batch.status in repository.TERMINAL_BATCH_STATUSES:
             return
 
-    raise NotImplementedError("candidate import pipeline stages are not implemented yet")
+    raise NotImplementedError("candidate import ranking stage is not implemented yet")
 
 
 def handle_message(message: ReceivedImportMessage) -> None:
