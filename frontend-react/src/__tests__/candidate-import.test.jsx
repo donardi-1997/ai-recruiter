@@ -436,7 +436,7 @@ describe("candidate import UX", () => {
 
   it("disables nonessential candidate-import motion for reduced-motion users", () => {
     const css = readFileSync(
-      new URL("../features/candidate-import/candidate-import.css", import.meta.url),
+      "src/features/candidate-import/candidate-import.css",
       "utf8",
     );
     expect(css).toMatch(/@media\s*\(prefers-reduced-motion:\s*reduce\)/);
