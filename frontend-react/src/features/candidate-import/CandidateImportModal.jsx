@@ -1,3 +1,4 @@
+/* eslint-disable react-refresh/only-export-components */
 import { useRef, useState } from "react";
 
 import ImportProgress from "./ImportProgress.jsx";
@@ -5,6 +6,8 @@ import ImportSummary from "./ImportSummary.jsx";
 import { useCandidateImport } from "./useCandidateImport.js";
 import { validateSelectedFiles } from "./validation.js";
 import "./candidate-import.css";
+
+export { validateSelectedFile, validateSelectedFiles } from "./validation.js";
 
 function displaySize(bytes) {
   if (bytes < 1024) return `${bytes} B`;
