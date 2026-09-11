@@ -107,7 +107,9 @@ export function useCandidateImport(jobId = null) {
     [clearPolling, schedulePoll],
   );
 
-  pollRef.current = refreshBatch;
+  useEffect(() => {
+    pollRef.current = refreshBatch;
+  }, [refreshBatch]);
 
   const resumeImport = useCallback(
     async (batchId) => {
