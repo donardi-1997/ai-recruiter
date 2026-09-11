@@ -78,6 +78,19 @@ def get_batch_for_worker(db: Session, batch_id: str) -> ImportBatch | None:
     return db.query(ImportBatch).filter(ImportBatch.id == batch_id).first()
 
 
+def list_items_for_worker(
+    db: Session,
+    *,
+    batch_id: str,
+    kind: str | None = None,
+) -> list[ImportItem]:
+    """Load one batch's durable items for trusted worker orchestration."""
+    query = db.query(ImportItem).filter(ImportItem.batch_id == batch_id)
+    if kind is not None:
+        query = query.filter(ImportItem.kind == kind)
+    return query.order_by(ImportItem.created_at.asc(), ImportItem.id.asc()).all()
+
+
 def claim_batch(
     db: Session,
     *,
