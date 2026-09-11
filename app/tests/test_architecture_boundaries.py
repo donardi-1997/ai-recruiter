@@ -38,6 +38,16 @@ def _python_files(root: Path):
     )
 
 
+def test_import_parser_qualifies_from_import_symbols(tmp_path):
+    sample = tmp_path / "sample.py"
+    sample.write_text(
+        "from app.deps import acquire_job_lock\n",
+        encoding="utf-8",
+    )
+
+    assert "app.deps.acquire_job_lock" in _imports(sample)
+
+
 def test_only_documented_transitional_routers_import_app_crud():
     violations = []
     routers = APP_ROOT / "domains"
