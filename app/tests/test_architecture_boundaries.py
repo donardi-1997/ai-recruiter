@@ -59,6 +59,17 @@ def test_only_documented_transitional_routers_import_app_crud():
     assert violations == []
 
 
+def test_candidates_router_uses_application_boundary_only():
+    imports = _imports(APP_ROOT / "domains" / "candidates" / "router.py")
+
+    assert "app.crud" not in imports
+    assert not any(
+        name.startswith("app.domains.") and ".repository" in name
+        for name in imports
+    )
+    assert not any(name.startswith("app.infrastructure.storage") for name in imports)
+
+
 def test_domain_non_router_modules_do_not_import_domain_routers():
     violations = []
 
