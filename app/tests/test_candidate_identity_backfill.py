@@ -1,8 +1,42 @@
 """Contracts for safe identity backfill of candidates created before import V1."""
 
 import importlib
+import os
+import tempfile
 
+import pytest
+from sqlalchemy import create_engine, event
+from sqlalchemy.orm import sessionmaker
+
+from app.db import Base
 from app.models import Candidate, CandidateIdentity
+
+
+@pytest.fixture()
+def db_session():
+    fd, path = tempfile.mkstemp(suffix=".db")
+    engine = create_engine(
+        f"sqlite:///{path}",
+        connect_args={"check_same_thread": False},
+    )
+
+    @event.listens_for(engine, "connect")
+    def _set_pragma(dbapi_conn, _):
+        cursor = dbapi_conn.cursor()
+        cursor.execute("PRAGMA foreign_keys=ON")
+        cursor.close()
+
+    Base.metadata.create_all(bind=engine)
+    factory = sessionmaker(bind=engine, autocommit=False, autoflush=False)
+    db = factory()
+    try:
+        yield db
+    finally:
+        db.close()
+        Base.metadata.drop_all(bind=engine)
+        engine.dispose()
+        os.close(fd)
+        os.unlink(path)
 
 
 def _backfill_module():
