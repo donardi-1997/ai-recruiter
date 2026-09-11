@@ -1,24 +1,52 @@
-"""Evaluation service — orchestrates candidate-job evaluation use case.
+"""Evaluation service — orchestrates candidate-job evaluation use cases.
 
 This module contains the business logic for evaluating a candidate against
-a job description. It coordinates retrieval, LLM evaluation, validation,
-and persistence.
+a job description. It coordinates authorization, retrieval, LLM evaluation,
+validation, and persistence while keeping HTTP concerns in the router.
 """
 
 import logging
+
 from sqlalchemy.orm import Session
 
+from app.domains.candidates import service as candidates_service
+from app.domains.candidates.exceptions import CandidateNotFound, JobNotFound
 from app.domains.evaluations import repository as evaluations_repository
 from app.domains.evaluations.rules import (
-    validate_completed_evaluation_result,
     normalize_completed_evaluation_result,
+    validate_completed_evaluation_result,
 )
+from app.domains.jobs import repository as jobs_repository
 
 logger = logging.getLogger(__name__)
 
 FAILED_EVALUATION_PUBLIC_MESSAGE = (
     "No fue posible completar la evaluación. Intenta nuevamente."
 )
+
+
+def evaluate_candidate_for_owner(
+    db: Session,
+    *,
+    candidate_id: str,
+    job_id: str,
+    owner_sub: str,
+) -> tuple[object, bool, str | None]:
+    """Authorize candidate/job visibility, then run the existing evaluation use case."""
+    candidate = candidates_service.require_candidate(
+        db,
+        candidate_id,
+        owner_sub,
+    )
+    job = jobs_repository.get_job(db, job_id, owner_sub=owner_sub)
+    if job is None:
+        raise JobNotFound(job_id)
+
+    return evaluate_candidate_for_job(
+        db,
+        candidate=candidate,
+        job=job,
+    )
 
 
 def evaluate_candidate_for_job(
