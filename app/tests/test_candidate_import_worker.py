@@ -118,6 +118,86 @@ def test_worker_repairs_queued_batch_without_dispatch_timestamp(
     assert sent == [queued_batch_id]
 
 
+def test_lease_keeper_refreshes_owned_lease_and_sqs_visibility(
+    db_factory,
+    queued_batch_id,
+    monkeypatch,
+):
+    initial = datetime.now(timezone.utc) - timedelta(seconds=120)
+    with db_factory() as db:
+        assert repository.claim_batch(
+            db,
+            batch_id=queued_batch_id,
+            token="worker-a",
+            now=initial,
+            lease_seconds=300,
+        )
+
+    visibility = []
+    monkeypatch.setattr(worker, "SessionLocal", db_factory)
+    monkeypatch.setattr(
+        worker.queue,
+        "extend_visibility",
+        lambda receipt_handle, seconds: visibility.append((receipt_handle, seconds)),
+    )
+
+    keeper = worker.LeaseKeeper(
+        batch_id=queued_batch_id,
+        token="worker-a",
+        receipt_handle="rh-active",
+        interval_seconds=60,
+        visibility_seconds=300,
+    )
+    keeper.beat_once()
+
+    with db_factory() as db:
+        batch = db.get(ImportBatch, queued_batch_id)
+        assert batch.processing_token == "worker-a"
+        assert batch.heartbeat_at is not None
+        heartbeat = batch.heartbeat_at
+        if heartbeat.tzinfo is None:
+            heartbeat = heartbeat.replace(tzinfo=timezone.utc)
+        assert heartbeat > initial
+
+    assert visibility == [("rh-active", 300)]
+
+
+def test_lease_keeper_wrong_token_does_not_take_over_batch(
+    db_factory,
+    queued_batch_id,
+    monkeypatch,
+):
+    initial = datetime.now(timezone.utc) - timedelta(seconds=120)
+    with db_factory() as db:
+        assert repository.claim_batch(
+            db,
+            batch_id=queued_batch_id,
+            token="worker-a",
+            now=initial,
+            lease_seconds=300,
+        )
+
+    monkeypatch.setattr(worker, "SessionLocal", db_factory)
+    monkeypatch.setattr(worker.queue, "extend_visibility", lambda *args: None)
+
+    keeper = worker.LeaseKeeper(
+        batch_id=queued_batch_id,
+        token="worker-b",
+        receipt_handle="rh-duplicate",
+        interval_seconds=60,
+        visibility_seconds=300,
+    )
+    keeper.beat_once()
+
+    with db_factory() as db:
+        batch = db.get(ImportBatch, queued_batch_id)
+        assert batch.processing_token == "worker-a"
+        heartbeat = batch.heartbeat_at
+        if heartbeat.tzinfo is None:
+            heartbeat = heartbeat.replace(tzinfo=timezone.utc)
+        assert heartbeat == initial
+
+
 def test_deleted_batch_message_is_acknowledged(monkeypatch):
     deleted = []
 
