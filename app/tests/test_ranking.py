@@ -17,7 +17,8 @@ from sqlalchemy import create_engine, event
 from sqlalchemy.orm import sessionmaker
 
 from app.db import Base
-from app.deps import acquire_job_lock, _advisory_lock_key, get_current_user, get_db
+from app.deps import get_current_user, get_db
+from app.infrastructure.locking.job_lock import acquire_job_lock, advisory_lock_key
 from app.main import app
 from app.models import Candidate, Evaluation, Job, JobCandidate, Ranking, RankingItem
 from app.crud import build_ranking_response, get_ranking_metadata, get_ranking_items, insert_ranking_items
@@ -126,19 +127,19 @@ def _seed_candidate(db, candidate_id=None, name="Ana García", email=None, owner
 # ============================================================
 
 def test_advisory_lock_key_is_deterministic():
-    key_a = _advisory_lock_key("job-001")
-    key_b = _advisory_lock_key("job-001")
+    key_a = advisory_lock_key("job-001")
+    key_b = advisory_lock_key("job-001")
     assert key_a == key_b
 
 
 def test_advisory_lock_key_differs_per_job():
-    key_1 = _advisory_lock_key("job-001")
-    key_2 = _advisory_lock_key("job-002")
+    key_1 = advisory_lock_key("job-001")
+    key_2 = advisory_lock_key("job-002")
     assert key_1 != key_2
 
 
 def test_advisory_lock_key_is_64bit_signed():
-    key = _advisory_lock_key("job-001")
+    key = advisory_lock_key("job-001")
     assert -(2**63) <= key < 2**63
 
 
