@@ -78,6 +78,20 @@ def get_batch_for_worker(db: Session, batch_id: str) -> ImportBatch | None:
     return db.query(ImportBatch).filter(ImportBatch.id == batch_id).first()
 
 
+def get_item_for_worker(
+    db: Session,
+    *,
+    batch_id: str,
+    item_id: str,
+) -> ImportItem | None:
+    """Load one durable item without exposing an ownerless public query."""
+    return (
+        db.query(ImportItem)
+        .filter(ImportItem.id == item_id, ImportItem.batch_id == batch_id)
+        .first()
+    )
+
+
 def list_items_for_worker(
     db: Session,
     *,
