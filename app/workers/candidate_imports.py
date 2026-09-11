@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import threading
+import time
 import uuid
 from datetime import datetime, timezone
 
@@ -12,7 +13,7 @@ from sqlalchemy.orm import Session
 from app.db import SessionLocal
 from app.domains.candidate_imports import repository, service as import_service
 from app.domains.candidate_imports.exceptions import IdentityConflict
-from app.infrastructure.imports import documents, queue, storage
+from app.infrastructure.imports import documents, ingestion, queue, storage
 from app.infrastructure.imports.documents import DocumentImportError
 from app.infrastructure.imports.queue import ReceivedImportMessage
 
@@ -21,10 +22,15 @@ logger = logging.getLogger(__name__)
 MAX_RECEIVE_COUNT = 5
 MAX_BATCH_DOCUMENTS = 500
 MAX_BATCH_EXPANDED_BYTES = 1024 * 1024 * 1024
+DEFAULT_INGESTION_POLL_SECONDS = 5
+DEFAULT_INGESTION_TIMEOUT_SECONDS = 30 * 60
 PUBLIC_RETRY_EXHAUSTED_MESSAGE = (
     "No fue posible completar la importacion. Intenta nuevamente."
 )
 PUBLIC_ITEM_FAILURE_MESSAGE = "No fue posible procesar este documento."
+PUBLIC_INGESTION_FAILURE_MESSAGE = (
+    "No fue posible indexar los documentos del lote. Intenta nuevamente."
+)
 
 
 class BatchMissing(Exception):
@@ -128,6 +134,14 @@ def _as_utc(value: datetime | None) -> datetime | None:
     return value.astimezone(timezone.utc)
 
 
+def _identity_created_during_batch(batch, identity) -> bool:
+    if identity is None or batch.started_at is None:
+        return False
+    created_at = _as_utc(identity.created_at)
+    started_at = _as_utc(batch.started_at)
+    return bool(created_at and started_at and created_at >= started_at)
+
+
 def _identity_was_created_in_batch(db: Session, batch, item) -> bool:
     """Infer whether a successful item's document identity is new to this batch."""
     if not item.candidate_id or not item.document_sha256 or batch.started_at is None:
@@ -140,9 +154,7 @@ def _identity_was_created_in_batch(db: Session, batch, item) -> bool:
     )
     if identity is None or identity.candidate_id != item.candidate_id:
         return False
-    created_at = _as_utc(identity.created_at)
-    started_at = _as_utc(batch.started_at)
-    return bool(created_at and started_at and created_at >= started_at)
+    return _identity_created_during_batch(batch, identity)
 
 
 def _canonicalized_candidate_ids(db: Session, batch) -> set[str]:
@@ -158,6 +170,11 @@ def _canonicalized_candidate_ids(db: Session, batch) -> set[str]:
         if _identity_was_created_in_batch(db, batch, item):
             candidate_ids.add(item.candidate_id)
     return candidate_ids
+
+
+def _batch_has_canonical_changes(db: Session, batch) -> bool:
+    """Return whether a completed document identity was created by this batch."""
+    return bool(_canonicalized_candidate_ids(db, batch))
 
 
 def _expand_archives_once(db: Session, batch) -> None:
@@ -308,7 +325,14 @@ def _prepare_batch_documents(db: Session, batch) -> None:
                 batch_id=batch.id,
             )
 
-            if preexisting_hash_identity is None and candidate.id not in canonicalized:
+            hash_is_old = (
+                preexisting_hash_identity is not None
+                and not _identity_created_during_batch(batch, preexisting_hash_identity)
+            )
+            should_write_canonical = (
+                candidate.id not in canonicalized and not hash_is_old
+            )
+            if should_write_canonical:
                 canonical_result = storage.write_canonical_candidate_document(
                     candidate_id=candidate.id,
                     candidate_name=candidate.name,
@@ -363,6 +387,84 @@ def _prepare_batch_documents(db: Session, batch) -> None:
             raise
 
 
+def _fail_batch(
+    db: Session,
+    batch,
+    *,
+    error_code: str,
+    error_message: str,
+) -> None:
+    """Persist a terminal batch failure without leaking provider internals."""
+    batch.status = "FAILED"
+    batch.last_error_code = error_code
+    batch.last_error_message = error_message
+    batch.completed_at = datetime.now(timezone.utc)
+    batch.processing_token = None
+    batch.heartbeat_at = None
+    db.commit()
+
+
+def _run_ingestion_stage(
+    db: Session,
+    batch,
+    *,
+    poll_interval_seconds: float = DEFAULT_INGESTION_POLL_SECONDS,
+    timeout_seconds: float = DEFAULT_INGESTION_TIMEOUT_SECONDS,
+) -> None:
+    """Run or resume the single logical Bedrock ingestion for one batch."""
+    if batch is None:
+        raise BatchMissing()
+    if batch.status in repository.TERMINAL_BATCH_STATUSES:
+        return
+    if batch.current_stage not in {"DEDUPLICATING", "INGESTING"}:
+        return
+
+    if batch.current_stage == "DEDUPLICATING":
+        if not _batch_has_canonical_changes(db, batch):
+            batch.status = "PROCESSING"
+            batch.current_stage = "EVALUATING"
+            db.commit()
+            return
+        batch.status = "PROCESSING"
+        batch.current_stage = "INGESTING"
+        db.commit()
+
+    if not batch.bedrock_ingestion_job_id:
+        job_id, _initial_status = ingestion.start_batch_ingestion(batch.id)
+        batch.bedrock_ingestion_job_id = job_id
+        db.commit()
+        db.refresh(batch)
+
+    job_id = batch.bedrock_ingestion_job_id
+    deadline = time.monotonic() + max(0.0, timeout_seconds)
+
+    while True:
+        status = ingestion.get_ingestion_status(job_id).upper()
+        if status == "COMPLETE":
+            batch.status = "PROCESSING"
+            batch.current_stage = "EVALUATING"
+            db.commit()
+            return
+        if status in {"FAILED", "STOPPED"}:
+            _fail_batch(
+                db,
+                batch,
+                error_code="BEDROCK_INGESTION_FAILED",
+                error_message=PUBLIC_INGESTION_FAILURE_MESSAGE,
+            )
+            return
+        if timeout_seconds <= 0 or time.monotonic() >= deadline:
+            _fail_batch(
+                db,
+                batch,
+                error_code="BEDROCK_INGESTION_TIMEOUT",
+                error_message=PUBLIC_INGESTION_FAILURE_MESSAGE,
+            )
+            return
+
+        time.sleep(max(0.0, poll_interval_seconds))
+
+
 def _mark_retry_exhausted(batch_id: str) -> None:
     """Persist a public-safe terminal failure while preserving the failed stage."""
     with SessionLocal() as db:
@@ -370,13 +472,12 @@ def _mark_retry_exhausted(batch_id: str) -> None:
         if batch is None or batch.status in repository.TERMINAL_BATCH_STATUSES:
             return
 
-        batch.status = "FAILED"
-        batch.last_error_code = "IMPORT_RETRY_EXHAUSTED"
-        batch.last_error_message = PUBLIC_RETRY_EXHAUSTED_MESSAGE
-        batch.completed_at = datetime.now(timezone.utc)
-        batch.processing_token = None
-        batch.heartbeat_at = None
-        db.commit()
+        _fail_batch(
+            db,
+            batch,
+            error_code="IMPORT_RETRY_EXHAUSTED",
+            error_message=PUBLIC_RETRY_EXHAUSTED_MESSAGE,
+        )
 
 
 def process_batch(batch_id: str, *, receipt_handle: str | None = None) -> None:
