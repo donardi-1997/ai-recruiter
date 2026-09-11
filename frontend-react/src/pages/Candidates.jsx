@@ -38,6 +38,8 @@ function Candidates() {
   }, []);
 
   useEffect(() => {
+    // The initial request synchronizes this view with the API.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     loadData();
   }, [loadData]);
 
