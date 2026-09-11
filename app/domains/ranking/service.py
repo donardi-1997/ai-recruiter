@@ -17,7 +17,7 @@ from app.domains.ranking.exceptions import (
     RankingJobNotFound,
     RankingAlreadyRunning,
 )
-from app.deps import acquire_job_lock, release_job_lock
+from app.infrastructure.locking.job_lock import acquire_job_lock, release_job_lock
 from app.domains.evaluations.service import evaluate_candidate_for_job
 
 logger = logging.getLogger(__name__)
@@ -57,7 +57,6 @@ def recalculate_ranking(
         RankingJobNotFound: if job not found or not accessible.
         RankingAlreadyRunning: if another recalculation is in progress.
     """
-    # Verify job ownership
     job = jobs_repository.get_job(db, job_id, owner_sub=owner_sub)
     if not job:
         raise RankingJobNotFound()
@@ -111,7 +110,6 @@ def recalculate_ranking(
 
             if evaluations_repository.needs_evaluation(evaluation, force=(effective_mode == "full")):
                 try:
-                    # Use the shared evaluation service with authorized domain objects
                     evaluation, _, internal_error = evaluate_candidate_for_job(
                         db,
                         candidate=candidate,
@@ -136,7 +134,6 @@ def recalculate_ranking(
                     failed_count += 1
                     failures.append({"candidate_id": candidate.id, "error": str(exc)})
 
-                    # Ensure FAILED evaluation is persisted
                     evaluation = evaluations_repository.create_evaluation(
                         db,
                         candidate_id=candidate.id,
@@ -152,7 +149,6 @@ def recalculate_ranking(
             else:
                 evaluated_count += 1
 
-            # Determine effective status and score for ranking item
             if evaluations_repository.is_evaluation_complete(evaluation):
                 effective_status = "COMPLETED"
                 score = float(evaluation.match_score)
@@ -170,7 +166,6 @@ def recalculate_ranking(
                 "status": effective_status,
             })
 
-        # Sort items globally
         all_items.sort(
             key=lambda item: (
                 status_order.get(item["status"], 99),
@@ -183,7 +178,6 @@ def recalculate_ranking(
         for position, item in enumerate(all_items, start=1):
             item["position"] = position
 
-        # Persist ranking items (replaces any existing)
         if all_items:
             ranking_repository.insert_ranking_items(db, ranking_id=ranking.id, items=all_items)
         else:
