@@ -162,6 +162,18 @@ def _canonical_metadata(candidate_id: str, candidate_name: str) -> bytes:
     return json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
 
 
+def read_existing_canonical_document(candidate_id: str) -> bytes | None:
+    """Return a legacy canonical PDF/DOCX for identity backfill when present."""
+    client = _s3_client()
+    for extension in (".pdf", ".docx"):
+        key = f"{CANONICAL_PREFIX}/cv-{candidate_id}{extension}"
+        if _head_or_none(CANONICAL_BUCKET, key) is None:
+            continue
+        response = client.get_object(Bucket=CANONICAL_BUCKET, Key=key)
+        return response["Body"].read()
+    return None
+
+
 def write_canonical_candidate_document(
     *,
     candidate_id: str,
