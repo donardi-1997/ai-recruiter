@@ -1,15 +1,19 @@
 """FastAPI dependencies — DB session, auth, etc."""
 
-import hashlib
 import logging
 import os
 from typing import Generator
 
 import boto3
-from fastapi import Depends, HTTPException, Request
+from fastapi import HTTPException, Request
 from sqlalchemy.orm import Session
 
 from app.db import SessionLocal
+from app.infrastructure.locking.job_lock import (
+    acquire_job_lock,
+    advisory_lock_key as _advisory_lock_key,
+    release_job_lock,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -27,48 +31,11 @@ def get_db() -> Generator[Session, None, None]:
 
 
 # ============================================================
-# ADVISORY LOCK HELPERS
-# ============================================================
-
-def _advisory_lock_key(job_id: str) -> int:
-    digest = hashlib.sha256(job_id.encode("utf-8")).digest()[:8]
-    return int.from_bytes(digest, byteorder="big", signed=True)
-
-
-def acquire_job_lock(db: Session, job_id: str) -> bool:
-    from sqlalchemy import text
-
-    lock_key = _advisory_lock_key(job_id)
-
-    if "sqlite" in str(db.get_bind().url):
-        return True
-
-    result = db.execute(
-        text("SELECT pg_try_advisory_lock(:key)"),
-        {"key": lock_key},
-    ).scalar()
-    return bool(result)
-
-
-def release_job_lock(db: Session, job_id: str) -> None:
-    from sqlalchemy import text
-
-    lock_key = _advisory_lock_key(job_id)
-
-    if "sqlite" in str(db.get_bind().url):
-        return
-
-    db.execute(
-        text("SELECT pg_advisory_unlock(:key)"),
-        {"key": lock_key},
-    )
-
-
-# ============================================================
 # AUTH — Cognito JWT validation
 # ============================================================
 
 _cognito_client = None
+
 
 def _get_cognito_client():
     global _cognito_client
