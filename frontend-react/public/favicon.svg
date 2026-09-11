@@ -1,5 +1,5 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="ASIATI">
-  <rect width="64" height="64" rx="18" fill="#171217"/>
+  <rect width="64" height="64" rx="18" fill="#163A52"/>
   <path fill="#fff" d="M18 46 29.5 16h5L46 46h-7.2l-2.2-6.4H27.3L25.1 46H18Zm11.4-12.6h5.1L32 25.8l-2.6 7.6Z"/>
-  <circle cx="48" cy="16" r="6" fill="#EC4D91"/>
+  <circle cx="48" cy="16" r="6" fill="#FCE302"/>
 </svg>
