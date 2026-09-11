@@ -1,12 +1,12 @@
 import { useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import api from "../api/client";
+import BrandMark from "../components/BrandMark";
 
 function AuthBrand() {
   return (
     <div className="auth-brand">
-      <span className="auth-logo" aria-hidden="true">AI</span>
-      <span><strong>AI Recruiter</strong><small>Talent intelligence</small></span>
+      <BrandMark />
     </div>
   );
 }
@@ -41,17 +41,17 @@ function Login() {
 
   return (
     <main className="auth-page">
-      <section className="auth-story" aria-label="Presentación de AI Recruiter">
+      <section className="auth-story" aria-label="Presentación de ASIATI Talent Intelligence">
         <AuthBrand />
         <div className="auth-story-content">
-          <span className="eyebrow eyebrow-dark"><i /> Inteligencia para tu proceso de selección</span>
-          <h1>Convierte cada CV en una <em>decisión clara.</em></h1>
-          <p>Centraliza candidatos, evalúa afinidad con IA y prioriza el talento que realmente encaja con cada vacante.</p>
+          <span className="eyebrow eyebrow-dark"><i /> Talento que impulsa el cambio</span>
+          <h1>Convierte cada CV en una <em>decisión con criterio.</em></h1>
+          <p>Centraliza candidatos, evalúa afinidad con IA y prioriza el talento que mejor encaja con cada vacante de ASIATI.</p>
 
           <div className="auth-proof">
-            <div><strong>01</strong><span>Sube perfiles</span></div>
+            <div><strong>01</strong><span>Centraliza perfiles</span></div>
             <div><strong>02</strong><span>Evalúa con IA</span></div>
-            <div><strong>03</strong><span>Decide mejor</span></div>
+            <div><strong>03</strong><span>Decide con datos</span></div>
           </div>
         </div>
         <div className="auth-signal" aria-hidden="true">
@@ -59,7 +59,7 @@ function Login() {
           <span className="signal-ring signal-ring-two" />
           <span className="signal-core">94<small>% match</small></span>
         </div>
-        <p className="auth-story-footer">Powered by AWS · Amazon Bedrock</p>
+        <p className="auth-story-footer">ASIATI · Talent Intelligence · Powered by AWS</p>
       </section>
 
       <section className="auth-panel">
@@ -68,7 +68,7 @@ function Login() {
           <div className="auth-heading">
             <span className="eyebrow">Acceso seguro</span>
             <h2>Bienvenido de nuevo</h2>
-            <p>Ingresa a tu espacio de selección.</p>
+            <p>Ingresa al espacio de selección de ASIATI.</p>
           </div>
 
           <form onSubmit={handleSubmit}>

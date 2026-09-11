@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import api from "../api/client";
+import BrandMark from "../components/BrandMark";
 
 function Register() {
   const navigate = useNavigate();
@@ -38,7 +39,7 @@ function Register() {
             <span className="success-mark" aria-hidden="true">✓</span>
             <span className="eyebrow">Registro completo</span>
             <h1>Tu cuenta está lista</h1>
-            <p>Ya puedes acceder a AI Recruiter y comenzar a organizar tu proceso de selección.</p>
+            <p>Ya puedes acceder a ASIATI Talent Intelligence y comenzar a organizar tu proceso de selección.</p>
             <button type="button" className="login-button" onClick={() => navigate("/login")}>Iniciar sesión <span>→</span></button>
           </div>
         </section>
@@ -50,19 +51,18 @@ function Register() {
     <main className="auth-page auth-register-page">
       <section className="auth-story auth-register-story">
         <div className="auth-brand">
-          <span className="auth-logo" aria-hidden="true">AI</span>
-          <span><strong>AI Recruiter</strong><small>Talent intelligence</small></span>
+          <BrandMark />
         </div>
         <div className="auth-story-content">
-          <span className="eyebrow eyebrow-dark"><i /> Empieza en minutos</span>
-          <h1>Una forma más inteligente de <em>encontrar talento.</em></h1>
+          <span className="eyebrow eyebrow-dark"><i /> Talento para seguir creciendo</span>
+          <h1>Construye equipos preparados para <em>llevar ASIATI más lejos.</em></h1>
           <ul className="auth-benefits">
-            <li><span>01</span><div><strong>Evaluación consistente</strong><small>Compara perfiles con criterios claros.</small></div></li>
+            <li><span>01</span><div><strong>Criterio consistente</strong><small>Compara perfiles con requisitos claros.</small></div></li>
             <li><span>02</span><div><strong>Ranking accionable</strong><small>Prioriza a los candidatos con mejor ajuste.</small></div></li>
-            <li><span>03</span><div><strong>Infraestructura segura</strong><small>Construido sobre servicios administrados de AWS.</small></div></li>
+            <li><span>03</span><div><strong>Decisiones con datos</strong><small>Convierte evidencia en una recomendación útil.</small></div></li>
           </ul>
         </div>
-        <p className="auth-story-footer">AI Recruiter · Talent intelligence</p>
+        <p className="auth-story-footer">ASIATI · Talent Intelligence</p>
       </section>
 
       <section className="auth-panel">

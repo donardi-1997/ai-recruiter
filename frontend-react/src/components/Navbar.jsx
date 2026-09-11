@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { NavLink, useNavigate } from "react-router-dom";
 import api from "../api/client";
+import BrandMark from "./BrandMark";
 import ThemeToggle from "./ThemeToggle";
 
 const navItems = [
@@ -12,12 +13,8 @@ const navItems = [
 
 function Brand() {
   return (
-    <NavLink to="/dashboard" className="navbar-brand" aria-label="AI Recruiter, inicio">
-      <span className="navbar-logo" aria-hidden="true">AI</span>
-      <span className="navbar-brand-text">
-        <strong>AI Recruiter</strong>
-        <span>Talent intelligence</span>
-      </span>
+    <NavLink to="/dashboard" className="navbar-brand" aria-label="ASIATI Talent Intelligence, inicio">
+      <BrandMark />
     </NavLink>
   );
 }
@@ -67,8 +64,8 @@ function Navbar() {
           <Brand />
 
           <div className="nav-context">
-            <span className="nav-context-label">Workspace</span>
-            <strong>Selección de talento</strong>
+            <span className="nav-context-label">Talento Humano</span>
+            <strong>Selección inteligente</strong>
           </div>
 
           <nav id="primary-navigation" className="navbar-links" aria-label="Navegación principal">
@@ -88,7 +85,7 @@ function Navbar() {
           <div className="nav-insight">
             <span className="nav-insight-dot" aria-hidden="true" />
             <div>
-              <strong>IA operativa</strong>
+              <strong>IA para decidir mejor</strong>
               <span>Evaluación con Amazon Bedrock</span>
             </div>
           </div>
