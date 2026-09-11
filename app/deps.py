@@ -7,11 +7,6 @@ from sqlalchemy.orm import Session
 
 from app.db import SessionLocal
 from app.infrastructure.auth import cognito
-from app.infrastructure.locking.job_lock import (
-    acquire_job_lock,
-    advisory_lock_key as _advisory_lock_key,
-    release_job_lock,
-)
 
 
 def get_db() -> Generator[Session, None, None]:
