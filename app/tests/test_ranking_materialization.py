@@ -96,7 +96,7 @@ def test_materialize_ranking_uses_persisted_evaluations_only(db_session, monkeyp
 
     assert result == {
         "job_id": job.id,
-        "mode": "materialized",
+        "mode": "full",
         "scope": "assigned",
         "total_candidates": 2,
         "evaluated": 2,
