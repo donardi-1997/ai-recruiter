@@ -4,10 +4,6 @@
 #
 # This is the ONLY supported way to deploy the API container.
 # It ensures BEDROCK_AWS_PROFILE and all mounts are always present.
-#
-# Usage:
-#   ./scripts/deploy-api.sh
-#   ./scripts/deploy-api.sh --dry-run
 # ==============================================================
 
 set -euo pipefail
@@ -18,14 +14,17 @@ ECR_REPO="ai-recruiter-api"
 ECR_TAG="${ECR_TAG:-latest}"
 CONTAINER_NAME="ai-recruiter-api"
 NETWORK_NAME="ai-recruiter"
+IMPORT_STAGING_BUCKET="${IMPORT_STAGING_BUCKET:?IMPORT_STAGING_BUCKET is required}"
+IMPORT_QUEUE_URL="${IMPORT_QUEUE_URL:?IMPORT_QUEUE_URL is required}"
+IMPORT_EVALUATION_CONCURRENCY="${IMPORT_EVALUATION_CONCURRENCY:-3}"
+COGNITO_USER_POOL_ID="${COGNITO_USER_POOL_ID:-}"
+COGNITO_CLIENT_ID="${COGNITO_CLIENT_ID:-}"
 
-# Roles Anywhere paths (HOST)
 HOST_AWS_CONFIG="/opt/ai-recruiter/aws/config"
 HOST_SIGNING_HELPER="/usr/local/bin/aws_signing_helper"
 HOST_CLIENT_CRT="/opt/ai-recruiter/rolesanywhere/client.crt"
 HOST_CLIENT_KEY="/opt/ai-recruiter/rolesanywhere/client.key"
 
-# Roles Anywhere paths (CONTAINER)
 CONTAINER_AWS_CONFIG="/root/.aws/config"
 CONTAINER_SIGNING_HELPER="/usr/local/bin/aws_signing_helper"
 CONTAINER_CLIENT_CRT="/run/rolesanywhere/client.crt"
@@ -45,14 +44,8 @@ log_warn()  { echo -e "${YELLOW}⚠${NC} $1"; }
 DRY_RUN=false
 [[ "${1:-}" == "--dry-run" ]] && DRY_RUN=true
 
-# ============================================================
-# PREFLIGHT CHECKS
-# ============================================================
-
 echo "━━━ Preflight Checks ━━━"
-
 MISSING=0
-
 for f in "$HOST_AWS_CONFIG" "$HOST_SIGNING_HELPER" "$HOST_CLIENT_CRT" "$HOST_CLIENT_KEY"; do
     if [[ ! -f "$f" ]]; then
         log_error "Missing required file: $f"
@@ -62,17 +55,13 @@ for f in "$HOST_AWS_CONFIG" "$HOST_SIGNING_HELPER" "$HOST_CLIENT_CRT" "$HOST_CLI
     fi
 done
 
-# Verify AWS config uses container paths (not host paths)
 if grep -q "/opt/ai-recruiter" "$HOST_AWS_CONFIG" 2>/dev/null; then
     log_error "AWS config contains host paths instead of container paths!"
-    log_error "Expected: /run/rolesanywhere/client.crt"
-    log_error "Found: paths starting with /opt/ai-recruiter"
     MISSING=1
 else
     log_ok "AWS config uses container paths"
 fi
 
-# Verify AWS config has the profile
 if ! grep -q "$BEDROCK_PROFILE" "$HOST_AWS_CONFIG" 2>/dev/null; then
     log_error "AWS config missing profile: $BEDROCK_PROFILE"
     MISSING=1
@@ -80,46 +69,48 @@ else
     log_ok "AWS config has profile: $BEDROCK_PROFILE"
 fi
 
+# Preserve Cognito runtime configuration from the currently running API when
+# the caller does not explicitly provide it. This avoids embedding identifiers
+# in the deployment script and keeps replacements behavior-compatible.
+if docker inspect "$CONTAINER_NAME" >/dev/null 2>&1; then
+    CURRENT_ENV=$(docker inspect "$CONTAINER_NAME" --format '{{range .Config.Env}}{{println .}}{{end}}')
+    if [[ -z "$COGNITO_USER_POOL_ID" ]]; then
+        COGNITO_USER_POOL_ID=$(echo "$CURRENT_ENV" | sed -n 's/^COGNITO_USER_POOL_ID=//p' | head -1)
+    fi
+    if [[ -z "$COGNITO_CLIENT_ID" ]]; then
+        COGNITO_CLIENT_ID=$(echo "$CURRENT_ENV" | sed -n 's/^COGNITO_CLIENT_ID=//p' | head -1)
+    fi
+fi
+
+if [[ -z "$COGNITO_USER_POOL_ID" || -z "$COGNITO_CLIENT_ID" ]]; then
+    log_error "Cognito runtime configuration is required"
+    MISSING=1
+fi
+
 if [[ $MISSING -ne 0 ]]; then
     log_error "Preflight checks FAILED. Aborting deploy."
     exit 1
 fi
-
 log_ok "All preflight checks passed"
-
-# ============================================================
-# PULL IMAGE
-# ============================================================
 
 echo ""
 echo "━━━ Pull Image ━━━"
-
 ECR_IMAGE="${ECR_ACCOUNT}.dkr.ecr.${AWS_REGION}.amazonaws.com/${ECR_REPO}:${ECR_TAG}"
-
 if [[ "$DRY_RUN" == "true" ]]; then
     echo "[DRY RUN] docker pull $ECR_IMAGE"
 else
-    # Try to pull; if it fails (e.g. no ECR permissions), use local image
     if docker pull "$ECR_IMAGE" 2>/dev/null; then
         log_ok "Image pulled: $ECR_IMAGE"
+    elif docker image inspect "$ECR_IMAGE" >/dev/null 2>&1; then
+        log_warn "ECR pull failed (no permissions), using local image: $ECR_IMAGE"
     else
-        # Check if image exists locally
-        if docker image inspect "$ECR_IMAGE" >/dev/null 2>&1; then
-            log_warn "ECR pull failed (no permissions), using local image: $ECR_IMAGE"
-        else
-            log_error "Image not available locally or in ECR: $ECR_IMAGE"
-            exit 1
-        fi
+        log_error "Image not available locally or in ECR: $ECR_IMAGE"
+        exit 1
     fi
 fi
 
-# ============================================================
-# STOP OLD CONTAINER
-# ============================================================
-
 echo ""
 echo "━━━ Stop Old Container ━━━"
-
 if docker ps -q -f "name=$CONTAINER_NAME" | grep -q .; then
     if [[ "$DRY_RUN" == "true" ]]; then
         echo "[DRY RUN] docker stop $CONTAINER_NAME"
@@ -133,33 +124,26 @@ else
     log_ok "No existing container to stop"
 fi
 
-# ============================================================
-# CREATE NEW CONTAINER
-# ============================================================
-
 echo ""
 echo "━━━ Create Container ━━━"
-
 DOCKER_ARGS=(
     -d
     --name "$CONTAINER_NAME"
     --restart unless-stopped
     --network "$NETWORK_NAME"
     --add-host=host.docker.internal:host-gateway
-    # Database
     -e "DATABASE_URL=postgresql://postgres:postgres@host.docker.internal:5432/ai_recruiter"
-    # AWS
     -e "AWS_REGION=$AWS_REGION"
     -e "BEDROCK_AWS_PROFILE=$BEDROCK_PROFILE"
-    # Cognito
-    -e "COGNITO_USER_POOL_ID=us-east-2_AkQ5UIW7R"
-    -e "COGNITO_CLIENT_ID=73ts1mbn3qla00uc15di6ihvju"
-    # Roles Anywhere mounts (read-only)
+    -e "IMPORT_STAGING_BUCKET=$IMPORT_STAGING_BUCKET"
+    -e "IMPORT_QUEUE_URL=$IMPORT_QUEUE_URL"
+    -e "IMPORT_EVALUATION_CONCURRENCY=$IMPORT_EVALUATION_CONCURRENCY"
+    -e "COGNITO_USER_POOL_ID=$COGNITO_USER_POOL_ID"
+    -e "COGNITO_CLIENT_ID=$COGNITO_CLIENT_ID"
     -v "${HOST_AWS_CONFIG}:${CONTAINER_AWS_CONFIG}:ro"
     -v "${HOST_SIGNING_HELPER}:${CONTAINER_SIGNING_HELPER}:ro"
     -v "${HOST_CLIENT_CRT}:${CONTAINER_CLIENT_CRT}:ro"
     -v "${HOST_CLIENT_KEY}:${CONTAINER_CLIENT_KEY}:ro"
-    # Image
     "$ECR_IMAGE"
 )
 
@@ -170,41 +154,35 @@ else
     log_ok "Container created: $CONTAINER_NAME"
 fi
 
-# ============================================================
-# WAIT FOR STARTUP
-# ============================================================
-
 echo ""
 echo "━━━ Wait for Startup ━━━"
-
 if [[ "$DRY_RUN" == "true" ]]; then
     echo "[DRY RUN] sleep 15"
 else
     sleep 15
 fi
 
-# ============================================================
-# POST-DEPLOY CHECKS
-# ============================================================
-
 echo ""
 echo "━━━ Post-Deploy Checks ━━━"
-
 if [[ "$DRY_RUN" == "true" ]]; then
     echo "[DRY RUN] Skipping post-deploy checks"
     exit 0
 fi
 
-# Check 1: BEDROCK_AWS_PROFILE in container
 CONTAINER_ENV=$(docker inspect "$CONTAINER_NAME" --format '{{range .Config.Env}}{{println .}}{{end}}')
-if echo "$CONTAINER_ENV" | grep -q "BEDROCK_AWS_PROFILE=ai-recruiter-bedrock"; then
-    log_ok "BEDROCK_AWS_PROFILE=ai-recruiter-bedrock"
-else
-    log_error "BEDROCK_AWS_PROFILE not set!"
-    exit 1
-fi
+for required in \
+    "BEDROCK_AWS_PROFILE=ai-recruiter-bedrock" \
+    "IMPORT_STAGING_BUCKET=$IMPORT_STAGING_BUCKET" \
+    "IMPORT_QUEUE_URL=$IMPORT_QUEUE_URL" \
+    "IMPORT_EVALUATION_CONCURRENCY=$IMPORT_EVALUATION_CONCURRENCY"; do
+    if echo "$CONTAINER_ENV" | grep -Fqx "$required"; then
+        log_ok "Runtime env present: ${required%%=*}"
+    else
+        log_error "Runtime env missing: ${required%%=*}"
+        exit 1
+    fi
+done
 
-# Check 2: Mounts present
 MOUNTS=$(docker inspect "$CONTAINER_NAME" --format '{{range .Mounts}}{{.Source}} {{end}}')
 MOUNT_COUNT=$(echo "$MOUNTS" | wc -w)
 if [[ $MOUNT_COUNT -ge 4 ]]; then
@@ -214,7 +192,6 @@ else
     exit 1
 fi
 
-# Check 3: Health check
 HEALTH=$(curl -sf http://localhost/api/health 2>/dev/null || echo "FAIL")
 if echo "$HEALTH" | grep -q '"status":"ok"'; then
     log_ok "Health check passed"
@@ -222,7 +199,6 @@ else
     log_warn "Health check returned: $HEALTH"
 fi
 
-# Check 4: AWS caller identity
 CALLER=$(docker exec "$CONTAINER_NAME" python -c "
 from app import evaluation
 s = evaluation._bedrock_session
