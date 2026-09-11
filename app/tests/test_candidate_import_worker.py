@@ -51,6 +51,8 @@ def db_factory():
 def queued_batch_id(db_factory):
     with db_factory() as db:
         job = Job(id=_uuid(), title="Backend Developer", owner_sub="owner-a")
+        db.add(job)
+        db.flush()
         batch = ImportBatch(
             id=_uuid(),
             job_id=job.id,
@@ -61,7 +63,7 @@ def queued_batch_id(db_factory):
             uploaded_items=1,
             total_items=1,
         )
-        db.add_all([job, batch])
+        db.add(batch)
         db.commit()
         return batch.id
 
