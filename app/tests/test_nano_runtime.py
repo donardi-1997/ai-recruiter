@@ -105,17 +105,16 @@ def test_worker_archive_path_is_file_backed_and_incremental():
 
 def test_production_deploy_uses_nano_runtime_limits():
     workflow = (ROOT / ".github/workflows/deploy.yml").read_text(encoding="utf-8")
+    db_source = (ROOT / "app/db.py").read_text(encoding="utf-8")
     api_script = (ROOT / "scripts/deploy-api.sh").read_text(encoding="utf-8")
-    worker_script = (ROOT / "scripts/deploy-worker.sh").read_text(encoding="utf-8")
 
     assert 'IMPORT_EVALUATION_CONCURRENCY="1"' in workflow
-    assert 'PG_POOL_SIZE="2"' in workflow
-    assert 'PG_MAX_OVERFLOW="2"' in workflow
-    for script in (api_script, worker_script):
-        assert 'PG_POOL_SIZE="${PG_POOL_SIZE:-2}"' in script
-        assert 'PG_MAX_OVERFLOW="${PG_MAX_OVERFLOW:-2}"' in script
-        assert '-e "PG_POOL_SIZE=$PG_POOL_SIZE"' in script
-        assert '-e "PG_MAX_OVERFLOW=$PG_MAX_OVERFLOW"' in script
+    assert 'os.getenv("PG_POOL_SIZE", "2")' in db_source
+    assert 'os.getenv("PG_MAX_OVERFLOW", "2")' in db_source
+    assert 'PG_POOL_SIZE="${PG_POOL_SIZE:-2}"' in api_script
+    assert 'PG_MAX_OVERFLOW="${PG_MAX_OVERFLOW:-2}"' in api_script
+    assert '-e "PG_POOL_SIZE=$PG_POOL_SIZE"' in api_script
+    assert '-e "PG_MAX_OVERFLOW=$PG_MAX_OVERFLOW"' in api_script
 
 
 def test_nano_host_script_configures_swap_logs_and_postgres():
