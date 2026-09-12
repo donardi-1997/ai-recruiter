@@ -332,6 +332,9 @@ def iter_zip_documents(
                 content_type=_content_type(name),
                 data=payload,
             )
+            # The consumer has finished one child before requesting the next.
+            # Drop this generator-side reference before reading another payload.
+            del payload
     finally:
         archive.close()
 
