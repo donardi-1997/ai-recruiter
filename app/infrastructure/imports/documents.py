@@ -8,9 +8,7 @@ import stat
 import zipfile
 from dataclasses import dataclass
 from pathlib import PurePosixPath
-
-import fitz
-from docx import Document
+from typing import Iterator
 
 from app.domains.candidate_imports.rules import (
     document_sha256,
@@ -133,6 +131,8 @@ def _fallback_display_name(filename: str) -> str:
 
 
 def _extract_pdf_text(data: bytes) -> str:
+    import fitz
+
     try:
         document = fitz.open(stream=data, filetype="pdf")
         try:
@@ -144,6 +144,8 @@ def _extract_pdf_text(data: bytes) -> str:
 
 
 def _extract_docx_text(data: bytes) -> str:
+    from docx import Document
+
     try:
         document = Document(io.BytesIO(data))
         return "\n".join(paragraph.text for paragraph in document.paragraphs).strip()
@@ -272,24 +274,22 @@ def _nested_archive(name: str) -> bool:
     return suffix in _NESTED_ARCHIVE_SUFFIXES
 
 
-def expand_zip(
-    data: bytes,
+def iter_zip_documents(
+    fileobj,
     *,
     remaining_documents: int,
     remaining_bytes: int,
-) -> list[ExpandedDocument]:
-    """Expand supported CV files from a ZIP while enforcing safety budgets."""
+) -> Iterator[ExpandedDocument]:
+    """Yield supported CVs from a seekable ZIP one at a time with safety budgets."""
     if remaining_documents < 0 or remaining_bytes < 0:
         raise ValueError("remaining import budgets must be non-negative")
-    if len(data) > MAX_ARCHIVE_BYTES:
-        raise ArchiveTooLarge("ARCHIVE_TOO_LARGE")
 
     try:
-        archive = zipfile.ZipFile(io.BytesIO(data), "r")
+        archive = zipfile.ZipFile(fileobj, "r")
     except (zipfile.BadZipFile, zipfile.LargeZipFile) as exc:
         raise InvalidArchive("INVALID_ARCHIVE") from exc
 
-    expanded: list[ExpandedDocument] = []
+    expanded_documents = 0
     expanded_bytes = 0
 
     try:
@@ -308,7 +308,7 @@ def expand_zip(
             if extension not in {".pdf", ".docx"}:
                 continue
 
-            if len(expanded) + 1 > remaining_documents:
+            if expanded_documents + 1 > remaining_documents:
                 raise DocumentLimitExceeded("DOCUMENT_LIMIT_EXCEEDED")
             if info.file_size > MAX_DOCUMENT_BYTES:
                 raise DocumentTooLarge("DOCUMENT_TOO_LARGE")
@@ -325,15 +325,33 @@ def expand_zip(
             if len(payload) != info.file_size:
                 raise InvalidArchive("ARCHIVE_SIZE_MISMATCH")
 
-            expanded.append(
-                ExpandedDocument(
-                    filename=_basename(name),
-                    content_type=_content_type(name),
-                    data=payload,
-                )
-            )
+            expanded_documents += 1
             expanded_bytes += len(payload)
+            yield ExpandedDocument(
+                filename=_basename(name),
+                content_type=_content_type(name),
+                data=payload,
+            )
+            # The consumer has finished one child before requesting the next.
+            # Drop this generator-side reference before reading another payload.
+            del payload
     finally:
         archive.close()
 
-    return expanded
+
+def expand_zip(
+    data: bytes,
+    *,
+    remaining_documents: int,
+    remaining_bytes: int,
+) -> list[ExpandedDocument]:
+    """Compatibility wrapper that materializes ZIP children for legacy callers/tests."""
+    if len(data) > MAX_ARCHIVE_BYTES:
+        raise ArchiveTooLarge("ARCHIVE_TOO_LARGE")
+    return list(
+        iter_zip_documents(
+            io.BytesIO(data),
+            remaining_documents=remaining_documents,
+            remaining_bytes=remaining_bytes,
+        )
+    )

@@ -16,6 +16,7 @@ from app.infrastructure.bedrock.session import get_cached_session
 CANONICAL_BUCKET = os.getenv("S3_BUCKET", "ai-cv-rag-adrian-2026")
 CANONICAL_PREFIX = "documents"
 PRESIGNED_POST_EXPIRY_SECONDS = 3600
+STREAM_CHUNK_BYTES = 1024 * 1024
 
 PDF_CONTENT_TYPE = "application/pdf"
 DOCX_CONTENT_TYPE = (
@@ -92,6 +93,24 @@ def read_staging_object(key: str) -> bytes:
         Key=key,
     )
     return response["Body"].read()
+
+
+def download_staging_object_to_file(key: str, fileobj) -> int:
+    """Stream one staging object to a seekable file without materializing it in RAM."""
+    response = _s3_client().get_object(
+        Bucket=get_import_staging_bucket(),
+        Key=key,
+    )
+    body = response["Body"]
+    total = 0
+    while True:
+        chunk = body.read(STREAM_CHUNK_BYTES)
+        if not chunk:
+            break
+        fileobj.write(chunk)
+        total += len(chunk)
+    fileobj.seek(0)
+    return total
 
 
 def write_staging_child(
