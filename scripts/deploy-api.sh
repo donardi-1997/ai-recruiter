@@ -206,8 +206,8 @@ else
 fi
 
 CALLER=$(docker exec "$CONTAINER_NAME" python -c "
-from app import evaluation
-s = evaluation._bedrock_session
+from app.infrastructure.bedrock.session import get_cached_session
+s = get_cached_session()
 r = s.client('sts', region_name='us-east-2').get_caller_identity()
 print(f\"{r['Account']}|{r['Arn']}\")
 " 2>/dev/null || echo "FAIL")
