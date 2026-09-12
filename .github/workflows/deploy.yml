@@ -329,7 +329,7 @@ jobs:
             echo "FRONTEND_IMAGE_OK=\$FRONTEND_IMAGE"
 
             FRONTEND_HTML=""
-            for i in $(seq 1 10); do
+            for i in \$(seq 1 10); do
               FRONTEND_HTML=\$(curl -fS http://127.0.0.1/ 2>/dev/null || echo "FAIL")
               if echo "\$FRONTEND_HTML" | grep -q "root"; then
                 echo "FRONTEND_READY attempt=\$i"
