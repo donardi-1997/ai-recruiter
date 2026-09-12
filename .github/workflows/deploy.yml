@@ -319,7 +319,15 @@ jobs:
             fi
             echo "FRONTEND_IMAGE_OK=\$FRONTEND_IMAGE"
 
-            FRONTEND_HTML=\$(curl -fS http://127.0.0.1/ 2>/dev/null || echo "FAIL")
+            FRONTEND_HTML=""
+            for i in $(seq 1 10); do
+              FRONTEND_HTML=\$(curl -fS http://127.0.0.1/ 2>/dev/null || echo "FAIL")
+              if echo "\$FRONTEND_HTML" | grep -q "root"; then
+                echo "FRONTEND_READY attempt=\$i"
+                break
+              fi
+              sleep 1
+            done
             echo "\$FRONTEND_HTML" | grep -q "root"
             sudo docker exec ai-recruiter-web test -f /usr/share/nginx/html/index.html
             sudo docker exec ai-recruiter-web sh -c 'ls /usr/share/nginx/html/assets/index-*.js >/dev/null 2>&1'
