@@ -26,8 +26,8 @@ def get_engine():
     if _engine is None:
         _engine = create_engine(
             DATABASE_URL,
-            pool_size=int(os.getenv("PG_POOL_SIZE", "5")),
-            max_overflow=int(os.getenv("PG_MAX_OVERFLOW", "10")),
+            pool_size=int(os.getenv("PG_POOL_SIZE", "2")),
+            max_overflow=int(os.getenv("PG_MAX_OVERFLOW", "2")),
             pool_pre_ping=True,
             echo=os.getenv("SQL_ECHO", "").lower() in ("1", "true"),
         )
