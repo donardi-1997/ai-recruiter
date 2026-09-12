@@ -257,7 +257,7 @@ jobs:
             ECR_TAG="${{ github.sha }}" \
               IMPORT_STAGING_BUCKET="$IMPORT_STAGING_BUCKET" \
               IMPORT_QUEUE_URL="$IMPORT_QUEUE_URL" \
-              IMPORT_EVALUATION_CONCURRENCY="3" \
+              IMPORT_EVALUATION_CONCURRENCY="1" \
               sudo -E /tmp/ai-recruiter-deploy-api.sh
 
             API_STATUS=\$(sudo docker inspect ai-recruiter-api --format '{{.State.Status}}' 2>/dev/null || echo "MISSING")
@@ -282,7 +282,7 @@ jobs:
             ECR_TAG="${{ github.sha }}" \
               IMPORT_STAGING_BUCKET="$IMPORT_STAGING_BUCKET" \
               IMPORT_QUEUE_URL="$IMPORT_QUEUE_URL" \
-              IMPORT_EVALUATION_CONCURRENCY="3" \
+              IMPORT_EVALUATION_CONCURRENCY="1" \
               sudo -E /tmp/ai-recruiter-deploy-worker.sh
 
             WORKER_STATUS=\$(sudo docker inspect ai-recruiter-worker --format '{{.State.Status}}' 2>/dev/null || echo "MISSING")
@@ -324,6 +324,7 @@ jobs:
             sudo docker exec ai-recruiter-web test -f /usr/share/nginx/html/index.html
             sudo docker exec ai-recruiter-web sh -c 'ls /usr/share/nginx/html/assets/index-*.js >/dev/null 2>&1'
             echo "DEPLOYMENT_FRONTEND_OK"
+            sudo docker image prune -f
           REMOTE_DEPLOY
 
       - name: Invalidate CloudFront
