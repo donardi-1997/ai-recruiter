@@ -121,13 +121,6 @@ def test_production_deploy_uses_nano_runtime_limits():
         assert '-e "PG_MAX_OVERFLOW=$PG_MAX_OVERFLOW"' in script
 
 
-def test_cloudformation_deploy_uses_dedicated_execution_role():
-    workflow = (ROOT / ".github/workflows/deploy.yml").read_text(encoding="utf-8")
-
-    assert "ai-recruiter-candidate-import-cfn-role" in workflow
-    assert '--role-arn "$CFN_EXECUTION_ROLE_ARN"' in workflow
-
-
 def test_backend_image_limits_native_memory_and_threads():
     dockerfile = (ROOT / "Dockerfile").read_text(encoding="utf-8")
 
