@@ -29,8 +29,13 @@ configure_swap() {
     log "Existing swap already meets the 2G target"
   fi
 
-  if ! grep -Eq '^/swapfile[[:space:]]+none[[:space:]]+swap[[:space:]]' /etc/fstab; then
-    echo '/swapfile none swap sw 0 0' >> /etc/fstab
+  if [[ -f "$SWAPFILE" ]]; then
+    if ! grep -Eq '^/swapfile[[:space:]]+none[[:space:]]+swap[[:space:]]' /etc/fstab; then
+      echo '/swapfile none swap sw 0 0' >> /etc/fstab
+    fi
+  else
+    # Never leave an invalid boot-time swap entry when sufficient swap is supplied elsewhere.
+    sed -i '\|^/swapfile[[:space:]]\+none[[:space:]]\+swap[[:space:]]|d' /etc/fstab
   fi
 
   cat > /etc/sysctl.d/99-ai-recruiter-nano.conf <<'EOF'
@@ -58,11 +63,8 @@ wanted = {
         "max-file": "3",
     },
 }
-changed = False
 for key, value in wanted.items():
-    if config.get(key) != value:
-        config[key] = value
-        changed = True
+    config[key] = value
 
 rendered = json.dumps(config, indent=2, sort_keys=True) + "\n"
 if not path.exists() or path.read_text(encoding='utf-8') != rendered:
@@ -74,6 +76,39 @@ PY
     rm -f /run/ai-recruiter-docker-config-changed
     systemctl restart docker
   fi
+}
+
+configure_docker_prune_timer() {
+  log "Configuring weekly cleanup of unused Docker images older than 7 days"
+
+  cat > /etc/systemd/system/ai-recruiter-docker-prune.service <<'EOF'
+[Unit]
+Description=Prune old unused AI Recruiter Docker images
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/docker image prune -a -f --filter until=168h
+EOF
+
+  cat > /etc/systemd/system/ai-recruiter-docker-prune.timer <<'EOF'
+[Unit]
+Description=Weekly cleanup of old unused Docker images
+
+[Timer]
+OnCalendar=weekly
+Persistent=true
+RandomizedDelaySec=1h
+
+[Install]
+WantedBy=timers.target
+EOF
+
+  systemctl daemon-reload
+  systemctl enable --now ai-recruiter-docker-prune.timer >/dev/null
+  # Also reclaim already-stale images during initial Nano preparation.
+  docker image prune -a -f --filter until=168h >/dev/null || true
 }
 
 configure_postgres() {
@@ -103,6 +138,10 @@ print_verification() {
   log "Docker logging configuration"
   cat /etc/docker/daemon.json
 
+  echo
+  log "Docker cleanup timer"
+  systemctl --no-pager status ai-recruiter-docker-prune.timer || true
+
   if command -v psql >/dev/null 2>&1 && id postgres >/dev/null 2>&1; then
     echo
     log "PostgreSQL low-memory settings"
@@ -113,5 +152,6 @@ print_verification() {
 
 configure_swap
 configure_docker_logs
+configure_docker_prune_timer
 configure_postgres
 print_verification
