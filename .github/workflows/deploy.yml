@@ -167,6 +167,15 @@ jobs:
 
             aws ecr get-login-password --region "$AWS_REGION" | \
               sudo docker login --username AWS --password-stdin "$ECR_REGISTRY"
+
+            echo "DOCKER_DISK_BEFORE"
+            sudo docker system df
+            sudo docker container prune -f
+            sudo docker image prune -a -f
+            sudo docker builder prune -a -f
+            echo "DOCKER_DISK_AFTER"
+            sudo docker system df
+
             sudo docker pull "$ECR_REGISTRY/$ECR_BACKEND_REPO:${{ github.sha }}"
 
             for f in /opt/ai-recruiter/aws/config /usr/local/bin/aws_signing_helper /opt/ai-recruiter/rolesanywhere/client.crt /opt/ai-recruiter/rolesanywhere/client.key; do
