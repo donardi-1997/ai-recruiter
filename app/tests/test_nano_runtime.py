@@ -145,3 +145,23 @@ def test_deploy_prunes_dangling_images_after_runtime_verification():
     verification = workflow.index("DEPLOYMENT_FRONTEND_OK")
     prune = workflow.index("docker image prune -f")
     assert prune > verification
+
+
+def test_requirements_omit_unused_heavy_conversion_stack():
+    requirements = (ROOT / "requirements.txt").read_text(encoding="utf-8").casefold()
+
+    unused = (
+        "pdf2docx==",
+        "opencv-python-headless==",
+        "fonttools==",
+        "fire==",
+        "pandas==",
+        "pyarrow==",
+        "pillow==",
+        "pypdf2==",
+        "narwhals==",
+        "pytz==",
+        "tzdata==",
+    )
+    for package in unused:
+        assert package not in requirements
