@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import tempfile
 import threading
 import time
 import uuid
@@ -31,6 +32,7 @@ logger = logging.getLogger(__name__)
 MAX_RECEIVE_COUNT = 5
 MAX_BATCH_DOCUMENTS = 500
 MAX_BATCH_EXPANDED_BYTES = 1024 * 1024 * 1024
+ARCHIVE_SPOOL_MEMORY_BYTES = 8 * 1024 * 1024
 DEFAULT_INGESTION_POLL_SECONDS = 5
 DEFAULT_INGESTION_TIMEOUT_SECONDS = 30 * 60
 TRANSIENT_EVALUATION_ERRORS = (
@@ -203,7 +205,7 @@ def _batch_has_canonical_changes(db: Session, batch) -> bool:
 
 
 def _expand_archives_once(db: Session, batch) -> None:
-    """Persist ZIP children to staging and checkpoint the container exactly once."""
+    """Persist ZIP children incrementally and checkpoint the archive exactly once."""
     document_items = repository.list_items_for_worker(
         db,
         batch_id=batch.id,
@@ -225,43 +227,62 @@ def _expand_archives_once(db: Session, batch) -> None:
         db.commit()
 
         try:
-            payload = storage.read_staging_object(archive.staging_s3_key)
-            expanded = documents.expand_zip(
-                payload,
-                remaining_documents=max(0, MAX_BATCH_DOCUMENTS - discovered_documents),
-                remaining_bytes=max(0, MAX_BATCH_EXPANDED_BYTES - discovered_bytes),
-            )
+            created_documents = 0
+            created_bytes = 0
+            with tempfile.SpooledTemporaryFile(
+                max_size=ARCHIVE_SPOOL_MEMORY_BYTES,
+                mode="w+b",
+            ) as archive_file:
+                downloaded_bytes = storage.download_staging_object_to_file(
+                    archive.staging_s3_key,
+                    archive_file,
+                )
+                if downloaded_bytes > documents.MAX_ARCHIVE_BYTES:
+                    raise documents.ArchiveTooLarge("ARCHIVE_TOO_LARGE")
 
-            created_children = []
-            for child in expanded:
-                child_id = str(uuid.uuid4())
-                staging_key = storage.write_staging_child(
-                    batch_id=batch.id,
-                    item_id=child_id,
-                    filename=child.filename,
-                    data=child.data,
-                    content_type=child.content_type,
+                expanded = documents.iter_zip_documents(
+                    archive_file,
+                    remaining_documents=max(
+                        0,
+                        MAX_BATCH_DOCUMENTS - discovered_documents,
+                    ),
+                    remaining_bytes=max(
+                        0,
+                        MAX_BATCH_EXPANDED_BYTES - discovered_bytes,
+                    ),
                 )
-                child_item = repository.create_item(
-                    db,
-                    item_id=child_id,
-                    batch_id=batch.id,
-                    parent_item_id=archive.id,
-                    kind="DOCUMENT",
-                    original_filename=child.filename,
-                    staging_s3_key=staging_key,
-                    content_type=child.content_type,
-                    size_bytes=len(child.data),
-                )
-                child_item.status = "UPLOADED"
-                child_item.current_stage = "VALIDATING"
-                created_children.append(child_item)
+
+                for child in expanded:
+                    child_size = len(child.data)
+                    child_id = str(uuid.uuid4())
+                    staging_key = storage.write_staging_child(
+                        batch_id=batch.id,
+                        item_id=child_id,
+                        filename=child.filename,
+                        data=child.data,
+                        content_type=child.content_type,
+                    )
+                    child_item = repository.create_item(
+                        db,
+                        item_id=child_id,
+                        batch_id=batch.id,
+                        parent_item_id=archive.id,
+                        kind="DOCUMENT",
+                        original_filename=child.filename,
+                        staging_s3_key=staging_key,
+                        content_type=child.content_type,
+                        size_bytes=child_size,
+                    )
+                    child_item.status = "UPLOADED"
+                    child_item.current_stage = "VALIDATING"
+                    created_documents += 1
+                    created_bytes += child_size
 
             archive.status = "COMPLETED"
             archive.current_stage = "VALIDATING"
             archive.completed_at = datetime.now(timezone.utc)
-            discovered_documents += len(created_children)
-            discovered_bytes += sum(item.size_bytes for item in created_children)
+            discovered_documents += created_documents
+            discovered_bytes += created_bytes
             batch.total_items = discovered_documents
             db.commit()
         except Exception:
