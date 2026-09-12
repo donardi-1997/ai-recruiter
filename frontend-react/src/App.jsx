@@ -1,0 +1,158 @@
+import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
+import { useEffect, useState } from "react";
+
+import Login from "./auth/Login";
+
+import Dashboard from "./pages/Dashboard";
+import Jobs from "./pages/Jobs";
+import Candidates from "./pages/Candidates";
+import Ranking from "./pages/Ranking";
+import CandidateDetail from "./pages/CandidateDetail";
+
+import Layout from "./components/Layout";
+import Register from "./auth/Register";
+
+import api from "./api/client";
+import { ThemeProvider } from "./context/ThemeContext";
+
+// ============================================================
+// PROTECTED ROUTE
+// ============================================================
+
+function ProtectedRoute({ children }) {
+  const [checking, setChecking] = useState(true);
+  const [valid, setValid] = useState(false);
+
+  useEffect(() => {
+    async function checkAuth() {
+      let token = localStorage.getItem("access_token");
+
+      if (!token) {
+        try {
+          const response = await api.post("/auth/refresh");
+          token = response.data.access_token;
+          localStorage.setItem("access_token", token);
+          if (response.data.id_token) localStorage.setItem("id_token", response.data.id_token);
+        } catch {
+          setValid(false);
+          setChecking(false);
+          return;
+        }
+      }
+
+      try {
+        await api.get("/auth/me");
+
+        setValid(true);
+      } catch {
+        localStorage.removeItem("access_token");
+        localStorage.removeItem("id_token");
+        localStorage.removeItem("refresh_token");
+
+        setValid(false);
+      } finally {
+        setChecking(false);
+      }
+    }
+
+    checkAuth();
+  }, []);
+
+  if (checking) {
+    return <div className="session-loading"><span aria-hidden="true" />Validando acceso seguro…</div>;
+  }
+
+  if (!valid) {
+    return <Navigate to="/login" replace />;
+  }
+
+  return children;
+}
+
+// ============================================================
+// APP
+// ============================================================
+
+function App() {
+  return (
+    <ThemeProvider>
+      <BrowserRouter>
+        <Routes>
+        {/* ================================================== */}
+        {/* PUBLIC */}
+        {/* ================================================== */}
+
+        <Route path="/login" element={<Login />} />
+        <Route path="/register" element={<Register />} />
+
+        {/* ================================================== */}
+        {/* PROTECTED */}
+        {/* ================================================== */}
+
+        <Route
+          path="/dashboard"
+          element={
+            <ProtectedRoute>
+              <Layout>
+                <Dashboard />
+              </Layout>
+            </ProtectedRoute>
+          }
+        />
+
+        <Route
+          path="/jobs"
+          element={
+            <ProtectedRoute>
+              <Layout>
+                <Jobs />
+              </Layout>
+            </ProtectedRoute>
+          }
+        />
+
+        <Route
+          path="/candidates"
+          element={
+            <ProtectedRoute>
+              <Layout>
+                <Candidates />
+              </Layout>
+            </ProtectedRoute>
+          }
+        />
+
+        <Route
+          path="/ranking"
+          element={
+            <ProtectedRoute>
+              <Layout>
+                <Ranking />
+              </Layout>
+            </ProtectedRoute>
+          }
+        />
+
+        <Route
+          path="/candidates/:candidate_id"
+          element={
+            <ProtectedRoute>
+              <Layout>
+                <CandidateDetail />
+              </Layout>
+            </ProtectedRoute>
+          }
+        />
+
+        {/* ================================================== */}
+        {/* FALLBACK */}
+        {/* ================================================== */}
+
+        <Route path="*" element={<Navigate to="/login" replace />} />
+      </Routes>
+    </BrowserRouter>
+    </ThemeProvider>
+  );
+}
+
+export default App;

@@ -1,0 +1,33 @@
+{
+  "Comment": "Canary 90/10 — api.REEMPLAZAR_DOMAIN",
+  "Changes": [
+    {
+      "Action": "UPSERT",
+      "ResourceRecordSet": {
+        "Name": "api.REEMPLAZAR_DOMAIN",
+        "Type": "A",
+        "SetIdentifier": "old-backend",
+        "Weight": 90,
+        "AliasTarget": {
+          "DNSName": "REEMPLAZAR_ALB_DNS",
+          "HostedZoneId": "REEMPLAZAR_ALB_HOSTED_ZONE_ID",
+          "EvaluateTargetHealth": true
+        }
+      }
+    },
+    {
+      "Action": "UPSERT",
+      "ResourceRecordSet": {
+        "Name": "api.REEMPLAZAR_DOMAIN",
+        "Type": "A",
+        "SetIdentifier": "new-backend",
+        "Weight": 10,
+        "AliasTarget": {
+          "DNSName": "REEMPLAZAR_LIGHTSAIL_LB_DNS",
+          "HostedZoneId": "REEMPLAZAR_LIGHTSAIL_HOSTED_ZONE_ID",
+          "EvaluateTargetHealth": true
+        }
+      }
+    }
+  ]
+}

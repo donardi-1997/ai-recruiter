@@ -179,3 +179,9 @@ generated/
 # Local Bedrock test metadata
 *.metadata.json
 *.metadata.check.json
+
+# Reports (generated)
+reports/*.md
+
+# Docker
+docker-compose.override.yml
