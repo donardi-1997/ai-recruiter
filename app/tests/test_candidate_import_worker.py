@@ -291,23 +291,24 @@ def test_zip_expansion_is_checkpointed_and_resume_skips_reexpansion(
     child_writes = []
     canonical_writes = []
 
-    def _read(key):
-        if key == archive_key:
-            return b"zip-payload"
-        return b"candidate-payload"
+    def _download(key, fileobj):
+        assert key == archive_key
+        payload = b"zip-payload"
+        fileobj.write(payload)
+        fileobj.seek(0)
+        return len(payload)
 
-    def _expand(data, *, remaining_documents, remaining_bytes):
-        expand_calls.append((data, remaining_documents, remaining_bytes))
-        return [
-            ExpandedDocument(
-                filename="ana.pdf",
-                content_type="application/pdf",
-                data=b"candidate-payload",
-            )
-        ]
+    def _expand(fileobj, *, remaining_documents, remaining_bytes):
+        expand_calls.append((fileobj.read(), remaining_documents, remaining_bytes))
+        yield ExpandedDocument(
+            filename="ana.pdf",
+            content_type="application/pdf",
+            data=b"candidate-payload",
+        )
 
-    monkeypatch.setattr(storage, "read_staging_object", _read)
-    monkeypatch.setattr(documents, "expand_zip", _expand)
+    monkeypatch.setattr(storage, "download_staging_object_to_file", _download)
+    monkeypatch.setattr(storage, "read_staging_object", lambda key: b"candidate-payload")
+    monkeypatch.setattr(documents, "iter_zip_documents", _expand)
     monkeypatch.setattr(
         storage,
         "write_staging_child",
