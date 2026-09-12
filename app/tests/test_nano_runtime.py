@@ -130,7 +130,7 @@ def test_backend_image_limits_native_memory_and_threads():
     assert "ENV MKL_NUM_THREADS=1" in dockerfile
 
 
-def test_nano_host_script_configures_swap_logs_and_postgres():
+def test_nano_host_script_configures_swap_logs_postgres_and_disk_cleanup():
     path = ROOT / "scripts/configure-nano-host.sh"
     script = path.read_text(encoding="utf-8")
 
@@ -138,6 +138,7 @@ def test_nano_host_script_configures_swap_logs_and_postgres():
     assert "2G" in script
     assert "mkswap" in script
     assert "swapon" in script
+    assert '[[ -f "$SWAPFILE" ]]' in script
     assert "vm.swappiness=10" in script
     assert '"max-size": "10m"' in script
     assert '"max-file": "3"' in script
@@ -146,24 +147,17 @@ def test_nano_host_script_configures_swap_logs_and_postgres():
     assert "maintenance_work_mem" in script and "32MB" in script
     assert "effective_cache_size" in script and "192MB" in script
     assert "max_connections" in script and "20" in script
+    assert "ai-recruiter-docker-prune.timer" in script
+    assert "docker image prune -a -f --filter until=168h" in script
+    assert "OnCalendar=weekly" in script
+    assert "Persistent=true" in script
 
 
-def test_runtime_image_pruner_preserves_current_and_rollback_refs():
-    path = ROOT / "scripts/prune-runtime-images.sh"
-    script = path.read_text(encoding="utf-8")
-
-    subprocess.run(["bash", "-n", str(path)], check=True)
-    assert '"$tag" == "$CURRENT_SHA"' in script
-    assert '"$tag" == "$rollback_tag"' in script
-    assert 'docker rmi "$ref"' in script
-    assert "docker image prune -f" in script
-
-
-def test_deploy_prunes_images_only_after_runtime_verification():
+def test_deploy_prunes_dangling_images_only_after_runtime_verification():
     workflow = (ROOT / ".github/workflows/deploy.yml").read_text(encoding="utf-8")
 
     verification = workflow.index("DEPLOYMENT_FRONTEND_OK")
-    prune = workflow.index("prune-runtime-images.sh")
+    prune = workflow.index("docker image prune -f")
     assert prune > verification
 
 
