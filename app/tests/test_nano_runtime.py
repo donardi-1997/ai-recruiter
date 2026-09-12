@@ -2,7 +2,11 @@
 
 import inspect
 import io
+from pathlib import Path
 import zipfile
+
+
+ROOT = Path(__file__).resolve().parents[2]
 
 
 class RecordingBody:
@@ -97,3 +101,42 @@ def test_worker_archive_path_is_file_backed_and_incremental():
     assert "iter_zip_documents" in source
     assert "read_staging_object" not in source
     assert "documents.expand_zip" not in source
+
+
+def test_production_deploy_uses_nano_runtime_limits():
+    workflow = (ROOT / ".github/workflows/deploy.yml").read_text(encoding="utf-8")
+    api_script = (ROOT / "scripts/deploy-api.sh").read_text(encoding="utf-8")
+    worker_script = (ROOT / "scripts/deploy-worker.sh").read_text(encoding="utf-8")
+
+    assert 'IMPORT_EVALUATION_CONCURRENCY="1"' in workflow
+    assert 'PG_POOL_SIZE="2"' in workflow
+    assert 'PG_MAX_OVERFLOW="2"' in workflow
+    for script in (api_script, worker_script):
+        assert 'PG_POOL_SIZE="${PG_POOL_SIZE:-2}"' in script
+        assert 'PG_MAX_OVERFLOW="${PG_MAX_OVERFLOW:-2}"' in script
+        assert '-e "PG_POOL_SIZE=$PG_POOL_SIZE"' in script
+        assert '-e "PG_MAX_OVERFLOW=$PG_MAX_OVERFLOW"' in script
+
+
+def test_nano_host_script_configures_swap_logs_and_postgres():
+    script = (ROOT / "scripts/configure-nano-host.sh").read_text(encoding="utf-8")
+
+    assert "2G" in script
+    assert "mkswap" in script
+    assert "swapon" in script
+    assert "vm.swappiness=10" in script
+    assert '"max-size": "10m"' in script
+    assert '"max-file": "3"' in script
+    assert "shared_buffers" in script and "64MB" in script
+    assert "work_mem" in script and "2MB" in script
+    assert "maintenance_work_mem" in script and "32MB" in script
+    assert "effective_cache_size" in script and "192MB" in script
+    assert "max_connections" in script and "20" in script
+
+
+def test_deploy_prunes_dangling_images_after_runtime_verification():
+    workflow = (ROOT / ".github/workflows/deploy.yml").read_text(encoding="utf-8")
+
+    verification = workflow.index("DEPLOYMENT_FRONTEND_OK")
+    prune = workflow.index("docker image prune -f")
+    assert prune > verification
