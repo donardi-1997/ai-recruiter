@@ -3,6 +3,7 @@
 import inspect
 import io
 from pathlib import Path
+import subprocess
 import zipfile
 
 
@@ -107,19 +108,24 @@ def test_production_deploy_uses_nano_runtime_limits():
     workflow = (ROOT / ".github/workflows/deploy.yml").read_text(encoding="utf-8")
     db_source = (ROOT / "app/db.py").read_text(encoding="utf-8")
     api_script = (ROOT / "scripts/deploy-api.sh").read_text(encoding="utf-8")
+    worker_script = (ROOT / "scripts/deploy-worker.sh").read_text(encoding="utf-8")
 
     assert 'IMPORT_EVALUATION_CONCURRENCY="1"' in workflow
     assert 'os.getenv("PG_POOL_SIZE", "2")' in db_source
     assert 'os.getenv("PG_MAX_OVERFLOW", "2")' in db_source
-    assert 'PG_POOL_SIZE="${PG_POOL_SIZE:-2}"' in api_script
-    assert 'PG_MAX_OVERFLOW="${PG_MAX_OVERFLOW:-2}"' in api_script
-    assert '-e "PG_POOL_SIZE=$PG_POOL_SIZE"' in api_script
-    assert '-e "PG_MAX_OVERFLOW=$PG_MAX_OVERFLOW"' in api_script
+    for script in (api_script, worker_script):
+        assert 'IMPORT_EVALUATION_CONCURRENCY="${IMPORT_EVALUATION_CONCURRENCY:-1}"' in script
+        assert 'PG_POOL_SIZE="${PG_POOL_SIZE:-2}"' in script
+        assert 'PG_MAX_OVERFLOW="${PG_MAX_OVERFLOW:-2}"' in script
+        assert '-e "PG_POOL_SIZE=$PG_POOL_SIZE"' in script
+        assert '-e "PG_MAX_OVERFLOW=$PG_MAX_OVERFLOW"' in script
 
 
 def test_nano_host_script_configures_swap_logs_and_postgres():
-    script = (ROOT / "scripts/configure-nano-host.sh").read_text(encoding="utf-8")
+    path = ROOT / "scripts/configure-nano-host.sh"
+    script = path.read_text(encoding="utf-8")
 
+    subprocess.run(["bash", "-n", str(path)], check=True)
     assert "2G" in script
     assert "mkswap" in script
     assert "swapon" in script
