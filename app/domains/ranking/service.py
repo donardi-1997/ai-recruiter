@@ -198,6 +198,121 @@ def recalculate_ranking(
         release_job_lock(db, job_id)
 
 
+def materialize_ranking_from_evaluations(
+    db: Session,
+    *,
+    job_id: str,
+    owner_sub: str,
+    scope: str = "assigned",
+) -> dict[str, Any]:
+    """Build a ranking using only evaluations that are already persisted.
+
+    Unlike ``recalculate_ranking``, this entrypoint never evaluates candidates.
+    It is intended for asynchronous workflows that have completed evaluation
+    before entering the ranking stage.
+    """
+    job = jobs_repository.get_job(db, job_id, owner_sub=owner_sub)
+    if not job:
+        raise RankingJobNotFound()
+
+    acquired = acquire_job_lock(db, job_id)
+    if not acquired:
+        raise RankingAlreadyRunning()
+
+    try:
+        meta = ranking_repository.get_ranking_metadata(db, job_id)
+        prev_version = (meta.ranking_version if meta else 0) or 0
+        new_version = prev_version + 1
+
+        ranking = ranking_repository.upsert_ranking_metadata(
+            db,
+            job_id,
+            new_version,
+            mode="full",
+            scope=scope,
+        )
+
+        if scope == "all":
+            ranking_candidates = candidates_repository.list_candidates(
+                db,
+                owner_sub=owner_sub,
+            )
+        else:
+            ranking_candidates, _ = candidates_repository.list_candidates_for_job(
+                db,
+                job_id,
+                page=1,
+                page_size=100000,
+                owner_sub=owner_sub,
+            )
+
+        evaluated_count = 0
+        failed_count = 0
+        failures: list[dict[str, str]] = []
+        all_items: list[dict[str, Any]] = []
+
+        for candidate in ranking_candidates:
+            evaluation = evaluations_repository.get_evaluation_for_job_candidate(
+                db,
+                job_id,
+                candidate.id,
+            )
+
+            if evaluations_repository.is_evaluation_complete(evaluation):
+                effective_status = "COMPLETED"
+                score = float(evaluation.match_score)
+                evaluated_count += 1
+            elif evaluation and evaluation.status == "FAILED":
+                effective_status = "FAILED"
+                score = 0.0
+                failed_count += 1
+                failures.append({
+                    "candidate_id": candidate.id,
+                    "error": evaluation.error_message or "EVALUATION_FAILED",
+                })
+            else:
+                effective_status = "PENDING"
+                score = 0.0
+
+            all_items.append({
+                "candidate_id": candidate.id,
+                "candidate_name": candidate.name or "",
+                "score": score,
+                "status": effective_status,
+            })
+
+        all_items.sort(
+            key=lambda item: (
+                status_order.get(item["status"], 99),
+                -float(item["score"]),
+                item["candidate_name"].lower(),
+                item["candidate_id"],
+            )
+        )
+
+        for position, item in enumerate(all_items, start=1):
+            item["position"] = position
+
+        ranking_repository.insert_ranking_items(
+            db,
+            ranking_id=ranking.id,
+            items=all_items,
+        )
+
+        return {
+            "job_id": job_id,
+            "mode": "full",
+            "scope": scope,
+            "total_candidates": len(ranking_candidates),
+            "evaluated": evaluated_count,
+            "failed": failed_count,
+            "failures": failures,
+            "ranking_version": new_version,
+        }
+    finally:
+        release_job_lock(db, job_id)
+
+
 def build_latest_ranking(
     db: Session,
     *,

@@ -35,6 +35,66 @@ def create_candidate(
     return candidate
 
 
+def create_candidate_pending(
+    db: Session,
+    *,
+    name: str,
+    email: str | None = None,
+    metadata: dict | None = None,
+    owner_sub: str,
+) -> Candidate:
+    """Create a candidate inside the caller-owned transaction."""
+    candidate = Candidate(
+        name=name,
+        email=email,
+        metadata_=metadata or {},
+        owner_sub=owner_sub,
+    )
+    db.add(candidate)
+    db.flush()
+    return candidate
+
+
+def update_candidate_document_metadata(
+    db: Session,
+    candidate: Candidate,
+    *,
+    filename: str,
+    email: str | None,
+) -> Candidate:
+    """Update document metadata without replacing a different known email."""
+    metadata = dict(candidate.metadata_ or {})
+    metadata["filename"] = filename
+    candidate.metadata_ = metadata
+    if not candidate.email and email:
+        candidate.email = email
+    db.flush()
+    return candidate
+
+
+def ensure_candidate_assigned_to_job(
+    db: Session,
+    *,
+    job_id: str,
+    candidate_id: str,
+) -> JobCandidate:
+    """Idempotently assign a candidate to a job inside the caller transaction."""
+    existing = (
+        db.query(JobCandidate)
+        .filter(
+            JobCandidate.job_id == job_id,
+            JobCandidate.candidate_id == candidate_id,
+        )
+        .first()
+    )
+    if existing is not None:
+        return existing
+    link = JobCandidate(job_id=job_id, candidate_id=candidate_id)
+    db.add(link)
+    db.flush()
+    return link
+
+
 def delete_candidate(db: Session, candidate_id: str) -> bool:
     candidate = get_candidate(db, candidate_id)
     if not candidate:

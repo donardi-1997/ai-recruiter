@@ -1,42 +1,29 @@
 // eslint-disable-next-line no-unused-vars
-import React, { useEffect, useRef, useState } from "react";
+import React, { useCallback, useEffect, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 
 import api from "../api/client";
+import CandidateImportModal from "../features/candidate-import/CandidateImportModal.jsx";
 
 function Candidates() {
   const [candidates, setCandidates] = useState([]);
-
   const [jobs, setJobs] = useState([]);
-
   const [selectedJob, setSelectedJob] = useState({});
-  const [uploadJob, setUploadJob] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [selectedEvaluation, setSelectedEvaluation] = useState(null);
+  const [showCreateModal, setShowCreateModal] = useState(false);
   const [searchParams] = useSearchParams();
 
-  const [loading, setLoading] = useState(false);
+  const requestedJobId = searchParams.get("job_id") || "";
 
-  const [selectedEvaluation, setSelectedEvaluation] = useState(null);
-
-  const [showCreateModal, setShowCreateModal] = useState(false);
-  const [candidateFiles, setCandidateFiles] = useState([]);
-  const [creatingCandidate, setCreatingCandidate] = useState(false);
-  const [uploadProgress, setUploadProgress] = useState(null);
-  const [uploadSummary, setUploadSummary] = useState(null);
-  const [fileError, setFileError] = useState("");
-  const [isDraggingFiles, setIsDraggingFiles] = useState(false);
-  const [showAllFiles, setShowAllFiles] = useState(false);
-  const fileInputRef = useRef(null);
-  const folderInputRef = useRef(null);
-  const UPLOAD_BATCH_SIZE = 25;
-
-  async function loadData() {
+  const loadData = useCallback(async () => {
     try {
-      const candidatesResponse = await api.get("/candidates");
-
-      const jobsResponse = await api.get("/jobs");
+      const [candidatesResponse, jobsResponse] = await Promise.all([
+        api.get("/candidates"),
+        api.get("/jobs"),
+      ]);
 
       const candidatesData = candidatesResponse.data;
-
       const jobsData = jobsResponse.data;
 
       setCandidates(
@@ -44,177 +31,56 @@ function Candidates() {
           ? candidatesData
           : candidatesData.candidates || [],
       );
-
       setJobs(Array.isArray(jobsData) ? jobsData : jobsData.jobs || []);
     } catch (error) {
       console.error("ERROR LOADING DATA:", error);
     }
-  }
-
-  function openCreateCandidateModal() {
-    setFileError("");
-    setUploadSummary(null);
-    setUploadProgress(null);
-    setShowAllFiles(false);
-
-    // UX: si solo hay una vacante, preseleccionarla.
-    if (!uploadJob && jobs.length === 1) {
-      setUploadJob(jobs[0].job_id);
-    }
-
-    setShowCreateModal(true);
-  }
-
-  async function createCandidate(e) {
-    e.preventDefault();
-    if (!candidateFiles.length) {
-      setFileError("Selecciona al menos un archivo PDF.");
-      return;
-    }
-    if (!uploadJob) {
-      setFileError("Debes iniciar la carga desde una vacante.");
-      return;
-    }
-
-    try {
-      setCreatingCandidate(true);
-      const summary = {
-        processed: 0,
-        successful: 0,
-        failed: 0,
-        total: candidateFiles.length,
-        created: 0,
-        candidates: [],
-        errors: [],
-      };
-      for (let start = 0; start < candidateFiles.length; start += UPLOAD_BATCH_SIZE) {
-        const batch = candidateFiles.slice(start, start + UPLOAD_BATCH_SIZE);
-        const formData = new FormData();
-        batch.forEach((file) => formData.append("files", file, file.name));
-        const response = await api.post("/candidates/bulk", formData, {
-          headers: { "Content-Type": undefined },
-        });
-        const result = response.data;
-        summary.processed += result.processed ?? result.total ?? batch.length;
-        summary.successful += result.successful ?? result.created ?? 0;
-        summary.failed += result.failed ?? result.errors?.length ?? 0;
-        summary.created = summary.successful;
-        summary.candidates.push(...(result.candidates || []));
-        summary.errors.push(...(result.errors || []));
-        setUploadProgress({
-          current: Math.min(summary.processed, candidateFiles.length),
-          total: candidateFiles.length,
-        });
-      }
-      if (uploadJob && summary.candidates.length > 0) {
-        await api.post(`/jobs/${uploadJob}/candidates`, {
-          candidate_ids: summary.candidates.map((candidate) => candidate.candidate_id),
-        });
-      }
-      setUploadSummary(summary);
-      setCandidateFiles([]);
-      setShowCreateModal(false);
-      setUploadJob("");
-      await loadData();
-    } catch (error) {
-      console.error("CREATE CANDIDATE ERROR:", error.response?.data || error);
-
-      const detail = error.response?.data?.detail;
-      const message = Array.isArray(detail)
-        ? detail.map((item) => item.msg).join(" ")
-        : detail || "No fue posible agregar los candidatos.";
-      setFileError(
-        `${error.response?.status ? `${error.response.status}: ` : ""}${message}`,
-      );
-    } finally {
-      setCreatingCandidate(false);
-    }
-  }
-
-  function handleCandidateFilesChange(event) {
-    addCandidateFiles(Array.from(event.target.files || []));
-    event.target.value = "";
-  }
-
-  function addCandidateFiles(selectedFiles) {
-    const invalidFile = selectedFiles.find(
-      (file) => !file.name.toLowerCase().endsWith(".pdf"),
-    );
-    if (invalidFile) {
-      setFileError(`${invalidFile.name} no es un archivo PDF.`);
-    }
-    const validFiles = selectedFiles.filter(
-      (file) =>
-        file.name.toLowerCase().endsWith(".pdf") &&
-        file.size > 0 &&
-        file.size <= 15 * 1024 * 1024,
-    );
-    const existing = new Set(candidateFiles.map((file) => `${file.name}:${file.size}`));
-    const uniqueFiles = validFiles.filter((file) => {
-      const key = `${file.name}:${file.size}`;
-      if (existing.has(key)) return false;
-      existing.add(key);
-      return true;
-    });
-    if (selectedFiles.some((file) => file.size === 0)) {
-      setFileError("Los archivos vacíos no pueden procesarse.");
-    } else if (selectedFiles.some((file) => file.size > 15 * 1024 * 1024)) {
-      setFileError("Cada archivo debe pesar máximo 15 MB.");
-    } else if (!invalidFile) {
-      setFileError("");
-    }
-    setCandidateFiles((current) => [...current, ...uniqueFiles]);
-  }
-
-  function removeCandidateFile(index) {
-    setCandidateFiles((current) => current.filter((_, fileIndex) => fileIndex !== index));
-  }
-
-  function handleDrop(event) {
-    event.preventDefault();
-    setIsDraggingFiles(false);
-    if (!creatingCandidate) addCandidateFiles(Array.from(event.dataTransfer.files || []));
-  }
+  }, []);
 
   useEffect(() => {
     // The initial request synchronizes this view with the API.
     // eslint-disable-next-line react-hooks/set-state-in-effect
     loadData();
-    const jobId = searchParams.get("job_id");
-    if (jobId) {
-      setUploadJob(jobId);
-      setShowCreateModal(true);
-    }
-  }, [searchParams]);
+  }, [loadData]);
+
+  useEffect(() => {
+    if (!requestedJobId) return;
+    // A job deep link intentionally opens the durable import surface.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setShowCreateModal(true);
+  }, [requestedJobId]);
+
+  function openCreateCandidateModal() {
+    setShowCreateModal(true);
+  }
+
+  function closeCreateCandidateModal() {
+    setShowCreateModal(false);
+    void loadData();
+  }
 
   async function evaluate(candidateId) {
     const jobId = selectedJob[candidateId];
 
     if (!jobId) {
       alert("Seleccione una vacante");
-
       return;
     }
 
     try {
       setLoading(true);
-
       const response = await api.post(
         `/candidates/${candidateId}/evaluate-job`,
-        {
-          job_id: jobId,
-        },
+        { job_id: jobId },
       );
 
       console.log("EVALUATION RESPONSE:", response.data);
-
       setSelectedEvaluation({
         candidateId,
         evaluation: response.data,
       });
     } catch (error) {
       console.error("EVALUATION ERROR:", error.response?.data || error);
-
       alert("Error evaluando candidato");
     } finally {
       setLoading(false);
@@ -227,13 +93,19 @@ function Candidates() {
       alert("Seleccione una vacante");
       return;
     }
+
     try {
       setLoading(true);
-      await api.post(`/jobs/${jobId}/candidates`, { candidate_ids: [candidateId] });
+      await api.post(`/jobs/${jobId}/candidates`, {
+        candidate_ids: [candidateId],
+      });
       alert("Candidato asignado a la vacante.");
       await loadData();
     } catch (error) {
-      alert(error.response?.data?.detail || "No fue posible asignar el candidato.");
+      alert(
+        error.response?.data?.detail ||
+          "No fue posible asignar el candidato.",
+      );
     } finally {
       setLoading(false);
     }
@@ -244,17 +116,11 @@ function Candidates() {
       const response = await api.get(
         `/candidates/${candidate.candidate_id}/download`,
       );
-
       const downloadUrl = response.data.download_url;
-
-      if (!downloadUrl) {
-        throw new Error("No se recibió URL de descarga");
-      }
-
+      if (!downloadUrl) throw new Error("No se recibió URL de descarga");
       window.location.assign(downloadUrl);
     } catch (error) {
       console.error("DOWNLOAD ERROR:", error.response?.data || error);
-
       alert("No fue posible descargar el CV");
     }
   }
@@ -263,38 +129,30 @@ function Candidates() {
     const confirmed = window.confirm(
       `¿Seguro que deseas eliminar al candidato "${candidate.name}"?\n\nTambién se eliminarán sus evaluaciones y el CV almacenado.`,
     );
-
-    if (!confirmed) {
-      return;
-    }
+    if (!confirmed) return;
 
     try {
       await api.delete(`/candidates/${candidate.candidate_id}`);
-
-      // Eliminarlo inmediatamente de la pantalla
-      setCandidates((prev) =>
-        prev.filter((item) => item.candidate_id !== candidate.candidate_id),
+      setCandidates((current) =>
+        current.filter(
+          (item) => item.candidate_id !== candidate.candidate_id,
+        ),
       );
 
-      // Limpiar evaluación seleccionada si corresponde
       if (selectedEvaluation?.candidateId === candidate.candidate_id) {
         setSelectedEvaluation(null);
       }
 
-      // Limpiar estado de selección
-      setSelectedJob((prev) => {
-        const updated = { ...prev };
-
+      setSelectedJob((current) => {
+        const updated = { ...current };
         delete updated[candidate.candidate_id];
-
         return updated;
       });
-
     } catch (error) {
       console.error("DELETE CANDIDATE ERROR:", error.response?.data || error);
-
       alert(
-        error.response?.data?.detail || "No fue posible eliminar el candidato",
+        error.response?.data?.detail ||
+          "No fue posible eliminar el candidato",
       );
     }
   }
@@ -313,79 +171,57 @@ function Candidates() {
       setSelectedJob({});
       setSelectedEvaluation(null);
       if (result.failed) {
-        window.alert(`${result.deleted} candidatos eliminados. ${result.failed} no pudieron eliminarse.`);
+        window.alert(
+          `${result.deleted} candidatos eliminados. ${result.failed} no pudieron eliminarse.`,
+        );
       }
     } catch (error) {
       console.error("DELETE ALL CANDIDATES ERROR:", error.response?.data || error);
-      window.alert(error.response?.data?.detail || "No fue posible eliminar los candidatos.");
+      window.alert(
+        error.response?.data?.detail ||
+          "No fue posible eliminar los candidatos.",
+      );
     } finally {
       setLoading(false);
     }
   }
 
   function getDisplayFilename(candidate) {
+    if (candidate.filename) return candidate.filename;
     if (candidate.name) {
       const cleanName = candidate.name
         .trim()
         .replace(/\s+/g, "_")
         .replace(/[^\wáéíóúÁÉÍÓÚñÑ-]/g, "");
-
       return `${cleanName}_CV.pdf`;
     }
-
-    return candidate.filename || "CV.pdf";
+    return "CV.pdf";
   }
 
-  function closeModal() {
+  function closeEvaluationModal() {
     setSelectedEvaluation(null);
   }
 
   function getRecommendationLabel(recommendation) {
-    if (recommendation === "STRONG_MATCH") {
-      return "Excelente coincidencia";
-    }
-
-    if (recommendation === "GOOD_MATCH") {
-      return "Buena coincidencia";
-    }
-
-    if (recommendation === "PARTIAL_MATCH") {
-      return "Coincidencia parcial";
-    }
-
-    if (recommendation === "LOW_MATCH") {
-      return "Baja coincidencia";
-    }
-
-    if (recommendation === "EVALUATION_FAILED") {
-      return "Evaluación fallida";
-    }
-
-    if (recommendation === "PENDING") {
-      return "Pendiente";
-    }
-
+    if (recommendation === "STRONG_MATCH") return "Excelente coincidencia";
+    if (recommendation === "GOOD_MATCH") return "Buena coincidencia";
+    if (recommendation === "PARTIAL_MATCH") return "Coincidencia parcial";
+    if (recommendation === "LOW_MATCH") return "Baja coincidencia";
+    if (recommendation === "EVALUATION_FAILED") return "Evaluación fallida";
+    if (recommendation === "PENDING") return "Pendiente";
     return "Sin clasificación";
   }
 
   function badgeStyle(recommendation) {
     if (recommendation === "STRONG_MATCH") {
-      return {
-        background: "#dcfce7",
-        color: "#166534",
-      };
+      return { background: "#dcfce7", color: "#166534" };
     }
-
     if (
       recommendation === "GOOD_MATCH" ||
       recommendation === "PARTIAL_MATCH"
     ) {
-      return {
-        background: "#fef3c7",
-        color: "#92400e",
-      };
+      return { background: "#fef3c7", color: "#92400e" };
     }
-
     if (recommendation === "EVALUATION_FAILED") {
       return {
         background: "#fef2f2",
@@ -393,17 +229,15 @@ function Candidates() {
         border: "1px solid #fecaca",
       };
     }
-
-    return {
-      background: "#fee2e2",
-      color: "#991b1b",
-    };
+    return { background: "#fee2e2", color: "#991b1b" };
   }
 
   const selectedEvaluationFailed =
     selectedEvaluation?.evaluation?.status === "FAILED" ||
-    selectedEvaluation?.evaluation?.recommendation ===
-      "EVALUATION_FAILED";
+    selectedEvaluation?.evaluation?.recommendation === "EVALUATION_FAILED";
+
+  const initialImportJobId =
+    requestedJobId || (jobs.length === 1 ? jobs[0].job_id : "");
 
   return (
     <div className="page candidate-page">
@@ -419,7 +253,6 @@ function Candidates() {
       >
         <div>
           <h1>Candidatos</h1>
-
           <p>Gestión de CVs con Inteligencia Artificial</p>
         </div>
 
@@ -436,10 +269,19 @@ function Candidates() {
       <div className="section-heading candidate-section-heading">
         <div>
           <h2>Candidatos registrados</h2>
-          <p>{candidates.length} {candidates.length === 1 ? "perfil disponible" : "perfiles disponibles"}</p>
+          <p>
+            {candidates.length}{" "}
+            {candidates.length === 1
+              ? "perfil disponible"
+              : "perfiles disponibles"}
+          </p>
         </div>
         {candidates.length > 0 && (
-          <button className="btn btn-danger" onClick={deleteAllCandidates} disabled={loading}>
+          <button
+            className="btn btn-danger"
+            onClick={deleteAllCandidates}
+            disabled={loading}
+          >
             🗑 Eliminar todos
           </button>
         )}
@@ -464,25 +306,14 @@ function Candidates() {
             >
               <div>
                 <h2>{candidate.name}</h2>
-
-                <p
-                  className="muted"
-                  style={{
-                    marginTop: "6px",
-                    fontSize: "14px",
-                  }}
-                >
+                <p className="muted" style={{ marginTop: "6px", fontSize: "14px" }}>
                   Candidato registrado
                 </p>
               </div>
 
               <div
                 className="candidate-actions"
-                style={{
-                  display: "flex",
-                  gap: "10px",
-                  flexWrap: "wrap",
-                }}
+                style={{ display: "flex", gap: "10px", flexWrap: "wrap" }}
               >
                 <button
                   className="btn btn-secondary"
@@ -490,7 +321,6 @@ function Candidates() {
                 >
                   📄 Descargar CV
                 </button>
-
                 <button
                   className="btn btn-danger"
                   onClick={() => deleteCandidate(candidate)}
@@ -521,28 +351,21 @@ function Candidates() {
               >
                 Archivo
               </span>
-
               <strong>{getDisplayFilename(candidate)}</strong>
             </div>
 
-            <div
-              className="controls"
-              style={{
-                marginTop: "20px",
-              }}
-            >
+            <div className="controls" style={{ marginTop: "20px" }}>
               <select
                 className="select"
                 value={selectedJob[candidate.candidate_id] || ""}
-                onChange={(e) =>
-                  setSelectedJob((prev) => ({
-                    ...prev,
-                    [candidate.candidate_id]: e.target.value,
+                onChange={(event) =>
+                  setSelectedJob((current) => ({
+                    ...current,
+                    [candidate.candidate_id]: event.target.value,
                   }))
                 }
               >
                 <option value="">Seleccione vacante</option>
-
                 {jobs.map((job) => (
                   <option key={job.job_id} value={job.job_id}>
                     {job.title}
@@ -569,214 +392,32 @@ function Candidates() {
         ))
       )}
 
-      {/* =====================================================
-       MODAL CREAR CANDIDATO
-       ===================================================== */}
-
       {showCreateModal && (
-        <div
-          className="modal-overlay"
-          onKeyDown={(event) => {
-            if (event.key === "Escape" && !creatingCandidate) setShowCreateModal(false);
-          }}
-          onClick={() => {
-            if (!creatingCandidate) {
-              setShowCreateModal(false);
-            }
-          }}
-        >
-          <div
-            className="modal candidate-upload-modal"
-            onClick={(e) => e.stopPropagation()}
-            style={{
-              maxWidth: "520px",
-            }}
-          >
-            <div className="modal-header">
-              <div>
-                <h2>Agregar candidatos</h2>
-
-                <p
-                  className="muted"
-                  style={{
-                    marginTop: "6px",
-                  }}
-                >
-                  Sube uno o varios CVs. AI Recruiter identificará automáticamente a cada candidato y extraerá su información.
-                </p>
-              </div>
-
-              <button
-                className="btn btn-close"
-                onClick={() => setShowCreateModal(false)}
-                disabled={creatingCandidate}
-              >
-                <span aria-hidden="true">✕</span>
-              </button>
-            </div>
-
-            <form onSubmit={createCandidate}>
-              <div className="form-group" style={{ marginBottom: "16px" }}>
-                <label htmlFor="upload-job">Asignar estos candidatos a una vacante</label>
-                <select id="upload-job" className="select" value={uploadJob} onChange={(event) => setUploadJob(event.target.value)} disabled={creatingCandidate}>
-                  {!uploadJob && <option value="">Selecciona una vacante</option>}
-                  {jobs.map((job) => <option key={job.job_id} value={job.job_id}>{job.title}</option>)}
-                </select>
-                <small className="muted">Solo los candidatos asignados aparecen en el ranking de esa vacante.</small>
-              </div>
-              <div className={`candidate-dropzone ${isDraggingFiles ? "is-dragging" : ""} ${creatingCandidate ? "is-disabled" : ""}`}
-                role="button"
-                tabIndex={0}
-                aria-label="Agregar archivos PDF"
-                onClick={() => fileInputRef.current?.click()}
-                onKeyDown={(event) => {
-                  if ((event.key === "Enter" || event.key === " ") && !creatingCandidate) {
-                    event.preventDefault();
-                    fileInputRef.current?.click();
-                  }
-                }}
-                onDragOver={(event) => { event.preventDefault(); setIsDraggingFiles(true); }}
-                onDragLeave={() => setIsDraggingFiles(false)}
-                onDrop={handleDrop}
-              >
-                <span className="candidate-dropzone-icon" aria-hidden="true">↑</span>
-                <strong>Arrastra tus CVs aquí</strong>
-                <span>o selecciona archivos desde tu equipo</span>
-                <button type="button" className="btn btn-primary" onClick={(event) => {
-                  event.stopPropagation();
-                  fileInputRef.current?.click();
-                }} disabled={creatingCandidate}>Seleccionar PDFs</button>
-                <small>Solo archivos PDF · Puedes seleccionar varios</small>
-                <input
-                  ref={fileInputRef}
-                  type="file"
-                  accept="application/pdf,.pdf"
-                  multiple
-                  onChange={handleCandidateFilesChange}
-                  className="visually-hidden-input"
-                />
-              </div>
-              <div className="candidate-folder-action">
-                <span>¿Tienes muchos CVs?</span>
-                <button type="button" className="btn-link" onClick={() => folderInputRef.current?.click()} disabled={creatingCandidate}>
-                  Seleccionar carpeta
-                </button>
-                <input
-                  ref={folderInputRef}
-                  type="file"
-                  accept="application/pdf,.pdf"
-                  multiple
-                  webkitdirectory=""
-                  directory=""
-                  onChange={handleCandidateFilesChange}
-                  aria-label="Seleccionar carpeta con CVs"
-                  className="visually-hidden-input"
-                />
-              </div>
-              {fileError && <p className="candidate-upload-error" role="alert">{fileError}</p>}
-              {candidateFiles.length > 0 && (
-                <div className="candidate-file-list">
-                  <strong>{candidateFiles.length} archivos seleccionados</strong>
-                  {(showAllFiles ? candidateFiles : candidateFiles.slice(0, 5)).map((file, index) => (
-                    <div className="candidate-file-row" key={`${file.name}:${file.size}`}>
-                      <span aria-hidden="true">✓</span>
-                      <span title={file.name}>{file.name}</span>
-                      <small>{Math.round(file.size / 1024)} KB</small>
-                      <button type="button" aria-label={`Quitar ${file.name}`} onClick={() => removeCandidateFile(index)} disabled={creatingCandidate}>×</button>
-                    </div>
-                  ))}
-                  {candidateFiles.length > 5 && <button type="button" className="btn-link" onClick={() => setShowAllFiles((value) => !value)}>
-                    {showAllFiles ? "Contraer lista" : `Ver los ${candidateFiles.length - 5} restantes`}
-                  </button>}
-                </div>
-              )}
-                {uploadProgress && (
-                  <div className="candidate-upload-progress" aria-live="polite">
-                    <strong>Procesando candidatos</strong>
-                    <span>{uploadProgress.current} de {uploadProgress.total}</span>
-                    <progress value={uploadProgress.current} max={uploadProgress.total} />
-                  </div>
-                )}
-
-              <div
-                style={{
-                  display: "flex",
-                  justifyContent: "flex-end",
-                  gap: "10px",
-                }}
-              >
-                <button
-                  type="button"
-                  className="btn btn-close"
-                  onClick={() => setShowCreateModal(false)}
-                  disabled={creatingCandidate}
-                >
-                  Cancelar
-                </button>
-
-                <button
-                  type="submit"
-                  className="btn btn-primary"
-                  disabled={creatingCandidate || !candidateFiles.length}
-                >
-                  {creatingCandidate ? "Procesando CVs..." : candidateFiles.length === 1 ? "Subir candidato" : `Subir ${candidateFiles.length || ""} candidatos`}
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
+        <CandidateImportModal
+          open
+          jobs={jobs}
+          initialJobId={initialImportJobId}
+          onClose={closeCreateCandidateModal}
+        />
       )}
-
-      {uploadSummary && (
-        <div className="card" style={{ marginTop: "20px" }}>
-          <h3>{uploadSummary.total} archivos seleccionados</h3>
-          <p>{uploadSummary.created} candidatos creados · {uploadSummary.failed} errores</p>
-          {uploadSummary.candidates?.map((candidate) => (
-            <p key={candidate.candidate_id}>
-              ✅ {candidate.name} · {candidate.original_filename} · {candidate.ingestion_status || "STARTING"}
-            </p>
-          ))}
-          {uploadSummary.errors?.map((error) => (
-            <p key={error.original_filename} style={{ color: "#b91c1c" }}>
-              ❌ {error.original_filename} — {error.error}
-            </p>
-          ))}
-        </div>
-      )}
-
-      {/* =====================================================
-          MODAL EVALUACIÓN
-      ===================================================== */}
 
       {selectedEvaluation && (
-        <div className="modal-overlay" onClick={closeModal}>
-          <div className="modal" onClick={(e) => e.stopPropagation()}>
+        <div className="modal-overlay" onClick={closeEvaluationModal}>
+          <div className="modal" onClick={(event) => event.stopPropagation()}>
             <div className="modal-header">
               <div>
                 <h2>Resultado de evaluación IA</h2>
-
-                <p
-                  className="muted"
-                  style={{
-                    marginTop: "6px",
-                  }}
-                >
+                <p className="muted" style={{ marginTop: "6px" }}>
                   Evaluación del candidato
                 </p>
               </div>
-
-              <button className="btn btn-close" onClick={closeModal}>
+              <button className="btn btn-close" onClick={closeEvaluationModal}>
                 ✕
               </button>
             </div>
 
             {selectedEvaluationFailed ? (
-              <div
-                style={{
-                  textAlign: "center",
-                  padding: "20px 0",
-                }}
-              >
+              <div style={{ textAlign: "center", padding: "20px 0" }}>
                 <div
                   className="badge"
                   style={{
@@ -789,22 +430,13 @@ function Candidates() {
                 </div>
               </div>
             ) : (
-              <div
-                style={{
-                  textAlign: "center",
-                  padding: "20px 0",
-                }}
-              >
+              <div style={{ textAlign: "center", padding: "20px 0" }}>
                 <div className="score">
                   {selectedEvaluation.evaluation.match_score}%
                 </div>
-
                 <div
                   className="score-bar"
-                  style={{
-                    maxWidth: "400px",
-                    margin: "0 auto",
-                  }}
+                  style={{ maxWidth: "400px", margin: "0 auto" }}
                 >
                   <div
                     className="score-fill"
@@ -813,14 +445,11 @@ function Candidates() {
                     }}
                   />
                 </div>
-
                 <div
                   className="badge"
                   style={{
                     marginTop: "18px",
-                    ...badgeStyle(
-                      selectedEvaluation.evaluation.recommendation,
-                    ),
+                    ...badgeStyle(selectedEvaluation.evaluation.recommendation),
                   }}
                 >
                   {getRecommendationLabel(
@@ -832,13 +461,7 @@ function Candidates() {
 
             <div className="result">
               <h3>Resumen</h3>
-
-              <p
-                style={{
-                  marginTop: "10px",
-                  lineHeight: "1.6",
-                }}
-              >
+              <p style={{ marginTop: "10px", lineHeight: "1.6" }}>
                 {selectedEvaluation.evaluation.summary}
               </p>
             </div>
@@ -846,14 +469,11 @@ function Candidates() {
             <div className="columns">
               <div>
                 <h3 className="section-title">✅ Fortalezas</h3>
-
                 {selectedEvaluation.evaluation.strengths?.length ? (
                   <ul className="list">
-                    {selectedEvaluation.evaluation.strengths.map(
-                      (item, index) => (
-                        <li key={index}>{item}</li>
-                      ),
-                    )}
+                    {selectedEvaluation.evaluation.strengths.map((item, index) => (
+                      <li key={index}>{item}</li>
+                    ))}
                   </ul>
                 ) : (
                   <p className="muted">Sin datos</p>
@@ -862,7 +482,6 @@ function Candidates() {
 
               <div>
                 <h3 className="section-title">❌ Gaps</h3>
-
                 {selectedEvaluation.evaluation.gaps?.length ? (
                   <ul className="list">
                     {selectedEvaluation.evaluation.gaps.map((item, index) => (
@@ -883,7 +502,7 @@ function Candidates() {
                 gap: "10px",
               }}
             >
-              <button className="btn btn-close" onClick={closeModal}>
+              <button className="btn btn-close" onClick={closeEvaluationModal}>
                 Cerrar
               </button>
             </div>

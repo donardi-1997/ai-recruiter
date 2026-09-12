@@ -27,7 +27,14 @@ from app.infrastructure.bedrock.prompts import (
     REQUIREMENT_EXTRACTION_PROMPT,
 )
 from app.infrastructure.bedrock.retriever import retrieve_candidate
-from app.infrastructure.bedrock.evaluator import evaluate_candidate
+
+
+def evaluate_candidate(*args, **kwargs):
+    """Lazily load the evaluator to keep package initialization cycle-free."""
+    from app.infrastructure.bedrock.evaluator import evaluate_candidate as _evaluate_candidate
+
+    return _evaluate_candidate(*args, **kwargs)
+
 
 __all__ = [
     # Config
@@ -55,6 +62,6 @@ __all__ = [
     "REQUIREMENT_EXTRACTION_PROMPT",
     # Retriever
     "retrieve_candidate",
-    # Evaluator
+    # Evaluator (lazy)
     "evaluate_candidate",
 ]
