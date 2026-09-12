@@ -277,6 +277,8 @@ def _expand_archives_once(db: Session, batch) -> None:
                     child_item.current_stage = "VALIDATING"
                     created_documents += 1
                     created_bytes += child_size
+                    # Drop the caller-side reference before requesting another child.
+                    del child
 
             archive.status = "COMPLETED"
             archive.current_stage = "VALIDATING"
