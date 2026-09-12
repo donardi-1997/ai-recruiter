@@ -121,6 +121,15 @@ def test_production_deploy_uses_nano_runtime_limits():
         assert '-e "PG_MAX_OVERFLOW=$PG_MAX_OVERFLOW"' in script
 
 
+def test_backend_image_limits_native_memory_and_threads():
+    dockerfile = (ROOT / "Dockerfile").read_text(encoding="utf-8")
+
+    assert "ENV MALLOC_ARENA_MAX=2" in dockerfile
+    assert "ENV OMP_NUM_THREADS=1" in dockerfile
+    assert "ENV OPENBLAS_NUM_THREADS=1" in dockerfile
+    assert "ENV MKL_NUM_THREADS=1" in dockerfile
+
+
 def test_nano_host_script_configures_swap_logs_and_postgres():
     path = ROOT / "scripts/configure-nano-host.sh"
     script = path.read_text(encoding="utf-8")
@@ -139,11 +148,22 @@ def test_nano_host_script_configures_swap_logs_and_postgres():
     assert "max_connections" in script and "20" in script
 
 
-def test_deploy_prunes_dangling_images_after_runtime_verification():
+def test_runtime_image_pruner_preserves_current_and_rollback_refs():
+    path = ROOT / "scripts/prune-runtime-images.sh"
+    script = path.read_text(encoding="utf-8")
+
+    subprocess.run(["bash", "-n", str(path)], check=True)
+    assert '"$tag" == "$CURRENT_SHA"' in script
+    assert '"$tag" == "$rollback_tag"' in script
+    assert 'docker rmi "$ref"' in script
+    assert "docker image prune -f" in script
+
+
+def test_deploy_prunes_images_only_after_runtime_verification():
     workflow = (ROOT / ".github/workflows/deploy.yml").read_text(encoding="utf-8")
 
     verification = workflow.index("DEPLOYMENT_FRONTEND_OK")
-    prune = workflow.index("docker image prune -f")
+    prune = workflow.index("prune-runtime-images.sh")
     assert prune > verification
 
 
