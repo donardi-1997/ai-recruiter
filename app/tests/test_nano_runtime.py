@@ -85,3 +85,15 @@ def test_zip_documents_are_exposed_as_incremental_generator():
         pass
     else:
         raise AssertionError("archive iterator yielded more than two documents")
+
+
+def test_worker_archive_path_is_file_backed_and_incremental():
+    from app.workers import candidate_imports
+
+    source = inspect.getsource(candidate_imports._expand_archives_once)
+
+    assert "SpooledTemporaryFile" in source
+    assert "download_staging_object_to_file" in source
+    assert "iter_zip_documents" in source
+    assert "read_staging_object" not in source
+    assert "documents.expand_zip" not in source
