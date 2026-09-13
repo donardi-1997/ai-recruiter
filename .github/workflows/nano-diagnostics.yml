@@ -1,0 +1,102 @@
+name: Nano Runtime Diagnostics
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: nano-runtime-diagnostics
+  cancel-in-progress: false
+
+env:
+  AWS_REGION: us-east-2
+  INSTANCE_NAME: ai-recruiter
+
+jobs:
+  diagnostics:
+    name: Read-only host diagnostics
+    runs-on: ubuntu-latest
+    environment: production
+    timeout-minutes: 10
+    steps:
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v5
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Collect read-only runtime diagnostics
+        env:
+          LIGHTSAIL_SSH_KEY: ${{ secrets.LIGHTSAIL_SSH_KEY }}
+        run: |
+          set -euo pipefail
+          INSTANCE_IP=$(aws lightsail get-instance \
+            --instance-name "$INSTANCE_NAME" \
+            --region "$AWS_REGION" \
+            --query 'instance.publicIpAddress' \
+            --output text)
+
+          KEY_FILE=/tmp/lightsail-key.pem
+          printf '%s\n' "$LIGHTSAIL_SSH_KEY" > "$KEY_FILE"
+          chmod 600 "$KEY_FILE"
+          trap 'shred -u "$KEY_FILE" 2>/dev/null || true' EXIT
+
+          ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -i "$KEY_FILE" ubuntu@"$INSTANCE_IP" 'bash -s' <<'REMOTE'
+            set -euo pipefail
+
+            echo '=== HOST ==='
+            hostname
+            uname -a
+            uptime
+
+            echo '=== MEMORY_MB ==='
+            free -m
+
+            echo '=== SWAP ==='
+            swapon --show --bytes || true
+            echo 'vm.swappiness='
+            cat /proc/sys/vm/swappiness
+
+            echo '=== VMSTAT ==='
+            vmstat 1 5
+
+            echo '=== FILESYSTEM ==='
+            df -h /
+            if [ -d /var/lib/docker ]; then
+              df -h /var/lib/docker
+            fi
+
+            echo '=== DOCKER_STATS ==='
+            sudo docker stats --no-stream --format 'table {{.Name}}\t{{.MemUsage}}\t{{.MemPerc}}\t{{.CPUPerc}}\t{{.PIDs}}'
+
+            echo '=== DOCKER_LIMITS ==='
+            for container in ai-recruiter-api ai-recruiter-worker ai-recruiter-web; do
+              if sudo docker inspect "$container" >/dev/null 2>&1; then
+                sudo docker inspect "$container" --format '{{.Name}} memory_bytes={{.HostConfig.Memory}} memory_swap_bytes={{.HostConfig.MemorySwap}} pids_limit={{.HostConfig.PidsLimit}}'
+              fi
+            done
+
+            echo '=== DOCKER_DISK ==='
+            sudo docker system df
+
+            echo '=== TOP_RSS_PROCESSES ==='
+            ps -eo pid,comm,rss,%mem,%cpu --sort=-rss | head -20
+
+            echo '=== POSTGRES_SETTINGS ==='
+            echo -n 'shared_buffers=' && sudo -u postgres psql -Atqc 'SHOW shared_buffers'
+            echo -n 'work_mem=' && sudo -u postgres psql -Atqc 'SHOW work_mem'
+            echo -n 'maintenance_work_mem=' && sudo -u postgres psql -Atqc 'SHOW maintenance_work_mem'
+            echo -n 'effective_cache_size=' && sudo -u postgres psql -Atqc 'SHOW effective_cache_size'
+            echo -n 'max_connections=' && sudo -u postgres psql -Atqc 'SHOW max_connections'
+
+            echo '=== POSTGRES_CONNECTIONS ==='
+            sudo -u postgres psql -Atqc "SELECT 'connections=' || count(*) FROM pg_stat_activity;"
+
+            echo '=== OOM_LAST_24H ==='
+            sudo journalctl -k --since '24 hours ago' --no-pager 2>/dev/null | grep -Ei 'out of memory|oom-killer|killed process' || true
+
+            echo 'NANO_DIAGNOSTICS_OK'
+          REMOTE
