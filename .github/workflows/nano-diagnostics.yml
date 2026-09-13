@@ -2,10 +2,6 @@ name: Nano Runtime Diagnostics
 
 on:
   workflow_dispatch:
-  push:
-    branches: [ops/nano-diagnostics]
-    paths:
-      - .github/workflows/nano-diagnostics.yml
 
 permissions:
   contents: read
