@@ -66,15 +66,20 @@ def get_resume_ingestion_for_candidate_link(
 def list_undispatched_resume_ingestions(
     db: Session,
     *,
+    owner_sub: str | None = None,
     limit: int = 100,
 ) -> list[IndeedResumeIngestion]:
+    query = db.query(IndeedResumeIngestion).filter(
+        IndeedResumeIngestion.status == "PENDING",
+        IndeedResumeIngestion.queue_dispatched_at.is_(None),
+    )
+    if owner_sub is not None:
+        query = query.filter(IndeedResumeIngestion.owner_sub == owner_sub)
     return (
-        db.query(IndeedResumeIngestion)
-        .filter(
-            IndeedResumeIngestion.status == "PENDING",
-            IndeedResumeIngestion.queue_dispatched_at.is_(None),
+        query.order_by(
+            IndeedResumeIngestion.created_at.asc(),
+            IndeedResumeIngestion.id.asc(),
         )
-        .order_by(IndeedResumeIngestion.created_at.asc(), IndeedResumeIngestion.id.asc())
         .limit(max(1, min(int(limit), 1000)))
         .all()
     )
