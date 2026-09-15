@@ -4,12 +4,16 @@ from datetime import datetime, timezone
 
 import httpx
 import pytest
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
 
 from app.config import IndeedSettings
+from app.db import Base
+from app.domains.indeed import service
 from app.domains.indeed.client import IndeedClient
-from app.domains.indeed.exceptions import IndeedRemoteError, IndeedValidationError
+from app.domains.indeed.exceptions import IndeedLinkNotFound, IndeedRemoteError, IndeedValidationError
 from app.domains.indeed.mapper import build_job_input
-from app.models import Job
+from app.models import IndeedJobLink, IndeedSyncEvent, Job
 
 
 def settings(**overrides):
@@ -28,6 +32,76 @@ def settings(**overrides):
     )
     values.update(overrides)
     return IndeedSettings(**values)
+
+
+@pytest.fixture()
+def db_session():
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    session = sessionmaker(bind=engine)()
+    yield session
+    session.close()
+    engine.dispose()
+
+
+def published_job(owner="owner-1"):
+    return Job(
+        title="Country Manager Chile",
+        description="Lead the operation",
+        owner_sub=owner,
+        country_code="CL",
+        city="Santiago",
+        public_slug="country-manager-chile",
+        published_at=datetime(2026, 9, 15, tzinfo=timezone.utc),
+    )
+
+
+class FakeIndeedClient:
+    def __init__(self):
+        self.calls = []
+
+    def execute(self, query, variables=None):
+        self.calls.append((query, variables))
+        if "CreateSourcedJobPostings" in query:
+            return {
+                "jobsIngest": {
+                    "createSourcedJobPostings": {
+                        "results": [
+                            {
+                                "jobPosting": {
+                                    "sourcedPostingId": "sourced-1",
+                                    "employerJobId": "employer-job-1",
+                                }
+                            }
+                        ]
+                    }
+                }
+            }
+        if "GetIndeedJobStatus" in query:
+            return {
+                "node": {
+                    "seats": [
+                        {
+                            "jobPost": {
+                                "status": {
+                                    "globalStatus": {
+                                        "lifecycleStatus": "ACTIVE",
+                                        "isIndeedApplyActive": True,
+                                    },
+                                    "surfaceStatuses": {
+                                        "isRejected": False,
+                                        "isSponsorshipRequired": False,
+                                        "isMissingRequiredSponsorship": False,
+                                    },
+                                }
+                            }
+                        }
+                    ]
+                }
+            }
+        if "ExpireSourcedJobsBySourcedPostingId" in query:
+            return {"jobsIngest": {"expireSourcedJobsBySourcedPostingId": {"results": []}}}
+        raise AssertionError("Unexpected query")
 
 
 def test_job_exposes_neutral_publication_fields():
@@ -77,3 +151,69 @@ def test_client_raises_typed_error_for_graphql_errors():
     client = IndeedClient(settings(), http=httpx.Client(transport=httpx.MockTransport(handler)))
     with pytest.raises(IndeedRemoteError, match="FORBIDDEN"):
         client.execute("query { nope }")
+
+
+def test_publish_persists_external_ids_and_success_event(db_session):
+    job = published_job()
+    db_session.add(job)
+    db_session.commit()
+    fake = FakeIndeedClient()
+
+    result = service.publish_job(
+        db_session,
+        job_id=job.id,
+        owner_sub="owner-1",
+        client=fake,
+        settings=settings(),
+    )
+
+    assert result["sourced_posting_id"] == "sourced-1"
+    assert result["employer_job_id"] == "employer-job-1"
+    link = db_session.query(IndeedJobLink).filter_by(job_id=job.id).one()
+    assert link.sourced_posting_id == "sourced-1"
+    assert link.employer_job_id == "employer-job-1"
+    event = db_session.query(IndeedSyncEvent).filter_by(job_id=job.id, operation="PUBLISH").one()
+    assert event.status == "SUCCEEDED"
+
+
+def test_status_and_expire_use_persisted_identifiers(db_session):
+    job = published_job()
+    db_session.add(job)
+    db_session.commit()
+    fake = FakeIndeedClient()
+    service.publish_job(db_session, job_id=job.id, owner_sub="owner-1", client=fake, settings=settings())
+
+    status = service.get_job_status(
+        db_session,
+        job_id=job.id,
+        owner_sub="owner-1",
+        client=fake,
+        settings=settings(),
+    )
+    assert status["status"]["globalStatus"]["lifecycleStatus"] == "ACTIVE"
+
+    expired = service.expire_job(
+        db_session,
+        job_id=job.id,
+        owner_sub="owner-1",
+        client=fake,
+        settings=settings(),
+    )
+    assert expired["status"] == "EXPIRE_REQUESTED"
+    link = db_session.query(IndeedJobLink).filter_by(job_id=job.id).one()
+    assert link.external_status == {"lifecycleStatus": "EXPIRE_REQUESTED"}
+
+
+def test_status_requires_existing_indeed_link(db_session):
+    job = published_job()
+    db_session.add(job)
+    db_session.commit()
+
+    with pytest.raises(IndeedLinkNotFound):
+        service.get_job_status(
+            db_session,
+            job_id=job.id,
+            owner_sub="owner-1",
+            client=FakeIndeedClient(),
+            settings=settings(),
+        )
