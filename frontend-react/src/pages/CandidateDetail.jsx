@@ -34,7 +34,7 @@ function CandidateDetail() {
               `/jobs/${jobId}/candidates/${candidate_id}/integrations/indeed`
             );
             setIndeedDetails(indeedResponse.data);
-          } catch (_error) {
+          } catch {
             // Not every candidate comes from Indeed. Keep the core profile usable.
             setIndeedDetails(null);
           }
@@ -57,7 +57,7 @@ function CandidateDetail() {
         `/jobs/${jobId}/candidates/${candidate_id}/resume`
       );
       window.open(response.data.url, "_blank", "noopener,noreferrer");
-    } catch (_error) {
+    } catch {
       setResumeError("No fue posible abrir el CV. Intenta nuevamente.");
     } finally {
       setOpeningResume(false);
