@@ -21,15 +21,29 @@ class FakeAdminClient:
         return {}
 
 
-def test_register_auto_confirms_cognito_user(monkeypatch):
+class FakeSession:
+    def __init__(self, admin_client):
+        self.admin_client = admin_client
+        self.client_call = None
+
+    def client(self, service_name, region_name=None):
+        self.client_call = {
+            "service_name": service_name,
+            "region_name": region_name,
+        }
+        return self.admin_client
+
+
+def test_register_auto_confirms_cognito_user_with_signed_session(monkeypatch):
     signup_client = FakeSignupClient()
     admin_client = FakeAdminClient()
+    session = FakeSession(admin_client)
 
     monkeypatch.setattr(auth_routes, "cognito_client", signup_client)
     monkeypatch.setattr(
         auth_routes,
-        "get_admin_cognito_client",
-        lambda: admin_client,
+        "get_cached_session",
+        lambda: session,
         raising=False,
     )
     monkeypatch.setattr(
@@ -51,6 +65,10 @@ def test_register_auto_confirms_cognito_user(monkeypatch):
         "UserAttributes": [
             {"Name": "email", "Value": "recruiter@example.com"},
         ],
+    }
+    assert session.client_call == {
+        "service_name": "cognito-idp",
+        "region_name": "us-east-2",
     }
     assert admin_client.confirm_call == {
         "UserPoolId": "us-east-2_TestPool",
