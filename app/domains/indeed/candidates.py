@@ -180,6 +180,14 @@ def _process_asset(db, *, owner_sub: str, asset: dict) -> str:
         phone=candidate_data.get("phone"),
         source_name=source_name,
     )
+    candidate_metadata = dict(candidate.metadata_ or {})
+    candidate_metadata["source"] = "Indeed"
+    candidate_metadata["source_name"] = source_name
+    candidate_metadata["indeed_staged_test"] = bool(metadata.get("stagedTest"))
+    if resume_pdf.get("name"):
+        candidate_metadata["resume_name"] = resume_pdf.get("name")
+    candidate.metadata_ = candidate_metadata
+
     assignment = candidates_repository.ensure_candidate_assigned_to_job(
         db,
         job_id=job_link.job_id,
