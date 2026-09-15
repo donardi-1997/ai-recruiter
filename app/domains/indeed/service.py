@@ -110,6 +110,28 @@ def sync_candidates(
     )
 
 
+def get_candidate_details(db, *, owner_sub: str, job_id: str, candidate_id: str) -> dict:
+    require_job(db, job_id, owner_sub)
+    link = repository.get_candidate_link(
+        db,
+        owner_sub=owner_sub,
+        job_id=job_id,
+        candidate_id=candidate_id,
+    )
+    if link is None:
+        raise IndeedLinkNotFound("Candidate was not sourced from Indeed for this job")
+    return {
+        "candidate_id": candidate_id,
+        "job_id": job_id,
+        "source_name": link.source_name,
+        "source_enum_key": link.source_enum_key,
+        "resume_name": link.resume_name,
+        "resume_url": link.resume_url,
+        "staged_test": bool(link.staged_test),
+        "acknowledged_at": link.acknowledged_at.isoformat() if link.acknowledged_at else None,
+    }
+
+
 def queue_candidate_status(
     db,
     *,
