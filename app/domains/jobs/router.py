@@ -22,12 +22,22 @@ def _publication_fields(body) -> dict:
 
 
 @router.get("")
-def list_jobs(db: Session = Depends(get_db), _user: dict = Depends(get_current_user)):
-    return [presenter.job_payload(job, candidate_count=count) for job, count in service.list_jobs(db, _user["sub"])]
+def list_jobs(
+    db: Session = Depends(get_db),
+    _user: dict = Depends(get_current_user),
+):
+    return [
+        presenter.job_payload(job, candidate_count=candidate_count)
+        for job, candidate_count in service.list_jobs(db, _user["sub"])
+    ]
 
 
 @router.post("", status_code=201)
-def create_job(body: CreateJobRequest, db: Session = Depends(get_db), _user: dict = Depends(get_current_user)):
+def create_job(
+    body: CreateJobRequest,
+    db: Session = Depends(get_db),
+    _user: dict = Depends(get_current_user),
+):
     job = service.create_job(
         db,
         title=body.title,
@@ -39,7 +49,12 @@ def create_job(body: CreateJobRequest, db: Session = Depends(get_db), _user: dic
 
 
 @router.put("/{job_id}")
-def update_job(job_id: str, body: UpdateJobRequest, db: Session = Depends(get_db), _user: dict = Depends(get_current_user)):
+def update_job(
+    job_id: str,
+    body: UpdateJobRequest,
+    db: Session = Depends(get_db),
+    _user: dict = Depends(get_current_user),
+):
     try:
         job = service.update_job(
             db,
@@ -51,11 +66,17 @@ def update_job(job_id: str, body: UpdateJobRequest, db: Session = Depends(get_db
         )
     except JobNotFound:
         raise HTTPException(status_code=404, detail="Vacante no encontrada.")
+
     return presenter.job_payload(job)
 
 
 @router.delete("/{job_id}")
-def delete_job(job_id: str, delete_candidates: bool = Query(False), db: Session = Depends(get_db), _user: dict = Depends(get_current_user)):
+def delete_job(
+    job_id: str,
+    delete_candidates: bool = Query(False),
+    db: Session = Depends(get_db),
+    _user: dict = Depends(get_current_user),
+):
     try:
         deleted_count = service.delete_job(
             db,
@@ -65,4 +86,9 @@ def delete_job(job_id: str, delete_candidates: bool = Query(False), db: Session 
         )
     except JobNotFound:
         raise HTTPException(status_code=404, detail="Vacante no encontrada.")
-    return presenter.delete_job_payload(job_id, delete_candidates, deleted_count)
+
+    return presenter.delete_job_payload(
+        job_id,
+        delete_candidates,
+        deleted_count,
+    )
