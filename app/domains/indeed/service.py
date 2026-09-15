@@ -1,7 +1,8 @@
-"""Indeed Job Sync application service."""
+"""Indeed integration application service."""
 
 from app.config import IndeedSettings, get_indeed_settings
-from app.domains.indeed import mapper, repository
+from app.domains.indeed import candidates as candidate_sync
+from app.domains.indeed import dispositions, mapper, repository
 from app.domains.indeed.client import IndeedClient
 from app.domains.indeed.exceptions import IndeedDisabled, IndeedLinkNotFound, IndeedNotConfigured, IndeedRemoteError
 from app.domains.jobs.service import require_job
@@ -22,7 +23,13 @@ def _settings(settings: IndeedSettings | None = None) -> IndeedSettings:
 
 def integration_status(settings: IndeedSettings | None = None) -> dict:
     value = settings or get_indeed_settings()
-    return {"enabled": value.enabled, "configured": value.configured, "employer_id_configured": bool(value.employer_id)}
+    return {
+        "enabled": value.enabled,
+        "configured": value.configured,
+        "employer_id_configured": bool(value.employer_id),
+        "candidate_sync_available": value.enabled and value.configured,
+        "disposition_sync_available": value.enabled and value.configured,
+    }
 
 
 def publish_job(db, *, job_id: str, owner_sub: str, client: IndeedClient | None = None, settings: IndeedSettings | None = None) -> dict:
@@ -83,3 +90,65 @@ def expire_job(db, *, job_id: str, owner_sub: str, client: IndeedClient | None =
     except Exception as exc:
         repository.fail_event(db, event, exc)
         raise
+
+
+def sync_candidates(
+    db,
+    *,
+    owner_sub: str,
+    limit: int = 25,
+    client: IndeedClient | None = None,
+    settings: IndeedSettings | None = None,
+) -> dict:
+    cfg = _settings(settings)
+    return candidate_sync.fetch_candidate_assets(
+        db,
+        owner_sub=owner_sub,
+        settings=cfg,
+        client=client,
+        limit=limit,
+    )
+
+
+def queue_candidate_status(
+    db,
+    *,
+    owner_sub: str,
+    job_id: str,
+    candidate_id: str,
+    local_status: str,
+    status_changed_at,
+):
+    link = repository.get_candidate_link(
+        db,
+        owner_sub=owner_sub,
+        job_id=job_id,
+        candidate_id=candidate_id,
+    )
+    if link is None:
+        return None
+    return dispositions.queue_disposition_for_application(
+        db,
+        owner_sub=owner_sub,
+        candidate_link=link,
+        local_status=local_status,
+        status_changed_at=status_changed_at,
+    )
+
+
+def sync_dispositions(
+    db,
+    *,
+    owner_sub: str,
+    limit: int = 25,
+    client: IndeedClient | None = None,
+    settings: IndeedSettings | None = None,
+) -> dict:
+    cfg = _settings(settings)
+    return dispositions.sync_dispositions(
+        db,
+        owner_sub=owner_sub,
+        settings=cfg,
+        client=client,
+        limit=limit,
+    )
