@@ -9,9 +9,16 @@ from app.domains.indeed.exceptions import IndeedRemoteError
 
 
 class IndeedClient:
-    def __init__(self, settings: IndeedSettings, http: httpx.Client | None = None):
+    def __init__(
+        self,
+        settings: IndeedSettings,
+        http: httpx.Client | None = None,
+        *,
+        include_employer: bool = True,
+    ):
         self.settings = settings
         self.http = http or httpx.Client(timeout=settings.request_timeout_seconds)
+        self.include_employer = include_employer
         self._token: str | None = None
         self._token_expires_at = 0.0
 
@@ -24,7 +31,7 @@ class IndeedClient:
             "grant_type": "client_credentials",
             "scope": self.settings.scope,
         }
-        if self.settings.employer_id:
+        if self.include_employer and self.settings.employer_id:
             data["employer"] = self.settings.employer_id
         try:
             response = self.http.post(
