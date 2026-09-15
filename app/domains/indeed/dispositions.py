@@ -94,8 +94,27 @@ def build_identifier(db, *, owner_sub: str, candidate_link) -> dict:
     )
 
 
+def _compact(value):
+    """Normalize GraphQL identifiers so response null fields do not break matching."""
+    if isinstance(value, dict):
+        return {
+            key: compacted
+            for key, item in value.items()
+            if item is not None and (compacted := _compact(item)) not in ({}, [])
+        }
+    if isinstance(value, list):
+        return [_compact(item) for item in value if item is not None]
+    return value
+
+
 def _identifier_key(identifier: dict) -> str:
-    return json.dumps(identifier, sort_keys=True, separators=(",", ":"))
+    return json.dumps(_compact(identifier), sort_keys=True, separators=(",", ":"))
+
+
+def _rfc3339(value: datetime) -> str:
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=timezone.utc)
+    return value.isoformat()
 
 
 def _event_input(db, *, owner_sub: str, event, ats_name: str) -> tuple[dict, str]:
@@ -109,7 +128,7 @@ def _event_input(db, *, owner_sub: str, event, ats_name: str) -> tuple[dict, str
         "dispositionStatus": event.indeed_status,
         "rawDispositionStatus": event.local_status,
         "atsName": ats_name,
-        "statusChangeDateTime": event.status_changed_at.isoformat(),
+        "statusChangeDateTime": _rfc3339(event.status_changed_at),
     }
     source_name = event.candidate_link.source_name
     if source_name:
@@ -134,7 +153,8 @@ def sync_dispositions(
         return {"selected": 0, "sent": 0, "failed": 0}
 
     request_items = []
-    event_by_identifier: dict[str, object] = {}
+    events_by_identifier: dict[str, list] = {}
+    network_events = []
     locally_failed = []
     for event in events:
         try:
@@ -145,7 +165,8 @@ def sync_dispositions(
                 ats_name=settings.source_name or "Asiati Talent",
             )
             request_items.append(item)
-            event_by_identifier[key] = event
+            events_by_identifier.setdefault(key, []).append(event)
+            network_events.append(event)
         except IndeedValidationError as exc:
             event.attempt_count += 1
             repository.mark_disposition_failed(event, error=str(exc))
@@ -159,10 +180,10 @@ def sync_dispositions(
             "failed": len(locally_failed),
         }
 
-    network_events = list(event_by_identifier.values())
     repository.mark_disposition_attempted(network_events)
     try:
-        data = (client or IndeedClient(settings)).execute(
+        provider = client or IndeedClient(settings, include_employer=False)
+        data = provider.execute(
             SEND_DISPOSITIONS,
             {"input": {"dispositions": request_items}},
         )
@@ -173,24 +194,23 @@ def sync_dispositions(
         for event in network_events:
             repository.mark_disposition_sent(event, sent_at=now)
 
-        provider_failed = 0
+        failed_event_ids: set[str] = set()
         for failed in failed_payloads:
             key = _identifier_key(failed.get("identifiedBy") or {})
-            event = event_by_identifier.get(key)
-            if event is None:
-                continue
-            provider_failed += 1
-            repository.mark_disposition_failed(
-                event,
-                error=str(failed.get("rationale") or "Indeed rejected disposition"),
-            )
-            event.sent_at = None
+            matched_events = events_by_identifier.get(key, [])
+            for event in matched_events:
+                failed_event_ids.add(event.id)
+                repository.mark_disposition_failed(
+                    event,
+                    error=str(failed.get("rationale") or "Indeed rejected disposition"),
+                )
+                event.sent_at = None
 
         db.commit()
         return {
             "selected": len(events),
-            "sent": len(network_events) - provider_failed,
-            "failed": len(locally_failed) + provider_failed,
+            "sent": len(network_events) - len(failed_event_ids),
+            "failed": len(locally_failed) + len(failed_event_ids),
         }
     except Exception as exc:
         for event in network_events:
