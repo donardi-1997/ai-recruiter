@@ -20,7 +20,7 @@ env:
   AWS_ACCOUNT_ID: "765761474007"
   ECR_BACKEND_REPO: ai-recruiter-api
   ECR_FRONTEND_REPO: ai-recruiter-frontend
-  INSTANCE_NAME: ai-recruiter
+  INSTANCE_NAME: ai-recruiter-micro-canary
   CLOUDFRONT_DISTRIBUTION_ID: E1IBIX4EWENEP7
 
 jobs:
