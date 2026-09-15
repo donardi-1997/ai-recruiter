@@ -144,6 +144,9 @@ def get_candidate_details(db, *, owner_sub: str, job_id: str, candidate_id: str)
         "source_name": link.source_name,
         "source_enum_key": link.source_enum_key,
         "resume_name": link.resume_name,
+        # Internal compatibility only. The HTTP router removes this provider URL
+        # before any response is returned to a browser.
+        "resume_url": link.resume_url,
         "resume": {
             "name": link.resume_name,
             "status": resume_status,
