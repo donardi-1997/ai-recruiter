@@ -7,3 +7,11 @@ class CandidateNotFound(Exception):
 
 class JobNotFound(Exception):
     """Requested job is not visible to the current owner."""
+
+
+class JobCandidateNotFound(Exception):
+    """Requested candidate is not assigned to the requested job."""
+
+
+class InvalidApplicationStatus(Exception):
+    """Requested application status is not part of the local ATS state model."""
