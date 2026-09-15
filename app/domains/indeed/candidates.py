@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from datetime import datetime, timezone
 
 from app.config import IndeedSettings
@@ -9,9 +10,12 @@ from app.domains.candidate_imports import repository as identity_repository
 from app.domains.candidate_imports import rules as identity_rules
 from app.domains.candidate_imports.exceptions import IdentityConflict
 from app.domains.candidates import repository as candidates_repository
-from app.domains.indeed import repository
+from app.domains.indeed import repository, resume_repository
 from app.domains.indeed.client import IndeedClient
 from app.domains.indeed.dispositions import queue_disposition_for_application
+from app.infrastructure.imports import queue
+
+logger = logging.getLogger(__name__)
 
 FETCH_ASSETS = """
 mutation FetchAssets($input: FetchAssetsAtsSyncCandidateSyncInput) {
@@ -145,6 +149,12 @@ def _process_asset(db, *, owner_sub: str, asset: dict) -> str:
         asset_id=asset_id,
     )
     if existing is not None:
+        if existing.resume_url:
+            resume_repository.get_or_create_resume_ingestion(
+                db,
+                owner_sub=owner_sub,
+                candidate_link_id=existing.id,
+            )
         return "REUSED"
 
     contact = asset.get("contact")
@@ -209,6 +219,12 @@ def _process_asset(db, *, owner_sub: str, asset: dict) -> str:
         resume_url=resume_pdf.get("url"),
         staged_test=bool(metadata.get("stagedTest")),
     )
+    if link.resume_url:
+        resume_repository.get_or_create_resume_ingestion(
+            db,
+            owner_sub=owner_sub,
+            candidate_link_id=link.id,
+        )
     queue_disposition_for_application(
         db,
         owner_sub=owner_sub,
@@ -217,6 +233,26 @@ def _process_asset(db, *, owner_sub: str, asset: dict) -> str:
         status_changed_at=assignment.status_changed_at,
     )
     return outcome
+
+
+def _dispatch_resume_tasks(db, *, owner_sub: str) -> int:
+    """Best-effort dispatch after the candidate batch is durably committed."""
+    dispatched = 0
+    tasks = resume_repository.list_undispatched_resume_ingestions(
+        db,
+        owner_sub=owner_sub,
+    )
+    for task in tasks:
+        try:
+            queue.send_indeed_resume_ingestion(task.id)
+        except Exception:
+            db.rollback()
+            logger.exception("Indeed resume dispatch failed for task %s", task.id)
+            continue
+        task.queue_dispatched_at = datetime.now(timezone.utc)
+        db.commit()
+        dispatched += 1
+    return dispatched
 
 
 def fetch_candidate_assets(
@@ -261,6 +297,12 @@ def fetch_candidate_assets(
         state.last_fetch_at = now
         state.last_error = None
         db.commit()
+
+        # Candidate/provider state is already durable. Queue failures are
+        # intentionally repairable and must not invalidate the successful
+        # fetchAssets/acknowledgment transaction.
+        _dispatch_resume_tasks(db, owner_sub=owner_sub)
+
         return {
             "fetched": len(assets),
             "created": counts["CREATED"],
