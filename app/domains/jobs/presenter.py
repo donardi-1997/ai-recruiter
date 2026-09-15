@@ -7,6 +7,11 @@ def job_payload(job, *, candidate_count: int | None = None) -> dict:
         "id": job.id,
         "title": job.title,
         "description": job.description,
+        "country_code": job.country_code,
+        "city": job.city,
+        "employment_type": job.employment_type,
+        "public_slug": job.public_slug,
+        "published_at": job.published_at.isoformat() if job.published_at else None,
         "created_at": job.created_at.isoformat() if job.created_at else None,
     }
     if candidate_count is not None:
