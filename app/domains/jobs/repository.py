@@ -59,9 +59,11 @@ def update_job(
     public_slug: str | None = None,
     published_at=None,
 ) -> Job:
+    if title is not None:
+        job.title = title
+    if description is not None:
+        job.description = description
     for name, value in {
-        "title": title,
-        "description": description,
         "country_code": country_code,
         "city": city,
         "employment_type": employment_type,
@@ -82,6 +84,7 @@ def delete_job(
     owner_sub: str | None = None,
     delete_candidates: bool = False,
 ) -> tuple[bool, int]:
+    from app.domains.candidates.repository import delete_candidate
     from app.models import Candidate, Evaluation, JobCandidate, Ranking, RankingItem
 
     job = get_job(db, job_id, owner_sub=owner_sub)
@@ -116,14 +119,14 @@ def delete_job(
         db.delete(job)
         db.commit()
         return True, deleted_candidate_count
+
     except Exception:
         db.rollback()
         raise
 
 
 def count_candidates_for_job(db: Session, job_id: str, owner_sub: str | None = None) -> int:
-    from app.models import Candidate, JobCandidate
-
+    from app.models import JobCandidate, Candidate
     query = db.query(JobCandidate).join(Candidate, Candidate.id == JobCandidate.candidate_id).filter(JobCandidate.job_id == job_id)
     if owner_sub is not None:
         query = query.filter(Candidate.owner_sub == owner_sub)
