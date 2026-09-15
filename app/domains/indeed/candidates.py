@@ -235,7 +235,8 @@ def fetch_candidate_assets(
         variables["input"]["token"] = previous_token
 
     try:
-        data = (client or IndeedClient(settings)).execute(FETCH_ASSETS, variables)
+        provider = client or IndeedClient(settings, include_employer=False)
+        data = provider.execute(FETCH_ASSETS, variables)
         payload = data.get("atsSyncCandidateSync", {}).get("fetchAssets", {})
         assets = payload.get("assets") or []
         next_token = payload.get("token")
