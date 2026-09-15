@@ -14,7 +14,7 @@ ECR_REPO="ai-recruiter-api"
 ECR_TAG="${ECR_TAG:-latest}"
 CONTAINER_NAME="ai-recruiter-worker"
 NETWORK_NAME="ai-recruiter"
-DATABASE_URL="${DATABASE_URL:-postgresql://postgres:postgres@host.docker.internal:5432/ai_recruiter}"
+DATABASE_URL="${DATABASE_URL:?DATABASE_URL is required}"
 IMPORT_STAGING_BUCKET="${IMPORT_STAGING_BUCKET:?IMPORT_STAGING_BUCKET is required}"
 IMPORT_QUEUE_URL="${IMPORT_QUEUE_URL:?IMPORT_QUEUE_URL is required}"
 IMPORT_EVALUATION_CONCURRENCY="${IMPORT_EVALUATION_CONCURRENCY:-1}"
@@ -201,6 +201,13 @@ for required in \
         exit 1
     fi
 done
+
+if ! echo "$CONTAINER_ENV" | grep -q '^DATABASE_URL='; then
+    log_error "Worker missing runtime environment: DATABASE_URL"
+    rollback_worker "$OLD_WORKER_IMAGE"
+    exit 1
+fi
+log_ok "Worker runtime environment includes DATABASE_URL"
 
 MOUNTS=$(docker inspect "$CONTAINER_NAME" --format '{{range .Mounts}}{{.Destination}} {{end}}')
 for dest in "$CONTAINER_AWS_CONFIG" "$CONTAINER_SIGNING_HELPER" "$CONTAINER_CLIENT_CRT" "$CONTAINER_CLIENT_KEY"; do
