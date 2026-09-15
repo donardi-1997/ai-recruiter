@@ -7,7 +7,13 @@ from sqlalchemy.orm import Session
 
 from app.deps import get_current_user, get_db
 from app.domains.candidates import presenter, service
-from app.domains.candidates.exceptions import CandidateNotFound, JobNotFound
+from app.domains.candidates.exceptions import (
+    CandidateNotFound,
+    InvalidApplicationStatus,
+    JobCandidateNotFound,
+    JobNotFound,
+)
+from app.domains.candidates.schemas import ApplicationStatusRequest
 from app.domains.jobs.schemas import AssignCandidatesRequest
 
 logger = logging.getLogger(__name__)
@@ -102,6 +108,38 @@ def get_job_candidates(
         raise HTTPException(status_code=404, detail="Vacante no encontrada.")
 
     return [presenter.candidate_to_dict(candidate) for candidate in items]
+
+
+@assign_router.put("/{job_id}/candidates/{candidate_id}/status")
+def update_application_status(
+    job_id: str,
+    candidate_id: str,
+    body: ApplicationStatusRequest,
+    db: Session = Depends(get_db),
+    _user: dict = Depends(get_current_user),
+):
+    try:
+        link, changed = service.set_application_status(
+            db,
+            job_id=job_id,
+            candidate_id=candidate_id,
+            status=body.status,
+            owner_sub=_user["sub"],
+        )
+    except JobNotFound:
+        raise HTTPException(status_code=404, detail="Vacante no encontrada.")
+    except (CandidateNotFound, JobCandidateNotFound):
+        raise HTTPException(status_code=404, detail="Candidato no encontrado en esta vacante.")
+    except InvalidApplicationStatus:
+        raise HTTPException(status_code=422, detail="Estado de aplicacion no valido.")
+
+    return {
+        "job_id": job_id,
+        "candidate_id": candidate_id,
+        "status": link.application_status,
+        "status_changed_at": link.status_changed_at.isoformat() if link.status_changed_at else None,
+        "changed": changed,
+    }
 
 
 @assign_router.get("/{job_id}/candidates/{candidate_id}")
