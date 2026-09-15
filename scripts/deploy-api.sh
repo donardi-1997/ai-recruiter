@@ -14,6 +14,7 @@ ECR_REPO="ai-recruiter-api"
 ECR_TAG="${ECR_TAG:-latest}"
 CONTAINER_NAME="ai-recruiter-api"
 NETWORK_NAME="ai-recruiter"
+DATABASE_URL="${DATABASE_URL:?DATABASE_URL is required}"
 IMPORT_STAGING_BUCKET="${IMPORT_STAGING_BUCKET:?IMPORT_STAGING_BUCKET is required}"
 IMPORT_QUEUE_URL="${IMPORT_QUEUE_URL:?IMPORT_QUEUE_URL is required}"
 IMPORT_EVALUATION_CONCURRENCY="${IMPORT_EVALUATION_CONCURRENCY:-1}"
@@ -134,7 +135,7 @@ DOCKER_ARGS=(
     --restart unless-stopped
     --network "$NETWORK_NAME"
     --add-host=host.docker.internal:host-gateway
-    -e "DATABASE_URL=postgresql://postgres:postgres@host.docker.internal:5432/ai_recruiter"
+    -e "DATABASE_URL=$DATABASE_URL"
     -e "AWS_REGION=$AWS_REGION"
     -e "BEDROCK_AWS_PROFILE=$BEDROCK_PROFILE"
     -e "IMPORT_STAGING_BUCKET=$IMPORT_STAGING_BUCKET"
@@ -188,6 +189,12 @@ for required in \
         exit 1
     fi
 done
+
+if ! echo "$CONTAINER_ENV" | grep -q '^DATABASE_URL='; then
+    log_error "Runtime env missing: DATABASE_URL"
+    exit 1
+fi
+log_ok "Runtime env present: DATABASE_URL"
 
 MOUNTS=$(docker inspect "$CONTAINER_NAME" --format '{{range .Mounts}}{{.Source}} {{end}}')
 MOUNT_COUNT=$(echo "$MOUNTS" | wc -w)
