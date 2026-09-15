@@ -1,11 +1,18 @@
 """Authenticated Indeed integration routes."""
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
 from app.deps import get_current_user, get_db
+from app.domains.candidate_imports.exceptions import IdentityConflict
 from app.domains.indeed import service
-from app.domains.indeed.exceptions import IndeedDisabled, IndeedLinkNotFound, IndeedNotConfigured, IndeedRemoteError, IndeedValidationError
+from app.domains.indeed.exceptions import (
+    IndeedDisabled,
+    IndeedLinkNotFound,
+    IndeedNotConfigured,
+    IndeedRemoteError,
+    IndeedValidationError,
+)
 from app.domains.jobs.exceptions import JobNotFound
 
 router = APIRouter(tags=["indeed"])
@@ -16,6 +23,8 @@ def _translate(exc: Exception) -> HTTPException:
         return HTTPException(status_code=404, detail="Vacante no encontrada.")
     if isinstance(exc, IndeedLinkNotFound):
         return HTTPException(status_code=404, detail=str(exc))
+    if isinstance(exc, IdentityConflict):
+        return HTTPException(status_code=409, detail="Conflicto de identidad de candidato.")
     if isinstance(exc, IndeedValidationError):
         return HTTPException(status_code=422, detail=str(exc))
     if isinstance(exc, (IndeedDisabled, IndeedNotConfigured)):
@@ -28,6 +37,38 @@ def _translate(exc: Exception) -> HTTPException:
 @router.get("/api/integrations/indeed/status")
 def indeed_status(_user: dict = Depends(get_current_user)):
     return service.integration_status()
+
+
+@router.post("/api/integrations/indeed/candidates/sync")
+def sync_candidates(
+    limit: int = Query(25, ge=1, le=100),
+    db: Session = Depends(get_db),
+    user: dict = Depends(get_current_user),
+):
+    try:
+        return service.sync_candidates(
+            db,
+            owner_sub=user["sub"],
+            limit=limit,
+        )
+    except Exception as exc:
+        raise _translate(exc)
+
+
+@router.post("/api/integrations/indeed/dispositions/sync")
+def sync_dispositions(
+    limit: int = Query(25, ge=1, le=25),
+    db: Session = Depends(get_db),
+    user: dict = Depends(get_current_user),
+):
+    try:
+        return service.sync_dispositions(
+            db,
+            owner_sub=user["sub"],
+            limit=limit,
+        )
+    except Exception as exc:
+        raise _translate(exc)
 
 
 @router.post("/api/jobs/{job_id}/integrations/indeed/publish")
