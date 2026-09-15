@@ -1,0 +1,1 @@
+"""Indeed Employers integration domain."""

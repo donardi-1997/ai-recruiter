@@ -1,0 +1,140 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: Candidate import staging bucket, SQS queue and DLQ for AI Recruiter.
+
+Parameters:
+  RuntimeRoleArn:
+    Type: String
+    Description: ARN of the existing AiRecruiterBedrockRuntimeRole used by API and worker.
+
+Resources:
+  ImportStagingBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        IgnorePublicAcls: true
+        BlockPublicPolicy: true
+        RestrictPublicBuckets: true
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      CorsConfiguration:
+        CorsRules:
+          - AllowedMethods:
+              - POST
+              - HEAD
+            AllowedOrigins:
+              - https://ai.adrianguerra.net
+              - http://localhost:5173
+              - http://localhost:5174
+              - http://localhost:5175
+            AllowedHeaders:
+              - "*"
+            MaxAge: 3600
+      LifecycleConfiguration:
+        Rules:
+          - Id: ExpireImportStagingAfterOneDay
+            Status: Enabled
+            Prefix: ""
+            ExpirationInDays: 1
+
+  ImportStagingBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket:
+        Ref: ImportStagingBucket
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: RuntimeListImportStagingBucket
+            Effect: Allow
+            Principal:
+              AWS:
+                Ref: RuntimeRoleArn
+            Action:
+              - s3:ListBucket
+            Resource:
+              Fn::GetAtt:
+                - ImportStagingBucket
+                - Arn
+          - Sid: RuntimeManageImportStagingObjects
+            Effect: Allow
+            Principal:
+              AWS:
+                Ref: RuntimeRoleArn
+            Action:
+              - s3:PutObject
+              - s3:GetObject
+              - s3:DeleteObject
+            Resource:
+              Fn::Sub:
+                - "${BucketArn}/*"
+                - BucketArn:
+                    Fn::GetAtt:
+                      - ImportStagingBucket
+                      - Arn
+
+  ImportDlq:
+    Type: AWS::SQS::Queue
+    Properties:
+      MessageRetentionPeriod: 1209600
+      SqsManagedSseEnabled: true
+
+  ImportQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      ReceiveMessageWaitTimeSeconds: 20
+      VisibilityTimeout: 300
+      MessageRetentionPeriod: 345600
+      SqsManagedSseEnabled: true
+      RedrivePolicy:
+        deadLetterTargetArn:
+          Fn::GetAtt:
+            - ImportDlq
+            - Arn
+        maxReceiveCount: 5
+
+  ImportQueuePolicy:
+    Type: AWS::SQS::QueuePolicy
+    Properties:
+      Queues:
+        - Ref: ImportQueue
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: RuntimeCandidateImportQueueAccess
+            Effect: Allow
+            Principal:
+              AWS:
+                Ref: RuntimeRoleArn
+            Action:
+              - sqs:SendMessage
+              - sqs:ReceiveMessage
+              - sqs:DeleteMessage
+              - sqs:ChangeMessageVisibility
+              - sqs:GetQueueAttributes
+            Resource:
+              Fn::GetAtt:
+                - ImportQueue
+                - Arn
+
+Outputs:
+  ImportStagingBucket:
+    Description: Private S3 bucket for temporary candidate import uploads.
+    Value:
+      Ref: ImportStagingBucket
+  ImportQueueUrl:
+    Description: Candidate import SQS queue URL.
+    Value:
+      Ref: ImportQueue
+  ImportQueueArn:
+    Description: Candidate import SQS queue ARN.
+    Value:
+      Fn::GetAtt:
+        - ImportQueue
+        - Arn
+  ImportDlqUrl:
+    Description: Candidate import dead-letter queue URL.
+    Value:
+      Ref: ImportDlq

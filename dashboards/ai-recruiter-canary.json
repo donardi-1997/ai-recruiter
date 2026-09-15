@@ -1,0 +1,11 @@
+{
+  "widgets": [
+    {"type": "text", "properties": {"markdown": "# AI Recruiter — Canary Dashboard"}},
+    {"type": "metric", "properties": {"title": "5xx OLD", "metrics": [["AWS/ApplicationELB", "HTTPCode_Target_5XX_Count", "LoadBalancer", "REEMPLAZAR_OLD_LB"]], "period": 60, "region": "REEMPLAZAR_AWS_REGION"}},
+    {"type": "metric", "properties": {"title": "5xx NEW", "metrics": [["AWS/ApplicationELB", "HTTPCode_Target_5XX_Count", "LoadBalancer", "REEMPLAZAR_NEW_LB"]], "period": 60, "region": "REEMPLAZAR_AWS_REGION"}},
+    {"type": "metric", "properties": {"title": "Latency P95 OLD", "metrics": [["AWS/ApplicationELB", "TargetResponseTime", "LoadBalancer", "REEMPLAZAR_OLD_LB", {"stat": "p95"}]], "period": 60, "region": "REEMPLAZAR_AWS_REGION"}},
+    {"type": "metric", "properties": {"title": "Latency P95 NEW", "metrics": [["AWS/ApplicationELB", "TargetResponseTime", "LoadBalancer", "REEMPLAZAR_NEW_LB", {"stat": "p95"}]], "period": 60, "region": "REEMPLAZAR_AWS_REGION"}},
+    {"type": "metric", "properties": {"title": "CPU Lightsail", "metrics": [["AWS/Lightsail", "CPUUtilization", "ServiceName", "REEMPLAZAR_SERVICE_NAME"]], "period": 60, "region": "REEMPLAZAR_AWS_REGION"}},
+    {"type": "log", "properties": {"title": "Errors", "query": "fields @timestamp, @message | filter @message like /ERROR/ | sort @timestamp desc | limit 20", "region": "REEMPLAZAR_AWS_REGION", "logGroupNames": ["REEMPLAZAR_LOG_GROUP"]}}
+  ]
+}
