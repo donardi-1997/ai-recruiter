@@ -25,19 +25,51 @@ def create_job(
     title: str,
     description: str | None = None,
     owner_sub: str | None = None,
+    country_code: str | None = None,
+    city: str | None = None,
+    employment_type: str | None = None,
+    public_slug: str | None = None,
+    published_at=None,
 ) -> Job:
-    job = Job(title=title, description=description, owner_sub=owner_sub)
+    job = Job(
+        title=title,
+        description=description,
+        owner_sub=owner_sub,
+        country_code=country_code,
+        city=city,
+        employment_type=employment_type,
+        public_slug=public_slug,
+        published_at=published_at,
+    )
     db.add(job)
     db.commit()
     db.refresh(job)
     return job
 
 
-def update_job(db: Session, job: Job, *, title: str | None = None, description: str | None = None) -> Job:
-    if title is not None:
-        job.title = title
-    if description is not None:
-        job.description = description
+def update_job(
+    db: Session,
+    job: Job,
+    *,
+    title: str | None = None,
+    description: str | None = None,
+    country_code: str | None = None,
+    city: str | None = None,
+    employment_type: str | None = None,
+    public_slug: str | None = None,
+    published_at=None,
+) -> Job:
+    for name, value in {
+        "title": title,
+        "description": description,
+        "country_code": country_code,
+        "city": city,
+        "employment_type": employment_type,
+        "public_slug": public_slug,
+        "published_at": published_at,
+    }.items():
+        if value is not None:
+            setattr(job, name, value)
     db.commit()
     db.refresh(job)
     return job
@@ -50,7 +82,6 @@ def delete_job(
     owner_sub: str | None = None,
     delete_candidates: bool = False,
 ) -> tuple[bool, int]:
-    from app.domains.candidates.repository import delete_candidate
     from app.models import Candidate, Evaluation, JobCandidate, Ranking, RankingItem
 
     job = get_job(db, job_id, owner_sub=owner_sub)
@@ -85,14 +116,14 @@ def delete_job(
         db.delete(job)
         db.commit()
         return True, deleted_candidate_count
-
     except Exception:
         db.rollback()
         raise
 
 
 def count_candidates_for_job(db: Session, job_id: str, owner_sub: str | None = None) -> int:
-    from app.models import JobCandidate, Candidate
+    from app.models import Candidate, JobCandidate
+
     query = db.query(JobCandidate).join(Candidate, Candidate.id == JobCandidate.candidate_id).filter(JobCandidate.job_id == job_id)
     if owner_sub is not None:
         query = query.filter(Candidate.owner_sub == owner_sub)
