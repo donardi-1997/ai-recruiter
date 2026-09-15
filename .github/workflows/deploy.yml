@@ -144,8 +144,10 @@ jobs:
       - name: Migrate and backfill production database
         env:
           ECR_REGISTRY: ${{ steps.ecr-login.outputs.registry }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
         run: |
           set -euo pipefail
+          test -n "$DATABASE_URL" || { echo "DATABASE_URL secret is required"; exit 1; }
           INSTANCE_IP=$(aws lightsail get-instance \
             --instance-name "$INSTANCE_NAME" \
             --region "$AWS_REGION" \
@@ -188,14 +190,14 @@ jobs:
             sudo docker run --rm \
               --network ai-recruiter \
               --add-host=host.docker.internal:host-gateway \
-              -e "DATABASE_URL=postgresql://postgres:postgres@host.docker.internal:5432/ai_recruiter" \
+              -e "DATABASE_URL=$DATABASE_URL" \
               "$ECR_REGISTRY/$ECR_BACKEND_REPO:${{ github.sha }}" \
               python -m app.scripts.migrate_candidate_import
 
             sudo docker run --rm \
               --network ai-recruiter \
               --add-host=host.docker.internal:host-gateway \
-              -e "DATABASE_URL=postgresql://postgres:postgres@host.docker.internal:5432/ai_recruiter" \
+              -e "DATABASE_URL=$DATABASE_URL" \
               -e "AWS_REGION=$AWS_REGION" \
               -e "AWS_PROFILE=ai-recruiter-bedrock" \
               -e "IMPORT_STAGING_BUCKET=$IMPORT_STAGING_BUCKET" \
@@ -213,8 +215,10 @@ jobs:
       - name: Deploy API worker and frontend via SSH
         env:
           ECR_REGISTRY: ${{ steps.ecr-login.outputs.registry }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
         run: |
           set -euo pipefail
+          test -n "$DATABASE_URL" || { echo "DATABASE_URL secret is required"; exit 1; }
           INSTANCE_IP=$(aws lightsail get-instance \
             --instance-name "$INSTANCE_NAME" \
             --region "$AWS_REGION" \
@@ -263,7 +267,8 @@ jobs:
 
             chmod +x /tmp/ai-recruiter-deploy-api.sh /tmp/ai-recruiter-deploy-worker.sh
 
-            ECR_TAG="${{ github.sha }}" \
+            DATABASE_URL="$DATABASE_URL" \
+              ECR_TAG="${{ github.sha }}" \
               IMPORT_STAGING_BUCKET="$IMPORT_STAGING_BUCKET" \
               IMPORT_QUEUE_URL="$IMPORT_QUEUE_URL" \
               IMPORT_EVALUATION_CONCURRENCY="1" \
@@ -288,7 +293,8 @@ jobs:
           " 2>&1 || echo "BEDROCK_RETRIEVE_FAIL")
             echo "\$RETRIEVE_RESULT" | grep -q "BEDROCK_RETRIEVE_OK"
 
-            ECR_TAG="${{ github.sha }}" \
+            DATABASE_URL="$DATABASE_URL" \
+              ECR_TAG="${{ github.sha }}" \
               IMPORT_STAGING_BUCKET="$IMPORT_STAGING_BUCKET" \
               IMPORT_QUEUE_URL="$IMPORT_QUEUE_URL" \
               IMPORT_EVALUATION_CONCURRENCY="1" \
