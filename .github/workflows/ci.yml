@@ -54,7 +54,7 @@ jobs:
           python -m pytest app/tests/test_contract.py -v --tb=short
 
   # ─────────────────────────────────────────────────────────
-  # BACKEND SMOKE TEST (against real Postgres)
+  # POSTGRESQL + ALEMBIC SMOKE TEST
   # ─────────────────────────────────────────────────────────
   backend-smoke:
     name: Backend smoke (Postgres)
@@ -90,11 +90,11 @@ jobs:
           pip install -r requirements.txt
           pip install pytest alembic psycopg2-binary
 
-      - name: Run tests against Postgres
+      - name: Apply Alembic migrations and verify schema
         env:
           DATABASE_URL: postgresql://postgres:postgres@localhost:5432/ai_recruiter_test
         run: |
-          python -m pytest app/tests/test_contract.py -v --tb=short
+          python -m pytest app/tests/test_postgres_migrations.py -v --tb=short
 
   # ─────────────────────────────────────────────────────────
   # FRONTEND LINT & BUILD
