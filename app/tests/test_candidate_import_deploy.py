@@ -1,4 +1,4 @@
-"""Deployment contracts for the candidate-import API/worker production slice."""
+"""Deployment contracts for the shared candidate-import/Indeed worker."""
 
 from pathlib import Path
 
@@ -13,13 +13,14 @@ def _read(path: Path) -> str:
     return path.read_text(encoding="utf-8")
 
 
-def test_worker_deploy_uses_same_immutable_backend_image_and_command():
+def test_worker_deploy_uses_same_immutable_backend_image_and_shared_dispatcher_command():
     worker = _read(WORKER_SCRIPT)
     assert 'ECR_REPO="ai-recruiter-api"' in worker
     assert 'ECR_TAG="${ECR_TAG:-latest}"' in worker
     assert 'CONTAINER_NAME="ai-recruiter-worker"' in worker
     assert "--restart unless-stopped" in worker
-    assert "python -m app.workers.candidate_imports" in worker
+    assert "python -m app.workers.dispatcher" in worker
+    assert "python -m app.workers.candidate_imports" not in worker
     assert 'docker inspect "$CONTAINER_NAME"' in worker
     assert 'OLD_WORKER_IMAGE' in worker
 
