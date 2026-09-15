@@ -1,11 +1,14 @@
 """Indeed integration application service."""
 
 from app.config import IndeedSettings, get_indeed_settings
+from app.domains.candidates import repository as candidates_repository
+from app.domains.candidates import service as candidates_service
 from app.domains.indeed import candidates as candidate_sync
-from app.domains.indeed import dispositions, mapper, repository
+from app.domains.indeed import dispositions, mapper, repository, resume_repository
 from app.domains.indeed.client import IndeedClient
 from app.domains.indeed.exceptions import IndeedDisabled, IndeedLinkNotFound, IndeedNotConfigured, IndeedRemoteError
 from app.domains.jobs.service import require_job
+from app.infrastructure.imports import storage
 
 CREATE_JOB = """mutation CreateSourcedJobPostings($input: CreateSourcedJobPostingsInput) { jobsIngest { createSourcedJobPostings(input: $input) { results { jobPosting { sourcedPostingId employerJobId } } } } }"""
 EXPIRE_JOB = """mutation ExpireSourcedJobsBySourcedPostingId($input: ExpireSourcedJobsBySourcedPostingIdInput!) { jobsIngest { expireSourcedJobsBySourcedPostingId(input: $input) { results { trackingKey inputData { ... on ExpireSourcedJobBySourcedPostingIdInfo { sourcedPostingId } } } } } }"""
@@ -120,15 +123,66 @@ def get_candidate_details(db, *, owner_sub: str, job_id: str, candidate_id: str)
     )
     if link is None:
         raise IndeedLinkNotFound("Candidate was not sourced from Indeed for this job")
+
+    resume_task = resume_repository.get_resume_ingestion_for_candidate_link(
+        db,
+        owner_sub=owner_sub,
+        candidate_link_id=link.id,
+    )
+    resume_status = resume_task.status if resume_task is not None else (
+        "PENDING" if link.resume_name else "UNAVAILABLE"
+    )
+    resume_available = bool(
+        resume_task is not None
+        and resume_task.status == "COMPLETED"
+        and resume_task.canonical_s3_key
+    )
+
     return {
         "candidate_id": candidate_id,
         "job_id": job_id,
         "source_name": link.source_name,
         "source_enum_key": link.source_enum_key,
         "resume_name": link.resume_name,
-        "resume_url": link.resume_url,
+        "resume": {
+            "name": link.resume_name,
+            "status": resume_status,
+            "available": resume_available,
+            "sha256": resume_task.resume_sha256 if resume_task else None,
+            "last_error_code": resume_task.last_error_code if resume_task else None,
+        },
         "staged_test": bool(link.staged_test),
         "acknowledged_at": link.acknowledged_at.isoformat() if link.acknowledged_at else None,
+    }
+
+
+def get_canonical_resume_download(
+    db,
+    *,
+    owner_sub: str,
+    job_id: str,
+    candidate_id: str,
+) -> dict:
+    require_job(db, job_id, owner_sub)
+    candidates_service.require_candidate(db, candidate_id, owner_sub)
+    assignment = candidates_repository.get_job_candidate(
+        db,
+        job_id=job_id,
+        candidate_id=candidate_id,
+        owner_sub=owner_sub,
+    )
+    if assignment is None:
+        raise IndeedLinkNotFound("Candidate is not assigned to this job")
+
+    download = storage.create_canonical_candidate_download(
+        candidate_id,
+        expires_in=300,
+    )
+    if download is None:
+        raise IndeedLinkNotFound("Candidate resume is not available")
+    return {
+        "url": download["url"],
+        "expires_in": download["expires_in"],
     }
 
 
