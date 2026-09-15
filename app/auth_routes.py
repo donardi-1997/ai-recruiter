@@ -9,16 +9,25 @@ from fastapi import APIRouter, Cookie, Depends, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
+from app.infrastructure.bedrock.session import get_cached_session
+
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/auth")
 
+AWS_REGION = os.getenv("AWS_REGION", "us-east-2")
+COGNITO_USER_POOL_ID = os.getenv("COGNITO_USER_POOL_ID")
+COGNITO_CLIENT_ID = os.getenv("COGNITO_CLIENT_ID")
+
 cognito_client = boto3.client(
     "cognito-idp",
-    region_name=os.getenv("AWS_REGION", "us-east-2"),
+    region_name=AWS_REGION,
 )
 
-COGNITO_CLIENT_ID = os.getenv("COGNITO_CLIENT_ID")
+
+def get_admin_cognito_client():
+    """Return a signed Cognito client using the runtime Roles Anywhere session."""
+    return get_cached_session().client("cognito-idp", region_name=AWS_REGION)
 
 
 class LoginRequest(BaseModel):
@@ -66,6 +75,10 @@ def login(body: LoginRequest):
 
 @router.post("/register")
 def register(email: str = Query(...), password: str = Query(...)):
+    if not COGNITO_USER_POOL_ID:
+        logger.error("COGNITO_USER_POOL_ID is required for automatic registration confirmation")
+        raise HTTPException(status_code=500, detail="No fue posible crear la cuenta.")
+
     try:
         response = cognito_client.sign_up(
             ClientId=COGNITO_CLIENT_ID,
@@ -73,8 +86,12 @@ def register(email: str = Query(...), password: str = Query(...)):
             Password=password,
             UserAttributes=[{"Name": "email", "Value": email}],
         )
+        get_admin_cognito_client().admin_confirm_sign_up(
+            UserPoolId=COGNITO_USER_POOL_ID,
+            Username=email,
+        )
         return {
-            "message": "Usuario creado correctamente. Revisa tu correo para confirmar la cuenta.",
+            "message": "Usuario creado correctamente. Ya puedes iniciar sesion.",
             "user_sub": response.get("UserSub"),
         }
     except ClientError as e:
