@@ -5,10 +5,7 @@ import os
 from sqlalchemy import create_engine, event
 from sqlalchemy.orm import DeclarativeBase, sessionmaker, Session
 
-DATABASE_URL = os.getenv(
-    "DATABASE_URL",
-    "postgresql://postgres:postgres@localhost:5432/ai_recruiter",
-)
+DATABASE_URL = os.environ["DATABASE_URL"]
 
 
 class Base(DeclarativeBase):
