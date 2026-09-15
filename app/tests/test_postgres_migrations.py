@@ -36,6 +36,7 @@ def test_alembic_head_builds_current_postgres_schema():
             "indeed_candidate_links",
             "indeed_candidate_sync_state",
             "indeed_disposition_events",
+            "indeed_resume_ingestions",
         }.issubset(tables)
 
         job_columns = {column["name"] for column in inspector.get_columns("jobs")}
@@ -52,10 +53,28 @@ def test_alembic_head_builds_current_postgres_schema():
         }
         assert {"application_status", "status_changed_at"}.issubset(assignment_columns)
 
+        resume_columns = {
+            column["name"] for column in inspector.get_columns("indeed_resume_ingestions")
+        }
+        assert {
+            "candidate_link_id",
+            "status",
+            "resume_sha256",
+            "canonical_s3_key",
+            "bedrock_ingestion_job_id",
+            "attempt_count",
+            "queue_dispatched_at",
+            "processing_token",
+            "heartbeat_at",
+            "last_error_code",
+            "last_error_message",
+            "completed_at",
+        }.issubset(resume_columns)
+
         with engine.connect() as connection:
             revision = connection.execute(
                 text("SELECT version_num FROM alembic_version")
             ).scalar_one()
-        assert revision == "005"
+        assert revision == "006"
     finally:
         engine.dispose()
