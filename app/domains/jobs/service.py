@@ -15,21 +15,69 @@ def require_job(db: Session, job_id: str, owner_sub: str):
 
 def list_jobs(db: Session, owner_sub: str):
     jobs = repository.list_jobs(db, owner_sub=owner_sub)
-    return [(job, repository.count_candidates_for_job(db, job.id, owner_sub=owner_sub)) for job in jobs]
+    return [
+        (
+            job,
+            repository.count_candidates_for_job(
+                db,
+                job.id,
+                owner_sub=owner_sub,
+            ),
+        )
+        for job in jobs
+    ]
 
 
-def create_job(db: Session, *, title: str, description: str | None, owner_sub: str, **publication_fields):
-    return repository.create_job(db, title=title, description=description, owner_sub=owner_sub, **publication_fields)
+def create_job(
+    db: Session,
+    *,
+    title: str,
+    description: str | None,
+    owner_sub: str,
+    **publication_fields,
+):
+    return repository.create_job(
+        db,
+        title=title,
+        description=description,
+        owner_sub=owner_sub,
+        **publication_fields,
+    )
 
 
-def update_job(db: Session, *, job_id: str, title: str | None, description: str | None, owner_sub: str, **publication_fields):
+def update_job(
+    db: Session,
+    *,
+    job_id: str,
+    title: str | None,
+    description: str | None,
+    owner_sub: str,
+    **publication_fields,
+):
     job = require_job(db, job_id, owner_sub)
-    return repository.update_job(db, job, title=title, description=description, **publication_fields)
+    return repository.update_job(
+        db,
+        job,
+        title=title,
+        description=description,
+        **publication_fields,
+    )
 
 
-def delete_job(db: Session, *, job_id: str, owner_sub: str, delete_candidates: bool) -> int:
+def delete_job(
+    db: Session,
+    *,
+    job_id: str,
+    owner_sub: str,
+    delete_candidates: bool,
+) -> int:
     require_job(db, job_id, owner_sub)
-    success, deleted_count = repository.delete_job(db, job_id, owner_sub=owner_sub, delete_candidates=delete_candidates)
+    success, deleted_count = repository.delete_job(
+        db,
+        job_id,
+        owner_sub=owner_sub,
+        delete_candidates=delete_candidates,
+    )
     if not success:
         raise JobNotFound(job_id)
     return deleted_count
