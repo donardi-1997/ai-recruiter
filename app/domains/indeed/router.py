@@ -93,3 +93,21 @@ def expire(job_id: str, db: Session = Depends(get_db), user: dict = Depends(get_
         return service.expire_job(db, job_id=job_id, owner_sub=user["sub"])
     except Exception as exc:
         raise _translate(exc)
+
+
+@router.get("/api/jobs/{job_id}/candidates/{candidate_id}/integrations/indeed")
+def candidate_details(
+    job_id: str,
+    candidate_id: str,
+    db: Session = Depends(get_db),
+    user: dict = Depends(get_current_user),
+):
+    try:
+        return service.get_candidate_details(
+            db,
+            owner_sub=user["sub"],
+            job_id=job_id,
+            candidate_id=candidate_id,
+        )
+    except Exception as exc:
+        raise _translate(exc)
