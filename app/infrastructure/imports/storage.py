@@ -234,3 +234,28 @@ def write_canonical_candidate_document(
         ContentType="application/json",
     )
     return CanonicalWriteResult(key=key, changed=True)
+
+
+def create_canonical_candidate_download(
+    candidate_id: str,
+    *,
+    expires_in: int = 300,
+) -> dict | None:
+    """Return a short-lived GET URL for an existing canonical candidate CV."""
+    bounded_expiry = max(60, min(int(expires_in), 3600))
+    client = _s3_client()
+    for extension in (".pdf", ".docx"):
+        key = f"{CANONICAL_PREFIX}/cv-{candidate_id}{extension}"
+        if _head_or_none(CANONICAL_BUCKET, key) is None:
+            continue
+        url = client.generate_presigned_url(
+            "get_object",
+            Params={"Bucket": CANONICAL_BUCKET, "Key": key},
+            ExpiresIn=bounded_expiry,
+        )
+        return {
+            "url": url,
+            "expires_in": bounded_expiry,
+            "key": key,
+        }
+    return None
