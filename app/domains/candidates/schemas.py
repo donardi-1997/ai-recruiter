@@ -37,3 +37,7 @@ class BulkUploadResponse(BaseModel):
 
 class CandidateEvaluationsResponse(BaseModel):
     evaluations: list[dict[str, Any]]
+
+
+class ApplicationStatusRequest(BaseModel):
+    status: str

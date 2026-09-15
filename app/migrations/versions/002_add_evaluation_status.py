@@ -14,27 +14,44 @@ branch_labels = None
 depends_on = None
 
 
-def upgrade() -> None:
-    # Add status column with default COMPLETED for existing rows
-    op.add_column(
-        "evaluations",
-        sa.Column(
-            "status",
-            sa.Text,
-            nullable=False,
-            server_default="COMPLETED",
-        ),
-    )
+def _evaluation_columns() -> set[str]:
+    """Return the columns present when this historical migration runs.
 
-    # Add error_message column (nullable, no default needed)
-    op.add_column(
-        "evaluations",
-        sa.Column(
-            "error_message",
-            sa.Text,
-            nullable=True,
-        ),
-    )
+    Revision 001 was later amended to include ``status`` and ``error_message``.
+    Older databases may still have the original 001 schema without those
+    columns, while fresh databases built from the current repository already
+    contain them. Keep 002 forward-compatible with both states.
+    """
+
+    bind = op.get_bind()
+    return {column["name"] for column in sa.inspect(bind).get_columns("evaluations")}
+
+
+def upgrade() -> None:
+    columns = _evaluation_columns()
+
+    # Add status only for databases created from the original revision 001.
+    if "status" not in columns:
+        op.add_column(
+            "evaluations",
+            sa.Column(
+                "status",
+                sa.Text,
+                nullable=False,
+                server_default="COMPLETED",
+            ),
+        )
+
+    # Add error_message only for databases created from the original revision 001.
+    if "error_message" not in columns:
+        op.add_column(
+            "evaluations",
+            sa.Column(
+                "error_message",
+                sa.Text,
+                nullable=True,
+            ),
+        )
 
     # Backfill: mark evaluations with recommendation=EVALUATION_FAILED as FAILED
     op.execute(

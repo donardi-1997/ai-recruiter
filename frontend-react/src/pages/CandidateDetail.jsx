@@ -1,4 +1,5 @@
-import { useEffect, useState } from "react";
+// eslint-disable-next-line no-unused-vars
+import React, { useEffect, useState } from "react";
 import { Link, useParams, useSearchParams } from "react-router-dom";
 import api from "../api/client";
 
@@ -34,13 +35,22 @@ function CandidateDetail() {
 
   if (loading) return <div className="page"><div className="page-loading"><span /> Cargando perfil…</div></div>;
   const evaluation = evaluations[0];
+  const sourceName = candidate?.metadata?.source_name || candidate?.metadata?.source;
+  const resumeName = candidate?.filename || candidate?.metadata?.resume_name || "Currículum registrado";
 
   return (
     <div className="page candidate-detail-page">
       <Link to="/candidates" className="back-link">← Volver a candidatos</Link>
       <header className="candidate-profile-header">
         <div className="candidate-avatar">{candidate?.name?.slice(0, 2).toUpperCase() || "CV"}</div>
-        <div><span className="eyebrow">Perfil de candidato</span><h1>{candidate?.name || "Candidato"}</h1><p>{candidate?.filename || "Currículum registrado"}</p>{jobId && <p>Evaluado para la vacante seleccionada</p>}</div>
+        <div>
+          <span className="eyebrow">Perfil de candidato</span>
+          <h1>{candidate?.name || "Candidato"}</h1>
+          <p>{resumeName}</p>
+          {sourceName && <p><strong>Origen:</strong> {sourceName}</p>}
+          {candidate?.metadata?.indeed_staged_test && <p className="muted">Candidato de prueba de Indeed</p>}
+          {jobId && <p>Evaluado para la vacante seleccionada</p>}
+        </div>
         <span className="status-pill"><i /> Disponible</span>
       </header>
 

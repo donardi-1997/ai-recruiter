@@ -44,6 +44,7 @@ class Candidate(Base):
 
     rankings = relationship("RankingItem", back_populates="candidate", cascade="all, delete-orphan")
     jobs = relationship("JobCandidate", back_populates="candidate", cascade="all, delete-orphan")
+    indeed_links = relationship("IndeedCandidateLink", back_populates="candidate", cascade="all, delete-orphan")
 
 
 class Job(Base):
@@ -58,6 +59,11 @@ class Job(Base):
     description = Column(Text, nullable=True)
     # Cognito subject that owns this job.
     owner_sub = Column(Text, nullable=True)
+    country_code = Column(Text, nullable=True)
+    city = Column(Text, nullable=True)
+    employment_type = Column(Text, nullable=True)
+    public_slug = Column(Text, nullable=True)
+    published_at = Column(DateTime(timezone=True), nullable=True)
     created_at = Column(
         DateTime(timezone=True),
         nullable=False,
@@ -66,6 +72,9 @@ class Job(Base):
 
     rankings = relationship("Ranking", back_populates="job", cascade="all, delete-orphan")
     candidates = relationship("JobCandidate", back_populates="job", cascade="all, delete-orphan")
+    indeed_link = relationship("IndeedJobLink", back_populates="job", uselist=False, cascade="all, delete-orphan")
+    indeed_events = relationship("IndeedSyncEvent", back_populates="job")
+    indeed_candidate_links = relationship("IndeedCandidateLink", back_populates="job", cascade="all, delete-orphan")
 
 
 class JobCandidate(Base):
@@ -87,6 +96,12 @@ class JobCandidate(Base):
         nullable=False,
     )
     assigned_at = Column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=lambda: datetime.now(timezone.utc),
+    )
+    application_status = Column(Text, nullable=False, default="APPLIED")
+    status_changed_at = Column(
         DateTime(timezone=True),
         nullable=False,
         default=lambda: datetime.now(timezone.utc),
@@ -329,3 +344,165 @@ class CandidateIdentity(Base):
         nullable=False,
         default=lambda: datetime.now(timezone.utc),
     )
+
+
+class IndeedConnection(Base):
+    __tablename__ = "indeed_connections"
+    __table_args__ = (UniqueConstraint("owner_sub", name="uq_indeed_connections_owner"),)
+
+    id = Column(UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid.uuid4()))
+    owner_sub = Column(Text, nullable=False)
+    employer_id = Column(Text, nullable=True)
+    status = Column(Text, nullable=False, default="DISCONNECTED")
+    last_error = Column(Text, nullable=True)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=lambda: datetime.now(timezone.utc))
+    updated_at = Column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
+    )
+
+
+class IndeedJobLink(Base):
+    __tablename__ = "indeed_job_links"
+    __table_args__ = (
+        UniqueConstraint("job_id", name="uq_indeed_job_links_job"),
+        Index("idx_indeed_job_links_owner", "owner_sub"),
+    )
+
+    id = Column(UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid.uuid4()))
+    job_id = Column(UUID(as_uuid=False), ForeignKey("jobs.id", ondelete="CASCADE"), nullable=False)
+    owner_sub = Column(Text, nullable=False)
+    sourced_posting_id = Column(Text, nullable=True)
+    employer_job_id = Column(Text, nullable=True)
+    external_status = Column(JSON, nullable=True, default=dict)
+    last_synced_at = Column(DateTime(timezone=True), nullable=True)
+    last_error = Column(Text, nullable=True)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=lambda: datetime.now(timezone.utc))
+    updated_at = Column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
+    )
+
+    job = relationship("Job", back_populates="indeed_link")
+
+
+class IndeedSyncEvent(Base):
+    __tablename__ = "indeed_sync_events"
+    __table_args__ = (
+        Index("idx_indeed_sync_events_owner_created", "owner_sub", "created_at"),
+        Index("idx_indeed_sync_events_job_created", "job_id", "created_at"),
+    )
+
+    id = Column(UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid.uuid4()))
+    owner_sub = Column(Text, nullable=False)
+    job_id = Column(UUID(as_uuid=False), ForeignKey("jobs.id", ondelete="SET NULL"), nullable=True)
+    operation = Column(Text, nullable=False)
+    status = Column(Text, nullable=False, default="PENDING")
+    external_id = Column(Text, nullable=True)
+    error_code = Column(Text, nullable=True)
+    error_message = Column(Text, nullable=True)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=lambda: datetime.now(timezone.utc))
+    completed_at = Column(DateTime(timezone=True), nullable=True)
+
+    job = relationship("Job", back_populates="indeed_events")
+
+
+class IndeedCandidateLink(Base):
+    __tablename__ = "indeed_candidate_links"
+    __table_args__ = (
+        UniqueConstraint("owner_sub", "asset_id", name="uq_indeed_candidate_links_owner_asset"),
+        Index("idx_indeed_candidate_links_owner_job", "owner_sub", "job_id"),
+        Index("idx_indeed_candidate_links_candidate", "candidate_id"),
+    )
+
+    id = Column(UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid.uuid4()))
+    owner_sub = Column(Text, nullable=False)
+    candidate_id = Column(UUID(as_uuid=False), ForeignKey("candidates.id", ondelete="CASCADE"), nullable=False)
+    job_id = Column(UUID(as_uuid=False), ForeignKey("jobs.id", ondelete="CASCADE"), nullable=False)
+    asset_id = Column(Text, nullable=False)
+    registration_id = Column(Text, nullable=True)
+    employer_identifier = Column(Text, nullable=True)
+    source_enum_key = Column(Text, nullable=True)
+    source_name = Column(Text, nullable=True)
+    sourced_posting_id = Column(Text, nullable=True)
+    indeed_apply_id = Column(Text, nullable=True)
+    ittk = Column(Text, nullable=True)
+    universal_apply_id = Column(Text, nullable=True)
+    resume_name = Column(Text, nullable=True)
+    resume_url = Column(Text, nullable=True)
+    staged_test = Column(Boolean, nullable=False, default=False)
+    acknowledged_at = Column(DateTime(timezone=True), nullable=True)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=lambda: datetime.now(timezone.utc))
+    updated_at = Column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
+    )
+
+    candidate = relationship("Candidate", back_populates="indeed_links")
+    job = relationship("Job", back_populates="indeed_candidate_links")
+    disposition_events = relationship(
+        "IndeedDispositionEvent",
+        back_populates="candidate_link",
+        cascade="all, delete-orphan",
+    )
+
+
+class IndeedCandidateSyncState(Base):
+    __tablename__ = "indeed_candidate_sync_state"
+    __table_args__ = (UniqueConstraint("owner_sub", name="uq_indeed_candidate_sync_state_owner"),)
+
+    id = Column(UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid.uuid4()))
+    owner_sub = Column(Text, nullable=False)
+    ack_token = Column(Text, nullable=True)
+    last_fetch_at = Column(DateTime(timezone=True), nullable=True)
+    last_ack_at = Column(DateTime(timezone=True), nullable=True)
+    last_error = Column(Text, nullable=True)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=lambda: datetime.now(timezone.utc))
+    updated_at = Column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
+    )
+
+
+class IndeedDispositionEvent(Base):
+    __tablename__ = "indeed_disposition_events"
+    __table_args__ = (
+        UniqueConstraint(
+            "candidate_link_id",
+            "local_status",
+            "status_changed_at",
+            name="uq_indeed_disposition_event_state_time",
+        ),
+        Index(
+            "idx_indeed_disposition_events_owner_status_time",
+            "owner_sub",
+            "sync_status",
+            "status_changed_at",
+        ),
+    )
+
+    id = Column(UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid.uuid4()))
+    owner_sub = Column(Text, nullable=False)
+    candidate_link_id = Column(
+        UUID(as_uuid=False),
+        ForeignKey("indeed_candidate_links.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    local_status = Column(Text, nullable=False)
+    indeed_status = Column(Text, nullable=False)
+    status_changed_at = Column(DateTime(timezone=True), nullable=False)
+    sync_status = Column(Text, nullable=False, default="PENDING")
+    attempt_count = Column(Integer, nullable=False, default=0)
+    last_error = Column(Text, nullable=True)
+    sent_at = Column(DateTime(timezone=True), nullable=True)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=lambda: datetime.now(timezone.utc))
+
+    candidate_link = relationship("IndeedCandidateLink", back_populates="disposition_events")

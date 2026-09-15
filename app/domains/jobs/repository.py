@@ -25,19 +25,53 @@ def create_job(
     title: str,
     description: str | None = None,
     owner_sub: str | None = None,
+    country_code: str | None = None,
+    city: str | None = None,
+    employment_type: str | None = None,
+    public_slug: str | None = None,
+    published_at=None,
 ) -> Job:
-    job = Job(title=title, description=description, owner_sub=owner_sub)
+    job = Job(
+        title=title,
+        description=description,
+        owner_sub=owner_sub,
+        country_code=country_code,
+        city=city,
+        employment_type=employment_type,
+        public_slug=public_slug,
+        published_at=published_at,
+    )
     db.add(job)
     db.commit()
     db.refresh(job)
     return job
 
 
-def update_job(db: Session, job: Job, *, title: str | None = None, description: str | None = None) -> Job:
+def update_job(
+    db: Session,
+    job: Job,
+    *,
+    title: str | None = None,
+    description: str | None = None,
+    country_code: str | None = None,
+    city: str | None = None,
+    employment_type: str | None = None,
+    public_slug: str | None = None,
+    published_at=None,
+) -> Job:
     if title is not None:
         job.title = title
     if description is not None:
         job.description = description
+    for name, value in {
+        "country_code": country_code,
+        "city": city,
+        "employment_type": employment_type,
+        "public_slug": public_slug,
+        "published_at": published_at,
+    }.items():
+        if value is not None:
+            setattr(job, name, value)
     db.commit()
     db.refresh(job)
     return job

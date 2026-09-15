@@ -11,6 +11,16 @@ from app.domains.jobs.schemas import CreateJobRequest, UpdateJobRequest
 router = APIRouter(prefix="/api/jobs", tags=["jobs"])
 
 
+def _publication_fields(body) -> dict:
+    return {
+        "country_code": body.country_code,
+        "city": body.city,
+        "employment_type": body.employment_type,
+        "public_slug": body.public_slug,
+        "published_at": body.published_at,
+    }
+
+
 @router.get("")
 def list_jobs(
     db: Session = Depends(get_db),
@@ -33,6 +43,7 @@ def create_job(
         title=body.title,
         description=body.description,
         owner_sub=_user["sub"],
+        **_publication_fields(body),
     )
     return presenter.job_payload(job)
 
@@ -51,6 +62,7 @@ def update_job(
             title=body.title,
             description=body.description,
             owner_sub=_user["sub"],
+            **_publication_fields(body),
         )
     except JobNotFound:
         raise HTTPException(status_code=404, detail="Vacante no encontrada.")

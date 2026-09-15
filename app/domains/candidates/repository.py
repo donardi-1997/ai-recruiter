@@ -95,6 +95,39 @@ def ensure_candidate_assigned_to_job(
     return link
 
 
+def get_job_candidate(
+    db: Session,
+    *,
+    job_id: str,
+    candidate_id: str,
+    owner_sub: str | None = None,
+) -> JobCandidate | None:
+    query = (
+        db.query(JobCandidate)
+        .join(Candidate, Candidate.id == JobCandidate.candidate_id)
+        .filter(
+            JobCandidate.job_id == job_id,
+            JobCandidate.candidate_id == candidate_id,
+        )
+    )
+    if owner_sub is not None:
+        query = query.filter(Candidate.owner_sub == owner_sub)
+    return query.first()
+
+
+def set_job_candidate_status(
+    db: Session,
+    link: JobCandidate,
+    *,
+    status: str,
+    changed_at: datetime | None = None,
+) -> JobCandidate:
+    link.application_status = status
+    link.status_changed_at = changed_at or datetime.now(timezone.utc)
+    db.flush()
+    return link
+
+
 def delete_candidate(db: Session, candidate_id: str) -> bool:
     candidate = get_candidate(db, candidate_id)
     if not candidate:

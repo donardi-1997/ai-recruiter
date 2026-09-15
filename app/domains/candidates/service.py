@@ -5,10 +5,26 @@ import os
 from sqlalchemy.orm import Session
 
 from app.domains.candidates import repository as candidates_repository
-from app.domains.candidates.exceptions import CandidateNotFound, JobNotFound
+from app.domains.candidates.exceptions import (
+    CandidateNotFound,
+    InvalidApplicationStatus,
+    JobCandidateNotFound,
+    JobNotFound,
+)
 from app.domains.evaluations import repository as evaluations_repository
 from app.domains.jobs import repository as jobs_repository
 from app.infrastructure.storage.candidate_documents import index_candidate_document
+
+APPLICATION_STATUSES = {
+    "APPLIED",
+    "SCREENING",
+    "INTERVIEW",
+    "OFFER",
+    "HIRED",
+    "REJECTED",
+    "WITHDRAWN",
+    "ON_HOLD",
+}
 
 
 def require_candidate(
@@ -74,6 +90,50 @@ def assign_candidates(
     )
 
 
+def set_application_status(
+    db: Session,
+    *,
+    job_id: str,
+    candidate_id: str,
+    status: str,
+    owner_sub: str,
+):
+    require_job(db, job_id, owner_sub)
+    require_candidate(db, candidate_id, owner_sub)
+    link = candidates_repository.get_job_candidate(
+        db,
+        job_id=job_id,
+        candidate_id=candidate_id,
+        owner_sub=owner_sub,
+    )
+    if link is None:
+        raise JobCandidateNotFound(candidate_id)
+
+    normalized = (status or "").strip().upper()
+    if normalized not in APPLICATION_STATUSES:
+        raise InvalidApplicationStatus(status)
+    if link.application_status == normalized:
+        return link, False
+
+    candidates_repository.set_job_candidate_status(db, link, status=normalized)
+
+    # Keep provider mapping out of the core model. The Indeed adapter only
+    # receives a provider-neutral local status after the local state changed.
+    from app.domains.indeed import service as indeed_service
+
+    indeed_service.queue_candidate_status(
+        db,
+        owner_sub=owner_sub,
+        job_id=job_id,
+        candidate_id=candidate_id,
+        local_status=normalized,
+        status_changed_at=link.status_changed_at,
+    )
+    db.commit()
+    db.refresh(link)
+    return link, True
+
+
 def get_job_candidate_evaluation(
     db: Session,
     job_id: str,
@@ -134,13 +194,17 @@ def create_and_index_candidate(
 
 
 __all__ = [
+    "APPLICATION_STATUSES",
     "CandidateNotFound",
+    "InvalidApplicationStatus",
+    "JobCandidateNotFound",
     "JobNotFound",
     "require_candidate",
     "require_job",
     "list_candidates",
     "list_job_candidates",
     "assign_candidates",
+    "set_application_status",
     "get_job_candidate_evaluation",
     "get_candidate_evaluations",
     "delete_candidate",

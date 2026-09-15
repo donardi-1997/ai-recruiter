@@ -34,12 +34,14 @@ def create_job(
     title: str,
     description: str | None,
     owner_sub: str,
+    **publication_fields,
 ):
     return repository.create_job(
         db,
         title=title,
         description=description,
         owner_sub=owner_sub,
+        **publication_fields,
     )
 
 
@@ -50,6 +52,7 @@ def update_job(
     title: str | None,
     description: str | None,
     owner_sub: str,
+    **publication_fields,
 ):
     job = require_job(db, job_id, owner_sub)
     return repository.update_job(
@@ -57,6 +60,7 @@ def update_job(
         job,
         title=title,
         description=description,
+        **publication_fields,
     )
 
 
