@@ -2,7 +2,7 @@
 # ==============================================================
 # deploy-worker.sh — Deploy ai-recruiter-worker with Roles Anywhere
 #
-# Runs the durable candidate import SQS worker from the exact same
+# Runs the shared durable SQS dispatcher from the exact same
 # immutable backend image used by the API.
 # ==============================================================
 
@@ -73,7 +73,7 @@ rollback_worker() {
         -v "${HOST_SIGNING_HELPER}:${CONTAINER_SIGNING_HELPER}:ro" \
         -v "${HOST_CLIENT_CRT}:${CONTAINER_CLIENT_CRT}:ro" \
         -v "${HOST_CLIENT_KEY}:${CONTAINER_CLIENT_KEY}:ro" \
-        "$old_image" python -m app.workers.candidate_imports >/dev/null
+        "$old_image" python -m app.workers.dispatcher >/dev/null
     log_warn "Worker rollback attempted"
 }
 
@@ -136,7 +136,7 @@ fi
 
 if [[ "$DRY_RUN" == "true" ]]; then
     echo "[DRY RUN] docker rm -f $CONTAINER_NAME"
-    echo "[DRY RUN] docker run ... $ECR_IMAGE python -m app.workers.candidate_imports"
+    echo "[DRY RUN] docker run ... $ECR_IMAGE python -m app.workers.dispatcher"
     exit 0
 fi
 
@@ -159,7 +159,7 @@ if ! docker run -d \
     -v "${HOST_SIGNING_HELPER}:${CONTAINER_SIGNING_HELPER}:ro" \
     -v "${HOST_CLIENT_CRT}:${CONTAINER_CLIENT_CRT}:ro" \
     -v "${HOST_CLIENT_KEY}:${CONTAINER_CLIENT_KEY}:ro" \
-    "$ECR_IMAGE" python -m app.workers.candidate_imports; then
+    "$ECR_IMAGE" python -m app.workers.dispatcher; then
     rollback_worker "$OLD_WORKER_IMAGE"
     exit 1
 fi
@@ -232,4 +232,4 @@ log_ok "Worker AWS runtime identity verified"
 log_ok "Worker deploy completed successfully"
 echo "  Container: $CONTAINER_NAME"
 echo "  Image: $ECR_IMAGE"
-echo "  Command: python -m app.workers.candidate_imports"
+echo "  Command: python -m app.workers.dispatcher"
