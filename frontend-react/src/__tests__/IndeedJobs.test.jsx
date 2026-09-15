@@ -133,14 +133,32 @@ describe("Jobs Indeed integration", () => {
     });
   });
 
-  it("shows Indeed source attribution and remote resume name for synced candidates", async () => {
+  it("manually synchronizes Indeed candidates and dispositions", async () => {
+    api.post.mockImplementation((url) => {
+      if (url === "/integrations/indeed/candidates/sync") {
+        return Promise.resolve({ data: { fetched: 1, created: 1, reused: 0, skipped: 0 } });
+      }
+      if (url === "/integrations/indeed/dispositions/sync") {
+        return Promise.resolve({ data: { selected: 1, sent: 1, failed: 0 } });
+      }
+      return Promise.resolve({ data: {} });
+    });
+
     renderJobs();
     await screen.findByText("Country Manager Chile");
     fireEvent.click(screen.getByRole("button", { name: /^ver$/i }));
 
-    await screen.findByText("Ana Perez");
-    expect(screen.getByText(/Indeed Smart Sourcing/i)).toBeInTheDocument();
-    expect(screen.getByText(/ana-perez\.pdf/i)).toBeInTheDocument();
+    const candidateSync = await screen.findByRole("button", { name: /sincronizar candidatos/i });
+    fireEvent.click(candidateSync);
+    await waitFor(() => {
+      expect(api.post).toHaveBeenCalledWith("/integrations/indeed/candidates/sync");
+    });
+
+    const dispositionSync = await screen.findByRole("button", { name: /sincronizar estados/i });
+    fireEvent.click(dispositionSync);
+    await waitFor(() => {
+      expect(api.post).toHaveBeenCalledWith("/integrations/indeed/dispositions/sync");
+    });
   });
 
   it("keeps controls unavailable while Indeed is disabled", async () => {
