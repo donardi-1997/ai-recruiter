@@ -6,9 +6,10 @@ import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
-from app.db import Base
-from app.domains.indeed import repository as indeed_repository
 from app import models
+from app.db import Base
+from app.domains.indeed import resume_repository
+from app.domains.indeed.resume_models import IndeedResumeIngestion
 
 
 @pytest.fixture()
@@ -42,12 +43,9 @@ def _seed_link(db, *, owner_sub="owner-1"):
     return candidate, job, link
 
 
-def test_resume_ingestion_model_exists_with_pending_default(db_session):
-    ingestion_model = getattr(models, "IndeedResumeIngestion", None)
-    assert ingestion_model is not None
-
+def test_resume_ingestion_model_has_pending_defaults(db_session):
     _candidate, _job, link = _seed_link(db_session)
-    ingestion = ingestion_model(owner_sub="owner-1", candidate_link_id=link.id)
+    ingestion = IndeedResumeIngestion(owner_sub="owner-1", candidate_link_id=link.id)
     db_session.add(ingestion)
     db_session.commit()
     db_session.refresh(ingestion)
@@ -62,50 +60,47 @@ def test_resume_ingestion_model_exists_with_pending_default(db_session):
 
 
 def test_resume_ingestion_is_one_to_one_with_candidate_link(db_session):
-    ingestion_model = getattr(models, "IndeedResumeIngestion", None)
-    assert ingestion_model is not None
-
     _candidate, _job, link = _seed_link(db_session)
-    first = ingestion_model(owner_sub="owner-1", candidate_link_id=link.id)
+    first = IndeedResumeIngestion(owner_sub="owner-1", candidate_link_id=link.id)
     db_session.add(first)
     db_session.commit()
 
-    create_helper = getattr(indeed_repository, "get_or_create_resume_ingestion", None)
-    assert create_helper is not None
-    reused = create_helper(db_session, owner_sub="owner-1", candidate_link_id=link.id)
+    reused = resume_repository.get_or_create_resume_ingestion(
+        db_session,
+        owner_sub="owner-1",
+        candidate_link_id=link.id,
+    )
 
     assert reused.id == first.id
-    assert db_session.query(ingestion_model).count() == 1
+    assert db_session.query(IndeedResumeIngestion).count() == 1
 
 
 def test_resume_ingestion_repository_is_owner_scoped(db_session):
-    ingestion_model = getattr(models, "IndeedResumeIngestion", None)
-    assert ingestion_model is not None
-
     _candidate, _job, link = _seed_link(db_session, owner_sub="owner-1")
-    ingestion = ingestion_model(owner_sub="owner-1", candidate_link_id=link.id)
+    ingestion = IndeedResumeIngestion(owner_sub="owner-1", candidate_link_id=link.id)
     db_session.add(ingestion)
     db_session.commit()
 
-    getter = getattr(indeed_repository, "get_resume_ingestion", None)
-    assert getter is not None
-    assert getter(db_session, ingestion.id, owner_sub="owner-1").id == ingestion.id
-    assert getter(db_session, ingestion.id, owner_sub="owner-2") is None
+    assert resume_repository.get_resume_ingestion(
+        db_session,
+        ingestion.id,
+        owner_sub="owner-1",
+    ).id == ingestion.id
+    assert resume_repository.get_resume_ingestion(
+        db_session,
+        ingestion.id,
+        owner_sub="owner-2",
+    ) is None
 
 
 def test_resume_ingestion_claim_respects_active_and_stale_leases(db_session):
-    ingestion_model = getattr(models, "IndeedResumeIngestion", None)
-    assert ingestion_model is not None
-    claim = getattr(indeed_repository, "claim_resume_ingestion", None)
-    assert claim is not None
-
     _candidate, _job, link = _seed_link(db_session)
-    ingestion = ingestion_model(owner_sub="owner-1", candidate_link_id=link.id)
+    ingestion = IndeedResumeIngestion(owner_sub="owner-1", candidate_link_id=link.id)
     db_session.add(ingestion)
     db_session.commit()
 
     now = datetime(2026, 9, 15, 17, 0, tzinfo=timezone.utc)
-    assert claim(
+    assert resume_repository.claim_resume_ingestion(
         db_session,
         ingestion_id=ingestion.id,
         token="token-a",
@@ -113,7 +108,7 @@ def test_resume_ingestion_claim_respects_active_and_stale_leases(db_session):
         lease_seconds=300,
     ) is True
 
-    assert claim(
+    assert resume_repository.claim_resume_ingestion(
         db_session,
         ingestion_id=ingestion.id,
         token="token-b",
@@ -121,7 +116,7 @@ def test_resume_ingestion_claim_respects_active_and_stale_leases(db_session):
         lease_seconds=300,
     ) is False
 
-    assert claim(
+    assert resume_repository.claim_resume_ingestion(
         db_session,
         ingestion_id=ingestion.id,
         token="token-c",
