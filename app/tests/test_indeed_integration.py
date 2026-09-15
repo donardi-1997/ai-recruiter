@@ -15,6 +15,8 @@ from app.domains.indeed.exceptions import IndeedLinkNotFound, IndeedRemoteError,
 from app.domains.indeed.mapper import build_job_input
 from app.models import IndeedJobLink, IndeedSyncEvent, Job
 
+VALID_DESCRIPTION = "Lead Asiati operations across Chile and grow the local business."
+
 
 def settings(**overrides):
     values = dict(
@@ -47,7 +49,7 @@ def db_session():
 def published_job(owner="owner-1"):
     return Job(
         title="Country Manager Chile",
-        description="Lead the operation",
+        description=VALID_DESCRIPTION,
         owner_sub=owner,
         country_code="CL",
         city="Santiago",
@@ -110,10 +112,11 @@ def test_job_exposes_neutral_publication_fields():
 
 
 def test_mapper_builds_direct_employer_job_sync_payload():
-    job = Job(id="job-1", title="Country Manager Chile", description="Lead the operation", country_code="cl", city="Santiago", public_slug="country-manager-chile", published_at=datetime(2026, 9, 15, tzinfo=timezone.utc))
+    job = Job(id="job-1", title="Country Manager Chile", description=VALID_DESCRIPTION, country_code="cl", city="Santiago", public_slug="country-manager-chile", published_at=datetime(2026, 9, 15, tzinfo=timezone.utc))
     payload = build_job_input(job, careers_base_url="https://www.asiaticorp.com/jobs", source_name="Asiati Talent", company_name="Asiati")
     posting = payload["jobPostings"][0]
     assert posting["body"]["location"] == {"country": "CL", "cityRegionPostal": "Santiago"}
+    assert posting["body"]["descriptionFormatting"] == "TEXT"
     assert posting["metadata"]["jobPostingId"] == "job-1"
     assert posting["metadata"]["url"] == "https://www.asiaticorp.com/jobs/country-manager-chile"
     assert posting["metadata"]["jobSource"]["sourceType"] == "Employer"
@@ -123,6 +126,16 @@ def test_mapper_rejects_missing_required_publication_fields():
     job = Job(id="job-1", title="Incomplete", description=None, country_code=None, city=None)
     with pytest.raises(IndeedValidationError):
         build_job_input(job, careers_base_url="https://www.asiaticorp.com/jobs", source_name="Asiati Talent", company_name="Asiati")
+
+
+def test_mapper_rejects_values_outside_indeed_text_limits():
+    too_short = Job(id="job-1", title="Valid title", description="Too short", country_code="CL", city="Santiago")
+    with pytest.raises(IndeedValidationError, match="between 30 and 20000"):
+        build_job_input(too_short, careers_base_url="https://www.asiaticorp.com/jobs", source_name="Asiati Talent", company_name="Asiati")
+
+    long_title = Job(id="job-2", title="x" * 76, description=VALID_DESCRIPTION, country_code="CL", city="Santiago")
+    with pytest.raises(IndeedValidationError, match="75 characters"):
+        build_job_input(long_title, careers_base_url="https://www.asiaticorp.com/jobs", source_name="Asiati Talent", company_name="Asiati")
 
 
 def test_client_caches_oauth_token_and_sends_bearer_header():
