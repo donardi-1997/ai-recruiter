@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 
 from app.domains.candidate_ingestion import repository
 from app.domains.candidate_ingestion.email_service import ingest_gmail_message
+from app.integrations.email_ingestion.gmail import GmailHistoryExpired
 from app.integrations.email_ingestion.parser import (
     EmailSenderNotAllowed,
     InvalidEmailMessage,
@@ -112,12 +113,20 @@ def sync_gmail_mailbox(
         message_ids = _full_scan(mailbox_client, max_results=max_results)
         next_cursor_value = baseline_history_id
     else:
-        mode = "INCREMENTAL"
-        message_ids, next_cursor_value = _incremental_scan(
-            mailbox_client,
-            start_history_id=str(cursor.cursor_value),
-            max_results=max_results,
-        )
+        try:
+            mode = "INCREMENTAL"
+            message_ids, next_cursor_value = _incremental_scan(
+                mailbox_client,
+                start_history_id=str(cursor.cursor_value),
+                max_results=max_results,
+            )
+        except GmailHistoryExpired:
+            # Gmail documents that stale startHistoryId values can return 404.
+            # Recover with the same idempotent full scan used for first sync, then
+            # checkpoint the fresh profile historyId only after processing succeeds.
+            mode = "FULL_RECOVERY"
+            message_ids = _full_scan(mailbox_client, max_results=max_results)
+            next_cursor_value = baseline_history_id
 
     created = 0
     existing = 0
