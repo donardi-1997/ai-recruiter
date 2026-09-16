@@ -39,7 +39,11 @@ def _seed_job_with_candidates(db: Session, *, version: int = 2):
                 status="COMPLETED",
                 match_score=90,
                 recommendation="STRONG_MATCH",
-                summary="Current complete evaluation summary with enough detail for reuse.",
+                summary=(
+                    "Current complete evaluation summary with enough detail to satisfy the "
+                    "public completeness contract and prove that a current vacancy version "
+                    "is reused without another model invocation."
+                ),
                 strengths=["AWS"],
                 gaps=[],
             ),
@@ -50,7 +54,11 @@ def _seed_job_with_candidates(db: Session, *, version: int = 2):
                 status="COMPLETED",
                 match_score=70,
                 recommendation="GOOD_MATCH",
-                summary="Stale evaluation summary with enough detail for replacement.",
+                summary=(
+                    "Stale evaluation summary with enough detail to satisfy completeness "
+                    "while still requiring replacement because it belongs to an older "
+                    "vacancy evaluation version."
+                ),
                 strengths=["Python"],
                 gaps=[],
             ),
