@@ -22,6 +22,7 @@ def upgrade() -> None:
         sa.Column("owner_sub", sa.Text(), nullable=False),
         sa.Column("source", sa.Text(), nullable=False),
         sa.Column("provider", sa.Text(), nullable=False),
+        sa.Column("source_account", sa.Text(), nullable=False, server_default=""),
         sa.Column("external_id", sa.Text(), nullable=False),
         sa.Column(
             "job_id",
@@ -61,6 +62,7 @@ def upgrade() -> None:
             "owner_sub",
             "source",
             "provider",
+            "source_account",
             "external_id",
             name="uq_candidate_ingestion_external_event",
         ),
@@ -124,8 +126,49 @@ def upgrade() -> None:
         ["document_sha256"],
     )
 
+    op.create_table(
+        "candidate_ingestion_cursors",
+        sa.Column("id", UUID(as_uuid=False), primary_key=True),
+        sa.Column("owner_sub", sa.Text(), nullable=False),
+        sa.Column("source", sa.Text(), nullable=False),
+        sa.Column("provider", sa.Text(), nullable=False),
+        sa.Column("source_account", sa.Text(), nullable=False),
+        sa.Column("cursor_value", sa.Text(), nullable=True),
+        sa.Column("last_synced_at", sa.DateTime(timezone=True), nullable=True),
+        sa.Column(
+            "created_at",
+            sa.DateTime(timezone=True),
+            nullable=False,
+            server_default=sa.func.now(),
+        ),
+        sa.Column(
+            "updated_at",
+            sa.DateTime(timezone=True),
+            nullable=False,
+            server_default=sa.func.now(),
+        ),
+        sa.UniqueConstraint(
+            "owner_sub",
+            "source",
+            "provider",
+            "source_account",
+            name="uq_candidate_ingestion_cursor_source",
+        ),
+    )
+    op.create_index(
+        "idx_candidate_ingestion_cursor_owner",
+        "candidate_ingestion_cursors",
+        ["owner_sub", "source", "provider"],
+    )
+
 
 def downgrade() -> None:
+    op.drop_index(
+        "idx_candidate_ingestion_cursor_owner",
+        table_name="candidate_ingestion_cursors",
+    )
+    op.drop_table("candidate_ingestion_cursors")
+
     op.drop_index(
         "idx_candidate_ingestion_documents_sha",
         table_name="candidate_ingestion_documents",
