@@ -37,6 +37,21 @@ def test_dispatcher_routes_indeed_resume_to_resume_handler(monkeypatch):
     assert calls == [work]
 
 
+def test_dispatcher_routes_job_reevaluation_to_worker(monkeypatch):
+    calls = []
+    monkeypatch.setattr(dispatcher.job_reevaluations, "handle_message", lambda message: calls.append(message))
+
+    work = ReceivedWorkMessage(
+        kind="job_reevaluation",
+        identifier="task-1",
+        receipt_handle="rh-j",
+        receive_count=1,
+    )
+    dispatcher.route_message(work)
+
+    assert calls == [work]
+
+
 def test_dispatcher_repair_cycle_runs_all_durable_repair_paths(monkeypatch):
     calls = []
 
@@ -63,6 +78,16 @@ def test_dispatcher_repair_cycle_runs_all_durable_repair_paths(monkeypatch):
         "dispatch_undispatched_ingestions",
         lambda db: calls.append(("ingestion", db)) or 4,
     )
+    monkeypatch.setattr(
+        dispatcher.job_reevaluations,
+        "dispatch_undispatched_job_reevaluations",
+        lambda db: calls.append(("reevaluation", db)) or 5,
+    )
 
-    assert dispatcher.repair_undispatched_work() == 9
-    assert [kind for kind, _db in calls] == ["imports", "indeed", "ingestion"]
+    assert dispatcher.repair_undispatched_work() == 14
+    assert [kind for kind, _db in calls] == [
+        "imports",
+        "indeed",
+        "ingestion",
+        "reevaluation",
+    ]
