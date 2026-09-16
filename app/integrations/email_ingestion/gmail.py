@@ -19,6 +19,19 @@ class GmailListResult:
     next_page_token: str | None
 
 
+@dataclass(frozen=True)
+class GmailProfile:
+    email_address: str
+    history_id: str
+
+
+@dataclass(frozen=True)
+class GmailHistoryResult:
+    message_ids: tuple[str, ...]
+    history_id: str
+    next_page_token: str | None
+
+
 class GmailClient:
     """Small Gmail REST client using OAuth refresh tokens, never mailbox passwords."""
 
@@ -75,6 +88,20 @@ class GmailClient:
         user_id = quote(self.settings.user_id, safe="@._-+")
         return f"{self.settings.api_base_url}/users/{user_id}"
 
+    def get_profile(self) -> GmailProfile:
+        """Discover the identity and current history cursor of the authorized mailbox."""
+        response = self._http.get(
+            f"{self._user_base_url()}/profile",
+            headers=self._headers(),
+        )
+        response.raise_for_status()
+        payload = response.json()
+        email_address = str(payload.get("emailAddress") or "").strip().casefold()
+        history_id = str(payload.get("historyId") or "").strip()
+        if not email_address or not history_id:
+            raise RuntimeError("GMAIL_PROFILE_INCOMPLETE")
+        return GmailProfile(email_address=email_address, history_id=history_id)
+
     def list_messages(
         self,
         *,
@@ -99,6 +126,48 @@ class GmailClient:
         payload = response.json()
         return GmailListResult(
             messages=list(payload.get("messages") or []),
+            next_page_token=payload.get("nextPageToken"),
+        )
+
+    def list_history(
+        self,
+        *,
+        start_history_id: str,
+        page_token: str | None = None,
+        max_results: int = 100,
+    ) -> GmailHistoryResult:
+        """List unique INBOX message additions since a durable Gmail history cursor."""
+        bounded_max_results = max(1, min(int(max_results), 500))
+        params: dict[str, Any] = {
+            "startHistoryId": str(start_history_id),
+            "historyTypes": "messageAdded",
+            "labelId": "INBOX",
+            "maxResults": bounded_max_results,
+        }
+        if page_token:
+            params["pageToken"] = page_token
+
+        response = self._http.get(
+            f"{self._user_base_url()}/history",
+            headers=self._headers(),
+            params=params,
+        )
+        response.raise_for_status()
+        payload = response.json()
+
+        ordered_ids: list[str] = []
+        seen: set[str] = set()
+        for entry in payload.get("history") or []:
+            for added in entry.get("messagesAdded") or []:
+                message_id = str((added.get("message") or {}).get("id") or "").strip()
+                if message_id and message_id not in seen:
+                    seen.add(message_id)
+                    ordered_ids.append(message_id)
+
+        history_id = str(payload.get("historyId") or start_history_id).strip()
+        return GmailHistoryResult(
+            message_ids=tuple(ordered_ids),
+            history_id=history_id,
             next_page_token=payload.get("nextPageToken"),
         )
 
