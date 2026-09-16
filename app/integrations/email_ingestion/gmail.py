@@ -13,6 +13,10 @@ import httpx
 from app.config import GmailSettings
 
 
+class GmailHistoryExpired(RuntimeError):
+    """Raised when Gmail can no longer serve an incremental history cursor."""
+
+
 @dataclass(frozen=True)
 class GmailListResult:
     messages: list[dict[str, Any]]
@@ -152,6 +156,8 @@ class GmailClient:
             headers=self._headers(),
             params=params,
         )
+        if response.status_code == 404:
+            raise GmailHistoryExpired("GMAIL_HISTORY_EXPIRED")
         response.raise_for_status()
         payload = response.json()
 
