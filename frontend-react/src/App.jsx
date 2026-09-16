@@ -8,16 +8,13 @@ import Jobs from "./pages/Jobs";
 import Candidates from "./pages/Candidates";
 import Ranking from "./pages/Ranking";
 import CandidateDetail from "./pages/CandidateDetail";
+import Integrations from "./pages/Integrations";
 
 import Layout from "./components/Layout";
 import Register from "./auth/Register";
 
 import api from "./api/client";
 import { ThemeProvider } from "./context/ThemeContext";
-
-// ============================================================
-// PROTECTED ROUTE
-// ============================================================
 
 function ProtectedRoute({ children }) {
   const [checking, setChecking] = useState(true);
@@ -42,13 +39,11 @@ function ProtectedRoute({ children }) {
 
       try {
         await api.get("/auth/me");
-
         setValid(true);
       } catch {
         localStorage.removeItem("access_token");
         localStorage.removeItem("id_token");
         localStorage.removeItem("refresh_token");
-
         setValid(false);
       } finally {
         setChecking(false);
@@ -69,88 +64,35 @@ function ProtectedRoute({ children }) {
   return children;
 }
 
-// ============================================================
-// APP
-// ============================================================
+function ProtectedPage({ children }) {
+  return (
+    <ProtectedRoute>
+      <Layout>{children}</Layout>
+    </ProtectedRoute>
+  );
+}
 
 function App() {
   return (
     <ThemeProvider>
       <BrowserRouter>
         <Routes>
-        {/* ================================================== */}
-        {/* PUBLIC */}
-        {/* ================================================== */}
+          <Route path="/login" element={<Login />} />
+          <Route path="/register" element={<Register />} />
 
-        <Route path="/login" element={<Login />} />
-        <Route path="/register" element={<Register />} />
+          <Route path="/dashboard" element={<ProtectedPage><Dashboard /></ProtectedPage>} />
+          <Route path="/jobs" element={<ProtectedPage><Jobs /></ProtectedPage>} />
+          <Route path="/candidates" element={<ProtectedPage><Candidates /></ProtectedPage>} />
+          <Route path="/ranking" element={<ProtectedPage><Ranking /></ProtectedPage>} />
+          <Route path="/integrations" element={<ProtectedPage><Integrations /></ProtectedPage>} />
+          <Route
+            path="/candidates/:candidate_id"
+            element={<ProtectedPage><CandidateDetail /></ProtectedPage>}
+          />
 
-        {/* ================================================== */}
-        {/* PROTECTED */}
-        {/* ================================================== */}
-
-        <Route
-          path="/dashboard"
-          element={
-            <ProtectedRoute>
-              <Layout>
-                <Dashboard />
-              </Layout>
-            </ProtectedRoute>
-          }
-        />
-
-        <Route
-          path="/jobs"
-          element={
-            <ProtectedRoute>
-              <Layout>
-                <Jobs />
-              </Layout>
-            </ProtectedRoute>
-          }
-        />
-
-        <Route
-          path="/candidates"
-          element={
-            <ProtectedRoute>
-              <Layout>
-                <Candidates />
-              </Layout>
-            </ProtectedRoute>
-          }
-        />
-
-        <Route
-          path="/ranking"
-          element={
-            <ProtectedRoute>
-              <Layout>
-                <Ranking />
-              </Layout>
-            </ProtectedRoute>
-          }
-        />
-
-        <Route
-          path="/candidates/:candidate_id"
-          element={
-            <ProtectedRoute>
-              <Layout>
-                <CandidateDetail />
-              </Layout>
-            </ProtectedRoute>
-          }
-        />
-
-        {/* ================================================== */}
-        {/* FALLBACK */}
-        {/* ================================================== */}
-
-        <Route path="*" element={<Navigate to="/login" replace />} />
-      </Routes>
-    </BrowserRouter>
+          <Route path="*" element={<Navigate to="/login" replace />} />
+        </Routes>
+      </BrowserRouter>
     </ThemeProvider>
   );
 }
