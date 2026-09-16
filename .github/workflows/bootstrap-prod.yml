@@ -5,6 +5,8 @@ on:
     branches: [main]
     paths:
       - .github/workflows/bootstrap-prod.yml
+      - scripts/deploy-api.sh
+      - scripts/deploy-worker.sh
   workflow_dispatch:
 
 permissions:
