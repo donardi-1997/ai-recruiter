@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 
 import app.models  # noqa: F401
 from app.db import Base
-from app.models import CompanyContext
+from app.domains.jobs.company_context_model import CompanyContext
 from app.domains.jobs.company_context import (
     ASIATI_CONTEXT_V1,
     CompanyContextPayload,
