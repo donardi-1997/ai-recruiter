@@ -37,7 +37,7 @@ def test_dispatcher_routes_indeed_resume_to_resume_handler(monkeypatch):
     assert calls == [work]
 
 
-def test_dispatcher_repair_cycle_runs_both_durable_repair_paths(monkeypatch):
+def test_dispatcher_repair_cycle_runs_all_durable_repair_paths(monkeypatch):
     calls = []
 
     class FakeSession:
@@ -58,6 +58,11 @@ def test_dispatcher_repair_cycle_runs_both_durable_repair_paths(monkeypatch):
         "dispatch_undispatched_resume_ingestions",
         lambda db: calls.append(("indeed", db)) or 3,
     )
+    monkeypatch.setattr(
+        dispatcher.candidate_ingestions,
+        "dispatch_undispatched_ingestions",
+        lambda db: calls.append(("ingestion", db)) or 4,
+    )
 
-    assert dispatcher.repair_undispatched_work() == 5
-    assert [kind for kind, _db in calls] == ["imports", "indeed"]
+    assert dispatcher.repair_undispatched_work() == 9
+    assert [kind for kind, _db in calls] == ["imports", "indeed", "ingestion"]
