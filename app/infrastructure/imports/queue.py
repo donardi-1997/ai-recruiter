@@ -1,4 +1,4 @@
-"""SQS adapter for durable candidate-import and Indeed resume work."""
+"""SQS adapter for durable candidate-import, Indeed resume and ingestion work."""
 
 from __future__ import annotations
 
@@ -14,6 +14,7 @@ logger = logging.getLogger(__name__)
 SCHEMA_VERSION = 1
 CANDIDATE_IMPORT_KIND = "candidate_import"
 INDEED_RESUME_KIND = "indeed_resume"
+CANDIDATE_INGESTION_KIND = "candidate_ingestion"
 
 
 @dataclass(frozen=True)
@@ -64,6 +65,17 @@ def send_indeed_resume_ingestion(resume_ingestion_id: str) -> str | None:
     )
 
 
+def send_candidate_ingestion(ingestion_event_id: str) -> str | None:
+    """Enqueue one provider-neutral candidate-ingestion event."""
+    return _send(
+        {
+            "schema_version": SCHEMA_VERSION,
+            "kind": CANDIDATE_INGESTION_KIND,
+            "ingestion_event_id": str(ingestion_event_id),
+        }
+    )
+
+
 def _receive_raw_messages() -> list[dict]:
     response = _sqs_client().receive_message(
         QueueUrl=get_import_queue_url(),
@@ -85,6 +97,8 @@ def _deserialize_work(raw: dict) -> ReceivedWorkMessage | None:
             identifier = str(body["batch_id"]).strip()
         elif kind == INDEED_RESUME_KIND:
             identifier = str(body["resume_ingestion_id"]).strip()
+        elif kind == CANDIDATE_INGESTION_KIND:
+            identifier = str(body["ingestion_event_id"]).strip()
         else:
             raise ValueError("unsupported work kind")
 
