@@ -17,6 +17,7 @@ from app.domains.evaluations.rules import (
     validate_completed_evaluation_result,
 )
 from app.domains.jobs import repository as jobs_repository
+from app.domains.jobs.profile import build_evaluation_text
 
 logger = logging.getLogger(__name__)
 
@@ -89,18 +90,19 @@ def evaluate_candidate_for_job(
 
     retrieve_candidate = evaluation_backend.retrieve_candidate
     llm_evaluate = evaluation_backend.evaluate_candidate
+    evaluation_text = build_evaluation_text(job)
 
     internal_error = None
 
     try:
         results = retrieve_candidate(
             candidate_id=candidate.id,
-            question=job.description or job.title,
+            question=evaluation_text,
         )
 
         llm_result = llm_evaluate(
             candidate_id=candidate.id,
-            job_description=job.description or job.title,
+            job_description=evaluation_text,
             results=results,
         )
 
