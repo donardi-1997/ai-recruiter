@@ -39,6 +39,7 @@ def upgrade() -> None:
         sa.Column("status", sa.Text(), nullable=False, server_default="RECEIVED"),
         sa.Column("raw_metadata", sa.JSON(), nullable=True),
         sa.Column("raw_s3_key", sa.Text(), nullable=True),
+        sa.Column("bedrock_ingestion_job_id", sa.Text(), nullable=True),
         sa.Column("queue_dispatched_at", sa.DateTime(timezone=True), nullable=True),
         sa.Column("processing_token", sa.Text(), nullable=True),
         sa.Column("heartbeat_at", sa.DateTime(timezone=True), nullable=True),
