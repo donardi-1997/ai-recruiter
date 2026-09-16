@@ -49,6 +49,13 @@ def test_dispatcher_repair_cycle_includes_candidate_ingestion(monkeypatch):
         "dispatch_undispatched_ingestions",
         lambda db: calls.append(("ingestion", db)) or 4,
     )
+    # This test protects the candidate-ingestion repair path specifically.
+    # The shared-dispatcher suite separately covers the reevaluation repair path.
+    monkeypatch.setattr(
+        dispatcher.job_reevaluations,
+        "dispatch_undispatched_job_reevaluations",
+        lambda _db: 0,
+    )
 
     assert dispatcher.repair_undispatched_work() == 9
     assert [kind for kind, _db in calls] == ["imports", "indeed", "ingestion"]
