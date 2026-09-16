@@ -171,6 +171,184 @@ jobs:
           echo "LIGHTSAIL_KEY_FILE=$KEY_FILE" >> "$GITHUB_ENV"
           echo "LIGHTSAIL_SSH_TEMPORARY_KEY_OK expires=$EXPIRES_AT"
 
+      - name: Bootstrap Lightsail runtime identity
+        run: |
+          set -euo pipefail
+          INSTANCE_IP=$(aws lightsail get-instance \
+            --instance-name "$INSTANCE_NAME" \
+            --region "$AWS_REGION" \
+            --query "instance.publicIpAddress" \
+            --output text)
+          KEY_FILE="${LIGHTSAIL_KEY_FILE:?temporary Lightsail SSH key missing}"
+          RUNTIME_ROLE_ARN="arn:aws:iam::${AWS_ACCOUNT_ID}:role/AiRecruiterBedrockRuntimeRole"
+          HOST_CA_FILE="$RUNNER_TEMP/ai-recruiter-host-ca.crt"
+
+          ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -i "$KEY_FILE" ubuntu@$INSTANCE_IP 'sudo bash -s' <<'REMOTE_BOOTSTRAP'
+            set -euo pipefail
+            export DEBIAN_FRONTEND=noninteractive
+            apt-get update -y
+            apt-get install -y docker.io postgresql postgresql-contrib curl unzip openssl jq
+            systemctl enable --now docker postgresql
+
+            mkdir -p /opt/ai-recruiter/rolesanywhere /opt/ai-recruiter/aws /run/rolesanywhere
+            chmod 755 /opt/ai-recruiter /opt/ai-recruiter/rolesanywhere
+
+            if [ ! -s /opt/ai-recruiter/rolesanywhere/ca.crt ] || \
+               [ ! -s /opt/ai-recruiter/rolesanywhere/client.crt ] || \
+               [ ! -s /opt/ai-recruiter/rolesanywhere/client.key ]; then
+              cd /opt/ai-recruiter/rolesanywhere
+              openssl req -x509 -newkey rsa:4096 -sha256 -days 3650 -nodes \
+                -keyout ca.key -out ca.crt \
+                -subj '/C=CO/O=Asiati/OU=AI Recruiter/CN=AI Recruiter Host Root CA' \
+                -addext 'basicConstraints=critical,CA:TRUE,pathlen:0' \
+                -addext 'keyUsage=critical,keyCertSign,cRLSign' \
+                -addext 'subjectKeyIdentifier=hash'
+              cat > client.ext <<'EOF'
+          basicConstraints=critical,CA:FALSE
+          keyUsage=critical,digitalSignature
+          extendedKeyUsage=clientAuth
+          subjectKeyIdentifier=hash
+          authorityKeyIdentifier=keyid,issuer
+          EOF
+              openssl req -new -newkey rsa:2048 -nodes \
+                -keyout client.key -out client.csr \
+                -subj '/C=CO/O=Asiati/OU=AI Recruiter/CN=ai-recruiter-micro-prod'
+              openssl x509 -req -in client.csr -CA ca.crt -CAkey ca.key \
+                -CAcreateserial -out client.crt -days 365 -sha256 -extfile client.ext
+            fi
+            chmod 600 /opt/ai-recruiter/rolesanywhere/ca.key /opt/ai-recruiter/rolesanywhere/client.key
+            chmod 644 /opt/ai-recruiter/rolesanywhere/ca.crt /opt/ai-recruiter/rolesanywhere/client.crt
+
+            if ! command -v aws >/dev/null 2>&1; then
+              curl -fsS https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip -o /tmp/awscliv2.zip
+              rm -rf /tmp/aws
+              unzip -q /tmp/awscliv2.zip -d /tmp
+              /tmp/aws/install
+            fi
+            if [ ! -x /usr/local/bin/aws_signing_helper ]; then
+              curl -fsS https://rolesanywhere.amazonaws.com/releases/1.0.3/X86_64/Linux/aws_signing_helper \
+                -o /usr/local/bin/aws_signing_helper
+              chmod 755 /usr/local/bin/aws_signing_helper
+            fi
+
+            if [ ! -f /swapfile ]; then
+              fallocate -l 2G /swapfile
+              chmod 600 /swapfile
+              mkswap /swapfile >/dev/null
+              swapon /swapfile
+              echo '/swapfile none swap sw 0 0' >> /etc/fstab
+            else
+              swapon /swapfile 2>/dev/null || true
+            fi
+            cat > /etc/sysctl.d/99-ai-recruiter.conf <<'EOF'
+          vm.swappiness=10
+          EOF
+            sysctl -p /etc/sysctl.d/99-ai-recruiter.conf >/dev/null || true
+
+            mkdir -p /etc/docker
+            cat > /etc/docker/daemon.json <<'EOF'
+          {"log-driver":"json-file","log-opts":{"max-size":"10m","max-file":"3"}}
+          EOF
+            systemctl restart docker
+
+            PGVER=$(ls /etc/postgresql | sort -V | tail -1)
+            PGCONF="/etc/postgresql/$PGVER/main/postgresql.conf"
+            PGHBA="/etc/postgresql/$PGVER/main/pg_hba.conf"
+            sed -ri "s/^#?listen_addresses[[:space:]]*=.*/listen_addresses = '*'/" "$PGCONF"
+            grep -q '172.16.0.0/12' "$PGHBA" || echo 'host all all 172.16.0.0/12 scram-sha-256' >> "$PGHBA"
+            sudo -u postgres psql -v ON_ERROR_STOP=1 -c "ALTER USER postgres PASSWORD 'postgres';"
+            sudo -u postgres psql -tAc "SELECT 1 FROM pg_database WHERE datname='ai_recruiter'" | grep -q 1 || \
+              sudo -u postgres createdb ai_recruiter
+            sudo -u postgres psql -v ON_ERROR_STOP=1 -c "ALTER SYSTEM SET shared_buffers = '64MB';"
+            sudo -u postgres psql -v ON_ERROR_STOP=1 -c "ALTER SYSTEM SET work_mem = '2MB';"
+            sudo -u postgres psql -v ON_ERROR_STOP=1 -c "ALTER SYSTEM SET maintenance_work_mem = '32MB';"
+            sudo -u postgres psql -v ON_ERROR_STOP=1 -c "ALTER SYSTEM SET effective_cache_size = '192MB';"
+            sudo -u postgres psql -v ON_ERROR_STOP=1 -c "ALTER SYSTEM SET max_connections = '20';"
+            systemctl restart postgresql
+          REMOTE_BOOTSTRAP
+
+          scp -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -i "$KEY_FILE" \
+            ubuntu@$INSTANCE_IP:/opt/ai-recruiter/rolesanywhere/ca.crt "$HOST_CA_FILE"
+
+          CA_JSON=$(jq -Rs '{sourceType:"CERTIFICATE_BUNDLE",sourceData:{x509CertificateData:.}}' < "$HOST_CA_FILE")
+          ANCHOR_ID=$(aws rolesanywhere list-trust-anchors \
+            --query "trustAnchors[?name=='ai-recruiter-prod-host-ca'].trustAnchorId | [0]" \
+            --output text)
+          if [ -z "$ANCHOR_ID" ] || [ "$ANCHOR_ID" = "None" ]; then
+            ANCHOR_JSON=$(aws rolesanywhere create-trust-anchor \
+              --name ai-recruiter-prod-host-ca \
+              --enabled \
+              --source "$CA_JSON")
+            ANCHOR_ID=$(echo "$ANCHOR_JSON" | jq -r '.trustAnchor.trustAnchorId')
+            ANCHOR_ARN=$(echo "$ANCHOR_JSON" | jq -r '.trustAnchor.trustAnchorArn')
+          else
+            aws rolesanywhere update-trust-anchor \
+              --trust-anchor-id "$ANCHOR_ID" \
+              --name ai-recruiter-prod-host-ca \
+              --source "$CA_JSON" >/dev/null
+            ANCHOR_ARN=$(aws rolesanywhere get-trust-anchor \
+              --trust-anchor-id "$ANCHOR_ID" \
+              --query 'trustAnchor.trustAnchorArn' \
+              --output text)
+          fi
+
+          PROFILE_ARN=$(aws rolesanywhere list-profiles \
+            --query "profiles[?name=='ai-recruiter-bedrock'].profileArn | [0]" \
+            --output text)
+          if [ -z "$PROFILE_ARN" ] || [ "$PROFILE_ARN" = "None" ]; then
+            PROFILE_ARN=$(aws rolesanywhere create-profile \
+              --name ai-recruiter-bedrock \
+              --enabled \
+              --role-arns "$RUNTIME_ROLE_ARN" \
+              --query 'profile.profileArn' \
+              --output text)
+          fi
+
+          cat > "$RUNNER_TEMP/runtime-role-trust.json" <<EOF
+          {
+            "Version": "2012-10-17",
+            "Statement": [{
+              "Effect": "Allow",
+              "Principal": {"Service": "rolesanywhere.amazonaws.com"},
+              "Action": ["sts:AssumeRole", "sts:SetSourceIdentity", "sts:TagSession"],
+              "Condition": {"ArnEquals": {"aws:SourceArn": "$ANCHOR_ARN"}}
+            }]
+          }
+          EOF
+          aws iam update-assume-role-policy \
+            --role-name AiRecruiterBedrockRuntimeRole \
+            --policy-document "file://$RUNNER_TEMP/runtime-role-trust.json"
+
+          cat > "$RUNNER_TEMP/ai-recruiter-aws-config" <<EOF
+          [profile ai-recruiter-bedrock]
+          region = $AWS_REGION
+          credential_process = /usr/local/bin/aws_signing_helper credential-process --certificate /run/rolesanywhere/client.crt --private-key /run/rolesanywhere/client.key --trust-anchor-arn $ANCHOR_ARN --profile-arn $PROFILE_ARN --role-arn $RUNTIME_ROLE_ARN
+          EOF
+          scp -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -i "$KEY_FILE" \
+            "$RUNNER_TEMP/ai-recruiter-aws-config" ubuntu@$INSTANCE_IP:/tmp/ai-recruiter-aws-config
+
+          ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -i "$KEY_FILE" ubuntu@$INSTANCE_IP 'sudo bash -s' <<'REMOTE_IDENTITY'
+            set -euo pipefail
+            install -d -m 755 /opt/ai-recruiter/aws /run/rolesanywhere /home/ubuntu/.aws
+            install -m 644 /tmp/ai-recruiter-aws-config /opt/ai-recruiter/aws/config
+            ln -sfn /opt/ai-recruiter/rolesanywhere/client.crt /run/rolesanywhere/client.crt
+            ln -sfn /opt/ai-recruiter/rolesanywhere/client.key /run/rolesanywhere/client.key
+            cat > /etc/tmpfiles.d/ai-recruiter-rolesanywhere.conf <<'EOF'
+          L+ /run/rolesanywhere/client.crt - - - - /opt/ai-recruiter/rolesanywhere/client.crt
+          L+ /run/rolesanywhere/client.key - - - - /opt/ai-recruiter/rolesanywhere/client.key
+          EOF
+            ln -sfn /opt/ai-recruiter/aws/config /home/ubuntu/.aws/config
+            chown -h ubuntu:ubuntu /home/ubuntu/.aws/config
+            chown ubuntu:ubuntu /home/ubuntu/.aws
+            sudo -u ubuntu aws sts get-caller-identity --profile ai-recruiter-bedrock >/tmp/ai-recruiter-sts.json
+            test "$(jq -r '.Account' /tmp/ai-recruiter-sts.json)" = "890876258895"
+            docker network inspect ai-recruiter >/dev/null 2>&1 || docker network create ai-recruiter >/dev/null
+            echo "ROLES_ANYWHERE_HOST_IDENTITY_OK"
+          REMOTE_IDENTITY
+
+          echo "ROLES_ANYWHERE_TRUST_ANCHOR_ARN=$ANCHOR_ARN"
+          echo "ROLES_ANYWHERE_PROFILE_ARN=$PROFILE_ARN"
+
       - name: Migrate and backfill production database
         env:
           ECR_REGISTRY: ${{ steps.ecr-login.outputs.registry }}
