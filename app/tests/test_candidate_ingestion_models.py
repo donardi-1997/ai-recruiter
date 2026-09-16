@@ -10,6 +10,7 @@ from sqlalchemy import create_engine, inspect
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from app import models as _core_models  # noqa: F401 - registers FK target tables
 from app.db import Base
 
 
