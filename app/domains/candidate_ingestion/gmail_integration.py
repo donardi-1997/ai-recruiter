@@ -108,6 +108,19 @@ def _resolved_gmail_settings(
     )
 
 
+def _resolved_oauth_settings(
+    settings: GmailOAuthSettings,
+    secret_payload: dict,
+) -> GmailOAuthSettings:
+    """Allow the production callback URI to live in Secrets Manager."""
+    return replace(
+        settings,
+        redirect_uri=str(
+            secret_payload.get("redirect_uri") or settings.redirect_uri or ""
+        ).strip(),
+    )
+
+
 def _oauth_is_configured(oauth_settings: GmailOAuthSettings, payload: dict) -> bool:
     return bool(
         oauth_settings.redirect_uri
@@ -131,17 +144,18 @@ def integration_status(
         tolerate_unavailable=True,
     )
     resolved = _resolved_gmail_settings(current, payload)
+    resolved_oauth = _resolved_oauth_settings(oauth, payload)
     connected_email = str(payload.get("connected_email") or "").strip().casefold()
     connected = bool(resolved.refresh_token and connected_email)
     return {
         "enabled": current.enabled,
         "configured": resolved.configured,
-        "oauth_configured": _oauth_is_configured(oauth, payload),
+        "oauth_configured": _oauth_is_configured(resolved_oauth, payload),
         "connected": connected,
         "connected_email": connected_email or None,
         "provider": current.ingestion_provider,
         "safe_filter": is_safe_mailbox_filter(current),
-        "redirect_uri": oauth.redirect_uri or None,
+        "redirect_uri": resolved_oauth.redirect_uri or None,
     }
 
 
@@ -197,7 +211,8 @@ def oauth_start(
     current = settings or get_gmail_settings()
     oauth = oauth_settings or get_gmail_oauth_settings()
     payload = _read_oauth_secret(oauth, oauth_store)
-    if not _oauth_is_configured(oauth, payload):
+    resolved_oauth = _resolved_oauth_settings(oauth, payload)
+    if not _oauth_is_configured(resolved_oauth, payload):
         raise GmailOAuthConfigurationError("Gmail OAuth client is not configured.")
 
     state_secret = str(payload["state_secret"])
@@ -212,7 +227,7 @@ def oauth_start(
     query = urlencode(
         {
             "client_id": str(payload["client_id"]),
-            "redirect_uri": oauth.redirect_uri,
+            "redirect_uri": resolved_oauth.redirect_uri,
             "response_type": "code",
             "scope": current.scope,
             "access_type": "offline",
@@ -221,7 +236,7 @@ def oauth_start(
             "state": state,
         }
     )
-    return {"authorization_url": f"{oauth.authorization_url}?{query}"}
+    return {"authorization_url": f"{resolved_oauth.authorization_url}?{query}"}
 
 
 def oauth_callback(
@@ -238,24 +253,25 @@ def oauth_callback(
     oauth = oauth_settings or get_gmail_oauth_settings()
     store = _oauth_store(oauth, oauth_store)
     payload = dict(store.read() or {})
-    if not _oauth_is_configured(oauth, payload):
+    resolved_oauth = _resolved_oauth_settings(oauth, payload)
+    if not _oauth_is_configured(resolved_oauth, payload):
         raise GmailOAuthConfigurationError("Gmail OAuth client is not configured.")
 
     _verify_state(
         state,
         str(payload["state_secret"]),
-        oauth.state_max_age_seconds,
+        resolved_oauth.state_max_age_seconds,
     )
 
     client = http_client or httpx.Client(timeout=current.request_timeout_seconds)
     try:
         token_response = client.post(
-            oauth.token_url,
+            resolved_oauth.token_url,
             data={
                 "code": code,
                 "client_id": str(payload["client_id"]),
                 "client_secret": str(payload["client_secret"]),
-                "redirect_uri": oauth.redirect_uri,
+                "redirect_uri": resolved_oauth.redirect_uri,
                 "grant_type": "authorization_code",
             },
         )
