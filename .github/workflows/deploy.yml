@@ -15,11 +15,14 @@ concurrency:
 
 env:
   AWS_REGION: us-east-2
-  AWS_ACCOUNT_ID: "765761474007"
+  AWS_ACCOUNT_ID: "890876258895"
   ECR_BACKEND_REPO: ai-recruiter-api
   ECR_FRONTEND_REPO: ai-recruiter-frontend
-  INSTANCE_NAME: ai-recruiter-micro-canary
-  CLOUDFRONT_DISTRIBUTION_ID: E1IBIX4EWENEP7
+  INSTANCE_NAME: ai-recruiter-micro-prod
+  RUNTIME_CONFIG_SECRET: /ai-recruiter/prod/runtime-config
+  LIGHTSAIL_SSH_KEY_SECRET: /ai-recruiter/prod/lightsail-ssh-key
+  CLOUDFRONT_DISTRIBUTION_ID: ${{ vars.CLOUDFRONT_DISTRIBUTION_ID }}
+  PUBLIC_BASE_URL: ${{ vars.PUBLIC_BASE_URL }}
 
 jobs:
   backend-tests:
@@ -86,8 +89,25 @@ jobs:
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v5
         with:
-          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          role-to-assume: arn:aws:iam::890876258895:role/AiRecruiterGithubDeployRole
           aws-region: ${{ env.AWS_REGION }}
+
+      - name: Verify target account and load runtime configuration
+        run: |
+          set -euo pipefail
+          ACTUAL_ACCOUNT=$(aws sts get-caller-identity --query Account --output text)
+          [ "$ACTUAL_ACCOUNT" = "$AWS_ACCOUNT_ID" ]
+          RUNTIME_JSON=$(aws secretsmanager get-secret-value \
+            --secret-id "$RUNTIME_CONFIG_SECRET" \
+            --query SecretString \
+            --output text)
+          for KEY in S3_BUCKET KNOWLEDGE_BASE_ID DATA_SOURCE_ID COGNITO_USER_POOL_ID COGNITO_CLIENT_ID; do
+            VALUE=$(echo "$RUNTIME_JSON" | jq -r --arg key "$KEY" '.[$key]')
+            test -n "$VALUE"
+            test "$VALUE" != "null"
+            echo "$KEY=$VALUE" >> "$GITHUB_ENV"
+          done
+          echo "AWS_TARGET_ACCOUNT_OK=$ACTUAL_ACCOUNT"
 
       - name: Login ECR
         id: ecr-login
@@ -149,7 +169,9 @@ jobs:
             --query "instance.publicIpAddress" \
             --output text)
           KEY_FILE="/tmp/lightsail-key.pem"
-          echo "${{ secrets.LIGHTSAIL_SSH_KEY }}" > "$KEY_FILE"
+          aws secretsmanager get-secret-value \
+            --secret-id "$LIGHTSAIL_SSH_KEY_SECRET" \
+            --query SecretString --output text > "$KEY_FILE"
           chmod 600 "$KEY_FILE"
 
           ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -i "$KEY_FILE" ubuntu@$INSTANCE_IP \
@@ -157,12 +179,9 @@ jobs:
 
           ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -i "$KEY_FILE" ubuntu@$INSTANCE_IP bash -s << REMOTE_PREFLIGHT
             set -euo pipefail
-            export AWS_ACCESS_KEY_ID="$AWS_ACCESS_KEY_ID"
-            export AWS_SECRET_ACCESS_KEY="$AWS_SECRET_ACCESS_KEY"
-            export AWS_SESSION_TOKEN="$AWS_SESSION_TOKEN"
             export AWS_DEFAULT_REGION="$AWS_REGION"
 
-            aws ecr get-login-password --region "$AWS_REGION" | \
+            aws ecr get-login-password --region "$AWS_REGION" --profile ai-recruiter-bedrock | \
               sudo docker login --username AWS --password-stdin "$ECR_REGISTRY"
 
             echo "DOCKER_DISK_BEFORE"
@@ -180,8 +199,6 @@ jobs:
             done
             sudo grep -q "ai-recruiter-bedrock" /opt/ai-recruiter/aws/config
 
-            unset AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN
-
             sudo docker run --rm \
               --network ai-recruiter \
               --add-host=host.docker.internal:host-gateway \
@@ -197,6 +214,9 @@ jobs:
               -e "AWS_PROFILE=ai-recruiter-bedrock" \
               -e "IMPORT_STAGING_BUCKET=$IMPORT_STAGING_BUCKET" \
               -e "IMPORT_QUEUE_URL=$IMPORT_QUEUE_URL" \
+              -e "S3_BUCKET=$S3_BUCKET" \
+              -e "KNOWLEDGE_BASE_ID=$KNOWLEDGE_BASE_ID" \
+              -e "DATA_SOURCE_ID=$DATA_SOURCE_ID" \
               -v /opt/ai-recruiter/aws/config:/root/.aws/config:ro \
               -v /usr/local/bin/aws_signing_helper:/usr/local/bin/aws_signing_helper:ro \
               -v /opt/ai-recruiter/rolesanywhere/client.crt:/run/rolesanywhere/client.crt:ro \
@@ -218,7 +238,9 @@ jobs:
             --query "instance.publicIpAddress" \
             --output text)
           KEY_FILE="/tmp/lightsail-key.pem"
-          echo "${{ secrets.LIGHTSAIL_SSH_KEY }}" > "$KEY_FILE"
+          aws secretsmanager get-secret-value \
+            --secret-id "$LIGHTSAIL_SSH_KEY_SECRET" \
+            --query SecretString --output text > "$KEY_FILE"
           chmod 600 "$KEY_FILE"
 
           scp -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -i "$KEY_FILE" \
@@ -228,42 +250,33 @@ jobs:
 
           ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -i "$KEY_FILE" ubuntu@$INSTANCE_IP bash -s << REMOTE_DEPLOY
             set -euo pipefail
-            export AWS_ACCESS_KEY_ID="$AWS_ACCESS_KEY_ID"
-            export AWS_SECRET_ACCESS_KEY="$AWS_SECRET_ACCESS_KEY"
-            export AWS_SESSION_TOKEN="$AWS_SESSION_TOKEN"
             export AWS_DEFAULT_REGION="$AWS_REGION"
 
-            aws ecr get-login-password --region "$AWS_REGION" | \
+            aws ecr get-login-password --region "$AWS_REGION" --profile ai-recruiter-bedrock | \
               sudo docker login --username AWS --password-stdin "$ECR_REGISTRY"
 
             sudo docker pull "$ECR_REGISTRY/$ECR_BACKEND_REPO:${{ github.sha }}"
             sudo docker pull "$ECR_REGISTRY/$ECR_FRONTEND_REPO:${{ github.sha }}"
             echo "FRONTEND_PULL_OK"
 
-            ROLLBACK_TAG="rollback-${GITHUB_RUN_ID:-manual}"
-            if sudo docker inspect ai-recruiter-api >/dev/null 2>&1; then
-              OLD_IMAGE_ID=\$(sudo docker inspect ai-recruiter-api --format '{{.Image}}')
-              sudo docker tag "\$OLD_IMAGE_ID" "$ECR_REGISTRY/$ECR_BACKEND_REPO:\$ROLLBACK_TAG" || true
-              sudo docker push "$ECR_REGISTRY/$ECR_BACKEND_REPO:\$ROLLBACK_TAG" || true
-              echo "ROLLBACK_PRESERVED=\$ROLLBACK_TAG"
-            fi
-
             FRONTEND_ROLLBACK_TAG="frontend-rollback-${GITHUB_RUN_ID:-manual}"
             if sudo docker inspect ai-recruiter-web >/dev/null 2>&1; then
               OLD_FRONTEND_IMAGE_ID=\$(sudo docker inspect ai-recruiter-web --format '{{.Image}}')
               sudo docker tag "\$OLD_FRONTEND_IMAGE_ID" "$ECR_REGISTRY/$ECR_FRONTEND_REPO:\$FRONTEND_ROLLBACK_TAG" || true
-              sudo docker push "$ECR_REGISTRY/$ECR_FRONTEND_REPO:\$FRONTEND_ROLLBACK_TAG" || true
-              echo "FRONTEND_ROLLBACK_PRESERVED=\$FRONTEND_ROLLBACK_TAG"
             fi
-
-            unset AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN
 
             chmod +x /tmp/ai-recruiter-deploy-api.sh /tmp/ai-recruiter-deploy-worker.sh
 
-            ECR_TAG="${{ github.sha }}" \
+            AWS_ACCOUNT_ID="$AWS_ACCOUNT_ID" \
+              ECR_TAG="${{ github.sha }}" \
               IMPORT_STAGING_BUCKET="$IMPORT_STAGING_BUCKET" \
               IMPORT_QUEUE_URL="$IMPORT_QUEUE_URL" \
               IMPORT_EVALUATION_CONCURRENCY="1" \
+              S3_BUCKET="$S3_BUCKET" \
+              KNOWLEDGE_BASE_ID="$KNOWLEDGE_BASE_ID" \
+              DATA_SOURCE_ID="$DATA_SOURCE_ID" \
+              COGNITO_USER_POOL_ID="$COGNITO_USER_POOL_ID" \
+              COGNITO_CLIENT_ID="$COGNITO_CLIENT_ID" \
               sudo -E /tmp/ai-recruiter-deploy-api.sh
 
             API_STATUS=\$(sudo docker inspect ai-recruiter-api --format '{{.State.Status}}' 2>/dev/null || echo "MISSING")
@@ -277,7 +290,7 @@ jobs:
           from app.infrastructure.bedrock.session import get_cached_session
           client = get_cached_session().client('bedrock-agent-runtime', region_name='us-east-2')
           r = client.retrieve(
-            knowledgeBaseId='VUGNMJQAEN',
+            knowledgeBaseId='$KNOWLEDGE_BASE_ID',
             retrievalQuery={'text': 'health check'},
             retrievalConfiguration={'vectorSearchConfiguration': {'numberOfResults': 1}}
           )
@@ -285,10 +298,16 @@ jobs:
           " 2>&1 || echo "BEDROCK_RETRIEVE_FAIL")
             echo "\$RETRIEVE_RESULT" | grep -q "BEDROCK_RETRIEVE_OK"
 
-            ECR_TAG="${{ github.sha }}" \
+            AWS_ACCOUNT_ID="$AWS_ACCOUNT_ID" \
+              ECR_TAG="${{ github.sha }}" \
               IMPORT_STAGING_BUCKET="$IMPORT_STAGING_BUCKET" \
               IMPORT_QUEUE_URL="$IMPORT_QUEUE_URL" \
               IMPORT_EVALUATION_CONCURRENCY="1" \
+              S3_BUCKET="$S3_BUCKET" \
+              KNOWLEDGE_BASE_ID="$KNOWLEDGE_BASE_ID" \
+              DATA_SOURCE_ID="$DATA_SOURCE_ID" \
+              COGNITO_USER_POOL_ID="$COGNITO_USER_POOL_ID" \
+              COGNITO_CLIENT_ID="$COGNITO_CLIENT_ID" \
               sudo -E /tmp/ai-recruiter-deploy-worker.sh
 
             WORKER_STATUS=\$(sudo docker inspect ai-recruiter-worker --format '{{.State.Status}}' 2>/dev/null || echo "MISSING")
@@ -310,19 +329,8 @@ jobs:
 
             FRONTEND_STATUS=\$(sudo docker inspect ai-recruiter-web --format '{{.State.Status}}' 2>/dev/null || echo "MISSING")
             FRONTEND_IMAGE=\$(sudo docker inspect ai-recruiter-web --format '{{.Config.Image}}' 2>/dev/null || echo "MISSING")
-            if [ "\$FRONTEND_STATUS" != "running" ] || ! echo "\$FRONTEND_IMAGE" | grep -q ":${{ github.sha }}$"; then
-              sudo docker rm -f ai-recruiter-web 2>/dev/null || true
-              if [ -n "\$FRONTEND_ROLLBACK_TAG" ]; then
-                sudo docker run -d \
-                  --name ai-recruiter-web \
-                  --network ai-recruiter \
-                  --restart unless-stopped \
-                  -p 80:80 \
-                  "$ECR_REGISTRY/$ECR_FRONTEND_REPO:\$FRONTEND_ROLLBACK_TAG" || true
-              fi
-              echo "DEPLOY_FAILED_FRONTEND"
-              exit 1
-            fi
+            [ "\$FRONTEND_STATUS" = "running" ]
+            echo "\$FRONTEND_IMAGE" | grep -q ":${{ github.sha }}$"
             echo "FRONTEND_IMAGE_OK=\$FRONTEND_IMAGE"
 
             FRONTEND_HTML=""
@@ -336,31 +344,38 @@ jobs:
             done
             echo "\$FRONTEND_HTML" | grep -q "root"
             sudo docker exec ai-recruiter-web test -f /usr/share/nginx/html/index.html
-            sudo docker exec ai-recruiter-web sh -c 'ls /usr/share/nginx/html/assets/index-*.js >/dev/null 2>&1'
             echo "DEPLOYMENT_FRONTEND_OK"
             sudo docker image prune -f
           REMOTE_DEPLOY
 
-      - name: Invalidate CloudFront
+      - name: Invalidate CloudFront when configured
         run: |
+          set -euo pipefail
+          if [ -z "${CLOUDFRONT_DISTRIBUTION_ID:-}" ]; then
+            echo "CLOUDFRONT_INVALIDATION_SKIPPED"
+            exit 0
+          fi
           INVALIDATION_ID=$(aws cloudfront create-invalidation \
-            --distribution-id ${{ env.CLOUDFRONT_DISTRIBUTION_ID }} \
+            --distribution-id "$CLOUDFRONT_DISTRIBUTION_ID" \
             --paths "/*" \
             --region us-east-1 \
             --query "Invalidation.Id" \
             --output text)
           aws cloudfront wait invalidation-completed \
-            --distribution-id ${{ env.CLOUDFRONT_DISTRIBUTION_ID }} \
+            --distribution-id "$CLOUDFRONT_DISTRIBUTION_ID" \
             --id "$INVALIDATION_ID" \
             --region us-east-1
           echo "CLOUDFRONT_INVALIDATION_OK"
 
       - name: Verify public health
         run: |
-          sleep 10
+          set -euo pipefail
+          INSTANCE_IP=$(aws lightsail get-instance --instance-name "$INSTANCE_NAME" --region "$AWS_REGION" --query "instance.publicIpAddress" --output text)
+          BASE_URL="${PUBLIC_BASE_URL:-}"
+          if [ -z "$BASE_URL" ]; then BASE_URL="http://$INSTANCE_IP"; fi
           HTTP_CODE="000"
           for i in $(seq 1 10); do
-            HTTP_CODE=$(curl -sf -o /dev/null -w "%{http_code}" "https://air.adrianguerra.net/api/health" || echo "000")
+            HTTP_CODE=$(curl -sf -o /dev/null -w "%{http_code}" "$BASE_URL/api/health" || echo "000")
             if [ "$HTTP_CODE" = "200" ]; then
               echo "PUBLIC_HEALTH_OK HTTP $HTTP_CODE"
               break
@@ -371,48 +386,35 @@ jobs:
 
       - name: Verify public frontend
         run: |
-          INSTANCE_IP=$(aws lightsail get-instance \
-            --instance-name ${{ env.INSTANCE_NAME }} \
-            --region ${{ env.AWS_REGION }} \
-            --query "instance.publicIpAddress" \
-            --output text)
-
+          set -euo pipefail
+          INSTANCE_IP=$(aws lightsail get-instance --instance-name "$INSTANCE_NAME" --region "$AWS_REGION" --query "instance.publicIpAddress" --output text)
           DIRECT_HTML=$(curl -fS "http://$INSTANCE_IP/" 2>/dev/null || echo "FAIL")
           DIRECT_FRONTEND_BUNDLE=$(echo "$DIRECT_HTML" | grep -oE 'assets/index-[^"]+\.js' | head -1)
           echo "DIRECT_FRONTEND_BUNDLE=$DIRECT_FRONTEND_BUNDLE"
           test -n "$DIRECT_FRONTEND_BUNDLE"
 
+          BASE_URL="${PUBLIC_BASE_URL:-}"
+          if [ -z "$BASE_URL" ]; then BASE_URL="http://$INSTANCE_IP"; fi
           PUBLIC_HTML=""
           for i in $(seq 1 20); do
-            PUBLIC_HTML=$(curl -fS https://air.adrianguerra.net/ 2>/dev/null || echo "FAIL")
+            PUBLIC_HTML=$(curl -fS "$BASE_URL/" 2>/dev/null || echo "FAIL")
             if echo "$PUBLIC_HTML" | grep -q "root"; then
               echo "PUBLIC_FRONTEND_OK"
               break
             fi
-            sleep 5
+            sleep 2
           done
           echo "$PUBLIC_HTML" | grep -q "root"
-
           PUBLIC_FRONTEND_BUNDLE=$(echo "$PUBLIC_HTML" | grep -oE 'assets/index-[^"]+\.js' | head -1)
-          for i in $(seq 1 20); do
-            if [ "$DIRECT_FRONTEND_BUNDLE" = "$PUBLIC_FRONTEND_BUNDLE" ] && [ -n "$PUBLIC_FRONTEND_BUNDLE" ]; then
-              break
-            fi
-            sleep 10
-            PUBLIC_HTML=$(curl -fS https://air.adrianguerra.net/ 2>/dev/null || echo "FAIL")
-            PUBLIC_FRONTEND_BUNDLE=$(echo "$PUBLIC_HTML" | grep -oE 'assets/index-[^"]+\.js' | head -1)
-          done
           echo "PUBLIC_FRONTEND_BUNDLE=$PUBLIC_FRONTEND_BUNDLE"
-          [ "$DIRECT_FRONTEND_BUNDLE" = "$PUBLIC_FRONTEND_BUNDLE" ] || { echo "DEPLOY_FAILED_PUBLIC_CACHE_MISMATCH"; exit 1; }
+          [ "$DIRECT_FRONTEND_BUNDLE" = "$PUBLIC_FRONTEND_BUNDLE" ]
 
       - name: Promote backend SHA to latest
         env:
           ECR_REGISTRY: ${{ steps.ecr-login.outputs.registry }}
         run: |
           docker pull "$ECR_REGISTRY/$ECR_BACKEND_REPO:${{ github.sha }}"
-          docker tag \
-            "$ECR_REGISTRY/$ECR_BACKEND_REPO:${{ github.sha }}" \
-            "$ECR_REGISTRY/$ECR_BACKEND_REPO:latest"
+          docker tag "$ECR_REGISTRY/$ECR_BACKEND_REPO:${{ github.sha }}" "$ECR_REGISTRY/$ECR_BACKEND_REPO:latest"
           docker push "$ECR_REGISTRY/$ECR_BACKEND_REPO:latest"
           echo "BACKEND_LATEST_PROMOTED"
 
@@ -421,9 +423,7 @@ jobs:
           ECR_REGISTRY: ${{ steps.ecr-login.outputs.registry }}
         run: |
           docker pull "$ECR_REGISTRY/$ECR_FRONTEND_REPO:${{ github.sha }}"
-          docker tag \
-            "$ECR_REGISTRY/$ECR_FRONTEND_REPO:${{ github.sha }}" \
-            "$ECR_REGISTRY/$ECR_FRONTEND_REPO:latest"
+          docker tag "$ECR_REGISTRY/$ECR_FRONTEND_REPO:${{ github.sha }}" "$ECR_REGISTRY/$ECR_FRONTEND_REPO:latest"
           docker push "$ECR_REGISTRY/$ECR_FRONTEND_REPO:latest"
           echo "FRONTEND_LATEST_PROMOTED"
           echo "DEPLOYMENT_OK"

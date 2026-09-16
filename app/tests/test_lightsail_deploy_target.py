@@ -10,5 +10,5 @@ DEPLOY_WORKFLOW = REPO_ROOT / ".github" / "workflows" / "deploy.yml"
 def test_deploy_targets_current_production_micro_instance():
     workflow = DEPLOY_WORKFLOW.read_text(encoding="utf-8")
 
-    assert "INSTANCE_NAME: ai-recruiter-micro-canary" in workflow
-    assert "INSTANCE_NAME: ai-recruiter\n" not in workflow
+    assert "INSTANCE_NAME: ai-recruiter-micro-prod" in workflow
+    assert "INSTANCE_NAME: ai-recruiter-micro-canary" not in workflow
