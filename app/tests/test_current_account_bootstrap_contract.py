@@ -49,6 +49,23 @@ def test_lightsail_ssh_uses_temporary_access_details_not_persistent_private_key_
     assert "/ai-recruiter/prod/lightsail-ssh-key" not in workflow
 
 
+def test_lightsail_ssh_uses_temporary_certificate_for_every_connection():
+    workflow = (ROOT / ".github" / "workflows" / "deploy.yml").read_text(
+        encoding="utf-8"
+    )
+    assert ".accessDetails.certKey" in workflow
+    assert "LIGHTSAIL_CERT_FILE" in workflow
+    assert "CertificateFile=" in workflow
+
+
+def test_deploy_has_no_cloudfront_runtime_dependency():
+    workflow = (ROOT / ".github" / "workflows" / "deploy.yml").read_text(
+        encoding="utf-8"
+    )
+    assert "CLOUDFRONT_DISTRIBUTION_ID" not in workflow
+    assert "cloudfront create-invalidation" not in workflow
+
+
 def test_lightsail_bootstrap_generates_runtime_identity_on_host_and_registers_only_public_ca():
     workflow = (ROOT / ".github" / "workflows" / "deploy.yml").read_text(
         encoding="utf-8"
