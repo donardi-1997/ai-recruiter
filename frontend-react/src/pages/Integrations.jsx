@@ -1,0 +1,230 @@
+import { useCallback, useEffect, useState } from "react";
+import { useSearchParams } from "react-router-dom";
+
+import api from "../api/client";
+import "./Integrations.css";
+
+function Integrations() {
+  const [searchParams, setSearchParams] = useSearchParams();
+  const [status, setStatus] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [busy, setBusy] = useState("");
+  const [message, setMessage] = useState("");
+  const [error, setError] = useState("");
+
+  const loadStatus = useCallback(async () => {
+    try {
+      setError("");
+      const { data } = await api.get("/integrations/gmail/status");
+      setStatus(data);
+    } catch (requestError) {
+      const detail = requestError?.response?.data?.detail;
+      setError(detail || "No fue posible consultar el estado de Gmail.");
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    loadStatus();
+  }, [loadStatus]);
+
+  useEffect(() => {
+    const outcome = searchParams.get("gmail");
+    if (!outcome) return;
+
+    if (outcome === "connected") {
+      setMessage("Gmail corporativo conectado correctamente.");
+      loadStatus();
+    } else if (outcome === "denied") {
+      setError("La autorización de Gmail fue cancelada.");
+    } else if (outcome === "error") {
+      setError("No fue posible completar la autorización de Gmail.");
+    }
+
+    const next = new URLSearchParams(searchParams);
+    next.delete("gmail");
+    setSearchParams(next, { replace: true });
+  }, [loadStatus, searchParams, setSearchParams]);
+
+  async function connectGmail() {
+    setBusy("connect");
+    setError("");
+    setMessage("");
+    try {
+      const { data } = await api.get("/integrations/gmail/oauth/start");
+      if (!data?.authorization_url) {
+        throw new Error("Missing authorization URL");
+      }
+      window.open(data.authorization_url, "_self");
+    } catch (requestError) {
+      const detail = requestError?.response?.data?.detail;
+      setError(detail || "No fue posible iniciar la conexión con Google.");
+      setBusy("");
+    }
+  }
+
+  async function syncGmail() {
+    setBusy("sync");
+    setError("");
+    setMessage("");
+    try {
+      const { data } = await api.post("/integrations/gmail/sync");
+      const created = Number(data?.created || 0);
+      const existing = Number(data?.existing || 0);
+      const discovered = Number(data?.discovered || 0);
+      setMessage(
+        `${created} candidatos nuevos · ${existing} existentes · ${discovered} mensajes revisados`,
+      );
+    } catch (requestError) {
+      const detail = requestError?.response?.data?.detail;
+      setError(detail || "No fue posible sincronizar Gmail.");
+    } finally {
+      setBusy("");
+    }
+  }
+
+  async function disconnectGmail() {
+    setBusy("disconnect");
+    setError("");
+    setMessage("");
+    try {
+      await api.delete("/integrations/gmail");
+      setMessage("Cuenta Gmail desconectada.");
+      await loadStatus();
+    } catch (requestError) {
+      const detail = requestError?.response?.data?.detail;
+      setError(detail || "No fue posible desconectar Gmail.");
+    } finally {
+      setBusy("");
+    }
+  }
+
+  const connected = Boolean(status?.connected);
+  const oauthConfigured = Boolean(status?.oauth_configured);
+
+  return (
+    <section className="integrations-page">
+      <header className="integrations-hero">
+        <div>
+          <span className="integrations-eyebrow">Fuentes de candidatos</span>
+          <h1>Integraciones</h1>
+          <p>
+            Conecta el buzón corporativo que recibe postulaciones para importar CVs al
+            flujo de evaluación de ASIATI.
+          </p>
+        </div>
+        <div className="integrations-hero-badge">1 cuenta corporativa</div>
+      </header>
+
+      {error && <div className="integration-alert is-error" role="alert">{error}</div>}
+      {message && <div className="integration-alert is-success" role="status">{message}</div>}
+
+      <article className="integration-card">
+        <div className="integration-card-header">
+          <div className="integration-provider-mark" aria-hidden="true">M</div>
+          <div className="integration-provider-copy">
+            <div className="integration-title-row">
+              <h2>Gmail corporativo</h2>
+              {!loading && (
+                <span className={`integration-status ${connected ? "is-connected" : ""}`}>
+                  <span aria-hidden="true" />
+                  {connected ? "Conectado" : "Sin conexión"}
+                </span>
+              )}
+            </div>
+            <p>
+              Lee únicamente los correos permitidos por el filtro de ingestión y procesa
+              sus adjuntos PDF/DOCX como candidatos.
+            </p>
+          </div>
+        </div>
+
+        {loading ? (
+          <div className="integration-loading">Consultando configuración…</div>
+        ) : (
+          <div className="integration-body">
+            {connected ? (
+              <div className="integration-account">
+                <span className="integration-account-label">Cuenta conectada</span>
+                <strong>{status.connected_email}</strong>
+                <span>
+                  Proveedor de ingestión: {status.provider || "INDEED"}
+                </span>
+              </div>
+            ) : oauthConfigured ? (
+              <div className="integration-account">
+                <span className="integration-account-label">Estado</span>
+                <strong>Gmail listo para conectar</strong>
+                <span>Autoriza una sola cuenta corporativa de Google Workspace.</span>
+              </div>
+            ) : (
+              <div className="integration-account is-warning">
+                <span className="integration-account-label">Configuración requerida</span>
+                <strong>OAuth de Gmail no configurado</strong>
+                <span>
+                  Crea el cliente OAuth Web en Google Cloud y registra exactamente este
+                  callback HTTPS.
+                </span>
+              </div>
+            )}
+
+            {status?.redirect_uri && (
+              <div className="integration-callback">
+                <span>Callback OAuth</span>
+                <code>{status.redirect_uri}</code>
+              </div>
+            )}
+
+            {!status?.safe_filter && (
+              <div className="integration-alert is-warning">
+                La sincronización permanecerá bloqueada hasta configurar un remitente
+                permitido o una consulta Gmail con <code>from:</code>.
+              </div>
+            )}
+
+            {!status?.enabled && connected && (
+              <div className="integration-alert is-warning">
+                La cuenta está conectada, pero la ingestión automática está deshabilitada.
+              </div>
+            )}
+
+            <div className="integration-actions">
+              {!connected ? (
+                <button
+                  type="button"
+                  className="integration-primary"
+                  onClick={connectGmail}
+                  disabled={!oauthConfigured || Boolean(busy)}
+                >
+                  {busy === "connect" ? "Abriendo Google…" : "Conectar Gmail"}
+                </button>
+              ) : (
+                <>
+                  <button
+                    type="button"
+                    className="integration-primary"
+                    onClick={syncGmail}
+                    disabled={Boolean(busy) || !status.enabled || !status.safe_filter}
+                  >
+                    {busy === "sync" ? "Sincronizando…" : "Sincronizar ahora"}
+                  </button>
+                  <button
+                    type="button"
+                    className="integration-secondary"
+                    onClick={disconnectGmail}
+                    disabled={Boolean(busy)}
+                  >
+                    {busy === "disconnect" ? "Desconectando…" : "Desconectar"}
+                  </button>
+                </>
+              )}
+            </div>
+          </div>
+        )}
+      </article>
+    </section>
+  );
+}
+
+export default Integrations;
