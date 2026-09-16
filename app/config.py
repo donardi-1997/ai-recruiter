@@ -44,6 +44,7 @@ class GmailSettings:
     user_id: str
     query: str
     allowed_senders: tuple[str, ...]
+    ingestion_provider: str
     scope: str
     token_url: str
     api_base_url: str
@@ -100,6 +101,10 @@ def get_gmail_settings() -> GmailSettings:
         user_id=os.getenv("GMAIL_USER_ID", "me").strip() or "me",
         query=os.getenv("GMAIL_QUERY", "has:attachment").strip(),
         allowed_senders=allowed_senders,
+        ingestion_provider=(
+            os.getenv("GMAIL_INGESTION_PROVIDER", "INDEED").strip().upper()
+            or "INDEED"
+        ),
         scope=os.getenv(
             "GMAIL_SCOPE",
             "https://www.googleapis.com/auth/gmail.readonly",
