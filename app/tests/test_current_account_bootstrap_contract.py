@@ -39,6 +39,16 @@ def test_deploy_targets_current_account_via_github_oidc_role():
     assert "aws-actions/configure-aws-credentials" in workflow
 
 
+def test_lightsail_ssh_uses_temporary_access_details_not_persistent_private_key_secret():
+    workflow = (ROOT / ".github" / "workflows" / "deploy.yml").read_text(
+        encoding="utf-8"
+    )
+    assert "get-instance-access-details" in workflow
+    assert "--protocol ssh" in workflow
+    assert "LIGHTSAIL_SSH_KEY_SECRET" not in workflow
+    assert "/ai-recruiter/prod/lightsail-ssh-key" not in workflow
+
+
 def test_api_and_worker_require_runtime_resource_environment():
     for filename in ("deploy-api.sh", "deploy-worker.sh"):
         content = (ROOT / "scripts" / filename).read_text(encoding="utf-8")
@@ -68,5 +78,3 @@ def test_bedrock_and_canonical_storage_have_no_stale_resource_defaults():
     assert 'os.getenv("KNOWLEDGE_BASE_ID", "")' in ingestion
     assert 'os.getenv("DATA_SOURCE_ID", "")' in ingestion
     assert 'os.getenv("S3_BUCKET", "")' in storage
-
-# This contract intentionally starts RED against the legacy deployment literals.
