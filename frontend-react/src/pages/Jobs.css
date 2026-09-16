@@ -21,6 +21,119 @@
 }
 
 /* =====================================================
+   JOBS — Vacancy intelligence
+   ===================================================== */
+.job-enrichment-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  padding: 14px 16px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface-soft);
+}
+
+.job-enrichment-actions > div {
+  min-width: 0;
+}
+
+.job-enrichment-actions strong {
+  display: block;
+  margin-bottom: 3px;
+  color: var(--ink);
+  font-size: 0.86rem;
+}
+
+.job-enrichment-actions p {
+  margin: 0;
+  font-size: 0.76rem;
+  line-height: 1.5;
+}
+
+.job-enrichment-actions .btn {
+  flex: 0 0 auto;
+}
+
+.job-enrichment-proposal {
+  padding: 18px;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: var(--surface-soft);
+}
+
+.job-enrichment-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.job-enrichment-heading h3 {
+  margin: 2px 0 0;
+  font-size: 1rem;
+}
+
+.job-enrichment-proposal > p {
+  margin: 0 0 16px;
+  color: var(--ink-soft);
+  font-size: 0.84rem;
+  line-height: 1.65;
+  white-space: pre-wrap;
+}
+
+.job-enrichment-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.job-enrichment-grid > div {
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface);
+}
+
+.job-enrichment-grid strong {
+  display: block;
+  margin-bottom: 7px;
+  color: var(--ink);
+  font-size: 0.76rem;
+}
+
+.job-enrichment-grid ul {
+  margin: 0;
+  padding-left: 18px;
+  color: var(--ink-soft);
+  font-size: 0.76rem;
+  line-height: 1.55;
+}
+
+.job-enrichment-proposal .form-actions {
+  margin-top: 16px;
+}
+
+.job-reevaluation-note {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 11px 14px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface-soft);
+  color: var(--ink-soft);
+  font-size: 0.78rem;
+  line-height: 1.5;
+}
+
+.job-reevaluation-note strong {
+  color: var(--ink);
+  font-size: 0.8rem;
+}
+
+/* =====================================================
    JOBS — Detail modal
    ===================================================== */
 .job-detail-modal {
@@ -351,8 +464,22 @@
   }
 
   .job-publication-grid,
-  .indeed-status-grid {
+  .indeed-status-grid,
+  .job-enrichment-grid {
     grid-template-columns: 1fr;
+  }
+
+  .job-enrichment-actions {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .job-enrichment-actions .btn {
+    width: 100%;
+  }
+
+  .job-enrichment-heading {
+    flex-direction: column;
   }
 
   .indeed-actions {
