@@ -49,6 +49,21 @@ def test_lightsail_ssh_uses_temporary_access_details_not_persistent_private_key_
     assert "/ai-recruiter/prod/lightsail-ssh-key" not in workflow
 
 
+def test_lightsail_bootstrap_generates_runtime_identity_on_host_and_registers_only_public_ca():
+    workflow = (ROOT / ".github" / "workflows" / "deploy.yml").read_text(
+        encoding="utf-8"
+    )
+    assert "Bootstrap Lightsail runtime identity" in workflow
+    assert "openssl req -x509" in workflow
+    assert "client.key" in workflow
+    assert "scp" in workflow
+    assert "ca.crt" in workflow
+    assert "rolesanywhere create-trust-anchor" in workflow
+    assert "aws_signing_helper" in workflow
+    assert "credential_process" in workflow
+    assert "scp" in workflow and "client.key ubuntu@" not in workflow
+
+
 def test_api_and_worker_require_runtime_resource_environment():
     for filename in ("deploy-api.sh", "deploy-worker.sh"):
         content = (ROOT / "scripts" / filename).read_text(encoding="utf-8")
