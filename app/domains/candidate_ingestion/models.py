@@ -21,6 +21,7 @@ class CandidateIngestionEvent(Base):
             "owner_sub",
             "source",
             "provider",
+            "source_account",
             "external_id",
             name="uq_candidate_ingestion_external_event",
         ),
@@ -49,6 +50,7 @@ class CandidateIngestionEvent(Base):
     owner_sub = Column(Text, nullable=False)
     source = Column(Text, nullable=False)
     provider = Column(Text, nullable=False)
+    source_account = Column(Text, nullable=False, default="")
     external_id = Column(Text, nullable=False)
     job_id = Column(
         UUID(as_uuid=False),
@@ -140,4 +142,48 @@ class CandidateIngestionDocument(Base):
     ingestion_event = relationship(
         "CandidateIngestionEvent",
         back_populates="documents",
+    )
+
+
+class CandidateIngestionCursor(Base):
+    """Durable incremental-sync cursor isolated by tenant, provider and source account."""
+
+    __tablename__ = "candidate_ingestion_cursors"
+    __table_args__ = (
+        UniqueConstraint(
+            "owner_sub",
+            "source",
+            "provider",
+            "source_account",
+            name="uq_candidate_ingestion_cursor_source",
+        ),
+        Index(
+            "idx_candidate_ingestion_cursor_owner",
+            "owner_sub",
+            "source",
+            "provider",
+        ),
+    )
+
+    id = Column(
+        UUID(as_uuid=False),
+        primary_key=True,
+        default=lambda: str(uuid.uuid4()),
+    )
+    owner_sub = Column(Text, nullable=False)
+    source = Column(Text, nullable=False)
+    provider = Column(Text, nullable=False)
+    source_account = Column(Text, nullable=False)
+    cursor_value = Column(Text, nullable=True)
+    last_synced_at = Column(DateTime(timezone=True), nullable=True)
+    created_at = Column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=lambda: datetime.now(timezone.utc),
+    )
+    updated_at = Column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
     )
