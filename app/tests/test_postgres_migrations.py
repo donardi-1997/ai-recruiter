@@ -39,6 +39,7 @@ def test_alembic_head_builds_current_postgres_schema():
             "indeed_resume_ingestions",
             "candidate_ingestion_events",
             "candidate_ingestion_documents",
+            "job_reevaluation_tasks",
         }.issubset(tables)
 
         job_columns = {column["name"] for column in inspector.get_columns("jobs")}
@@ -48,7 +49,15 @@ def test_alembic_head_builds_current_postgres_schema():
             "employment_type",
             "public_slug",
             "published_at",
+            "evaluation_version",
+            "evaluation_profile",
+            "updated_at",
         }.issubset(job_columns)
+
+        evaluation_columns = {
+            column["name"] for column in inspector.get_columns("evaluations")
+        }
+        assert "job_evaluation_version" in evaluation_columns
 
         assignment_columns = {
             column["name"] for column in inspector.get_columns("job_candidates")
@@ -100,6 +109,6 @@ def test_alembic_head_builds_current_postgres_schema():
             revision = connection.execute(
                 text("SELECT version_num FROM alembic_version")
             ).scalar_one()
-        assert revision == "007"
+        assert revision == "008"
     finally:
         engine.dispose()
