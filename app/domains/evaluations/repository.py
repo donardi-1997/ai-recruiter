@@ -33,7 +33,19 @@ def is_evaluation_complete(evaluation: Evaluation | None) -> bool:
     return True
 
 
-def needs_evaluation(evaluation: Evaluation | None, *, force: bool = False) -> bool:
+def needs_evaluation(
+    evaluation: Evaluation | None,
+    *,
+    current_job_version: int | None = None,
+    force: bool = False,
+) -> bool:
+    """Return whether candidate/job evidence must be evaluated again.
+
+    Existing callers that do not supply ``current_job_version`` retain the
+    historical completeness-only behavior. The central evaluation service
+    supplies the current job version so a complete evaluation is reusable
+    only when it was produced from exactly that version of the job profile.
+    """
     if force:
         return True
     if evaluation is None:
@@ -44,6 +56,10 @@ def needs_evaluation(evaluation: Evaluation | None, *, force: bool = False) -> b
         return True
     if not is_evaluation_complete(evaluation):
         return True
+    if current_job_version is not None:
+        stored_version = int(getattr(evaluation, "job_evaluation_version", 1) or 1)
+        if stored_version != int(current_job_version):
+            return True
     return False
 
 
@@ -60,6 +76,7 @@ def create_evaluation(
     requirements: list[dict] | None = None,
     status: str = "COMPLETED",
     error_message: str | None = None,
+    job_evaluation_version: int = 1,
 ) -> Evaluation:
     existing = get_evaluation_for_job_candidate(db, job_id, candidate_id)
 
@@ -73,6 +90,7 @@ def create_evaluation(
         if requirements is not None:
             existing.requirements = requirements
         existing.error_message = error_message
+        existing.job_evaluation_version = int(job_evaluation_version)
         existing.created_at = datetime.now(timezone.utc)
         db.commit()
         db.refresh(existing)
@@ -81,6 +99,7 @@ def create_evaluation(
     evaluation = Evaluation(
         candidate_id=candidate_id,
         job_id=job_id,
+        job_evaluation_version=int(job_evaluation_version),
         status=status,
         match_score=match_score,
         recommendation=recommendation,
