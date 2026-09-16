@@ -65,6 +65,7 @@ class CandidateIngestionEvent(Base):
     status = Column(Text, nullable=False, default="RECEIVED")
     raw_metadata = Column(JSON, nullable=True, default=dict)
     raw_s3_key = Column(Text, nullable=True)
+    bedrock_ingestion_job_id = Column(Text, nullable=True)
     queue_dispatched_at = Column(DateTime(timezone=True), nullable=True)
     processing_token = Column(Text, nullable=True)
     heartbeat_at = Column(DateTime(timezone=True), nullable=True)
