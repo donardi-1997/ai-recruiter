@@ -68,3 +68,5 @@ def test_bedrock_and_canonical_storage_have_no_stale_resource_defaults():
     assert 'os.getenv("KNOWLEDGE_BASE_ID", "")' in ingestion
     assert 'os.getenv("DATA_SOURCE_ID", "")' in ingestion
     assert 'os.getenv("S3_BUCKET", "")' in storage
+
+# This contract intentionally starts RED against the legacy deployment literals.
