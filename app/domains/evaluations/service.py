@@ -31,8 +31,9 @@ def evaluate_candidate_for_owner(
     candidate_id: str,
     job_id: str,
     owner_sub: str,
+    force: bool = False,
 ) -> tuple[object, bool, str | None]:
-    """Authorize candidate/job visibility, then run the existing evaluation use case."""
+    """Authorize candidate/job visibility, then run the evaluation use case."""
     candidate = candidates_service.require_candidate(
         db,
         candidate_id,
@@ -42,6 +43,13 @@ def evaluate_candidate_for_owner(
     if job is None:
         raise JobNotFound(job_id)
 
+    if force:
+        return evaluate_candidate_for_job(
+            db,
+            candidate=candidate,
+            job=job,
+            force=True,
+        )
     return evaluate_candidate_for_job(
         db,
         candidate=candidate,
@@ -54,21 +62,29 @@ def evaluate_candidate_for_job(
     *,
     candidate,
     job,
+    force: bool = False,
 ) -> tuple[object, bool, str | None]:
-    """Evaluate a candidate for a specific job.
+    """Evaluate a candidate for a specific job only when the result is stale.
 
-    Args:
-        db: Database session
-        candidate: Already-authorized Candidate domain object
-        job: Already-authorized Job domain object
-
-    Returns:
-        tuple: (evaluation, newly_evaluated, internal_error)
-        - evaluation: the persisted Evaluation object
-        - newly_evaluated: True if this evaluation was just created/updated
-        - internal_error: technical error message if any, None on success
+    A complete evaluation produced from the current ``job.evaluation_version``
+    is returned directly. This freshness check is centralized here so manual
+    evaluation, imports, Gmail ingestion, Indeed ingestion, and reevaluation
+    workers all share the same no-op behavior for unchanged vacancies.
     """
-    # Import at execution time to allow monkeypatching in tests
+    current_job_version = int(getattr(job, "evaluation_version", 1) or 1)
+    existing = evaluations_repository.get_evaluation_for_job_candidate(
+        db,
+        job.id,
+        candidate.id,
+    )
+    if not evaluations_repository.needs_evaluation(
+        existing,
+        current_job_version=current_job_version,
+        force=force,
+    ):
+        return existing, False, None
+
+    # Import at execution time to allow monkeypatching in tests.
     from app import evaluation as evaluation_backend
 
     retrieve_candidate = evaluation_backend.retrieve_candidate
@@ -91,11 +107,11 @@ def evaluate_candidate_for_job(
         eval_status = llm_result.get("status", "COMPLETED")
 
         if eval_status == "FAILED":
-            # LLM explicitly returned FAILED
             evaluation = evaluations_repository.create_evaluation(
                 db,
                 candidate_id=candidate.id,
                 job_id=job.id,
+                job_evaluation_version=current_job_version,
                 match_score=0.0,
                 recommendation=llm_result.get("recommendation", "EVALUATION_FAILED"),
                 summary=llm_result.get("summary", FAILED_EVALUATION_PUBLIC_MESSAGE),
@@ -107,18 +123,17 @@ def evaluate_candidate_for_job(
             )
             return evaluation, True, None
 
-        # Validate the supposedly completed result using canonical rules
         is_valid, error_msg = validate_completed_evaluation_result(llm_result)
         if not is_valid:
             raise ValueError(error_msg)
 
-        # Normalize the validated result for persistence
         normalized = normalize_completed_evaluation_result(llm_result)
 
         evaluation = evaluations_repository.create_evaluation(
             db,
             candidate_id=candidate.id,
             job_id=job.id,
+            job_evaluation_version=current_job_version,
             match_score=normalized["match_score"],
             recommendation=normalized["recommendation"],
             summary=normalized["summary"],
@@ -144,11 +159,13 @@ def evaluate_candidate_for_job(
             db,
             candidate_id=candidate.id,
             job_id=job.id,
+            job_evaluation_version=current_job_version,
             match_score=0.0,
             recommendation="EVALUATION_FAILED",
             summary=FAILED_EVALUATION_PUBLIC_MESSAGE,
             strengths=[],
             gaps=[],
+            requirements=[],
             status="FAILED",
             error_message=internal_error,
         )
