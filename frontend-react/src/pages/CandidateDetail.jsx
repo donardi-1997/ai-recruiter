@@ -9,7 +9,10 @@ function CandidateDetail() {
   const jobId = searchParams.get("job_id");
   const [candidate, setCandidate] = useState(null);
   const [evaluations, setEvaluations] = useState([]);
+  const [indeedDetails, setIndeedDetails] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [openingResume, setOpeningResume] = useState(false);
+  const [resumeError, setResumeError] = useState("");
 
   useEffect(() => {
     async function load() {
@@ -24,6 +27,18 @@ function CandidateDetail() {
         setEvaluations(jobId
           ? [evaluationResponse.data]
           : evaluationResponse.data.evaluations || []);
+
+        if (jobId) {
+          try {
+            const indeedResponse = await api.get(
+              `/jobs/${jobId}/candidates/${candidate_id}/integrations/indeed`
+            );
+            setIndeedDetails(indeedResponse.data);
+          } catch {
+            // Not every candidate comes from Indeed. Keep the core profile usable.
+            setIndeedDetails(null);
+          }
+        }
       } catch (error) {
         console.error("No fue posible cargar el candidato", error);
       } finally {
@@ -33,10 +48,28 @@ function CandidateDetail() {
     load();
   }, [candidate_id, jobId]);
 
+  async function openResume() {
+    if (!jobId || !indeedDetails?.resume?.available) return;
+    setOpeningResume(true);
+    setResumeError("");
+    try {
+      const response = await api.get(
+        `/jobs/${jobId}/candidates/${candidate_id}/resume`
+      );
+      window.open(response.data.url, "_blank", "noopener,noreferrer");
+    } catch {
+      setResumeError("No fue posible abrir el CV. Intenta nuevamente.");
+    } finally {
+      setOpeningResume(false);
+    }
+  }
+
   if (loading) return <div className="page"><div className="page-loading"><span /> Cargando perfil…</div></div>;
   const evaluation = evaluations[0];
-  const sourceName = candidate?.metadata?.source_name || candidate?.metadata?.source;
-  const resumeName = candidate?.filename || candidate?.metadata?.resume_name || "Currículum registrado";
+  const sourceName = indeedDetails?.source_name || candidate?.metadata?.source_name || candidate?.metadata?.source;
+  const resume = indeedDetails?.resume;
+  const resumeName = resume?.name || candidate?.filename || candidate?.metadata?.resume_name || "Currículum registrado";
+  const isIndeedTest = indeedDetails?.staged_test ?? candidate?.metadata?.indeed_staged_test;
 
   return (
     <div className="page candidate-detail-page">
@@ -48,7 +81,24 @@ function CandidateDetail() {
           <h1>{candidate?.name || "Candidato"}</h1>
           <p>{resumeName}</p>
           {sourceName && <p><strong>Origen:</strong> {sourceName}</p>}
-          {candidate?.metadata?.indeed_staged_test && <p className="muted">Candidato de prueba de Indeed</p>}
+          {isIndeedTest && <p className="muted">Candidato de prueba de Indeed</p>}
+          {resume && !resume.available && resume.status !== "FAILED" && resume.status !== "UNAVAILABLE" && (
+            <p className="muted">Procesando CV…</p>
+          )}
+          {resume?.status === "FAILED" && (
+            <p className="muted">No fue posible procesar el CV. Intenta nuevamente.</p>
+          )}
+          {resume?.available && (
+            <button
+              type="button"
+              className="btn btn-secondary"
+              onClick={openResume}
+              disabled={openingResume}
+            >
+              {openingResume ? "Abriendo…" : "Ver CV"}
+            </button>
+          )}
+          {resumeError && <p className="muted">{resumeError}</p>}
           {jobId && <p>Evaluado para la vacante seleccionada</p>}
         </div>
         <span className="status-pill"><i /> Disponible</span>

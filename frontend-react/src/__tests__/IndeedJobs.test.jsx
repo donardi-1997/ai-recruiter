@@ -98,6 +98,7 @@ describe("Jobs Indeed integration", () => {
         city: "Bogotá",
         employment_type: "FULL_TIME",
         public_slug: "kam-colombia",
+        evaluation_profile: null,
       });
     });
   });

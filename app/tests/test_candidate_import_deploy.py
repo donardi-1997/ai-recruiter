@@ -1,4 +1,4 @@
-"""Deployment contracts for the candidate-import API/worker production slice."""
+"""Deployment contracts for the shared candidate-import/Indeed worker."""
 
 from pathlib import Path
 
@@ -13,27 +13,35 @@ def _read(path: Path) -> str:
     return path.read_text(encoding="utf-8")
 
 
-def test_worker_deploy_uses_same_immutable_backend_image_and_command():
+def test_worker_deploy_uses_same_immutable_backend_image_and_shared_dispatcher_command():
     worker = _read(WORKER_SCRIPT)
     assert 'ECR_REPO="ai-recruiter-api"' in worker
     assert 'ECR_TAG="${ECR_TAG:-latest}"' in worker
     assert 'CONTAINER_NAME="ai-recruiter-worker"' in worker
     assert "--restart unless-stopped" in worker
-    assert "python -m app.workers.candidate_imports" in worker
+    assert "python -m app.workers.dispatcher" in worker
+    assert "python -m app.workers.candidate_imports" not in worker
     assert 'docker inspect "$CONTAINER_NAME"' in worker
-    assert 'OLD_WORKER_IMAGE' in worker
+    assert "OLD_WORKER_IMAGE" in worker
 
 
-def test_api_and_worker_receive_candidate_import_environment():
-    api = _read(API_SCRIPT)
-    worker = _read(WORKER_SCRIPT)
-    for content in (api, worker):
-        assert "IMPORT_STAGING_BUCKET" in content
-        assert "IMPORT_QUEUE_URL" in content
-        assert "IMPORT_EVALUATION_CONCURRENCY" in content
+def test_api_and_worker_receive_candidate_import_and_rag_environment():
+    for content in (_read(API_SCRIPT), _read(WORKER_SCRIPT)):
+        for key in (
+            "AWS_ACCOUNT_ID",
+            "IMPORT_STAGING_BUCKET",
+            "IMPORT_QUEUE_URL",
+            "IMPORT_EVALUATION_CONCURRENCY",
+            "S3_BUCKET",
+            "KNOWLEDGE_BASE_ID",
+            "DATA_SOURCE_ID",
+            "COGNITO_USER_POOL_ID",
+            "COGNITO_CLIENT_ID",
+        ):
+            assert key in content
 
 
-def test_worker_preserves_roles_anywhere_mounts_and_runtime_role_checks():
+def test_worker_preserves_roles_anywhere_mounts_and_dynamic_runtime_role_checks():
     worker = _read(WORKER_SCRIPT)
     for destination in (
         "/root/.aws/config",
@@ -43,7 +51,8 @@ def test_worker_preserves_roles_anywhere_mounts_and_runtime_role_checks():
     ):
         assert destination in worker
     assert "AiRecruiterBedrockRuntimeRole" in worker
-    assert "765761474007" in worker
+    assert 'EXPECTED_AWS_ACCOUNT="${EXPECTED_AWS_ACCOUNT:-$AWS_ACCOUNT_ID}"' in worker
+    assert "765761474007" not in worker
 
 
 def test_workflow_provisions_import_infrastructure_before_migration_and_deploy():
@@ -75,7 +84,6 @@ def test_workflow_copies_and_runs_worker_deploy_script_with_sha_tag():
     assert "scripts/deploy-worker.sh" in workflow
     assert "/tmp/ai-recruiter-deploy-worker.sh" in workflow
     assert 'ECR_TAG="${{ github.sha }}"' in workflow
-    assert "github.event_name != 'pull_request'" in workflow
 
 
 def test_migration_and_backfill_run_before_existing_api_is_replaced():

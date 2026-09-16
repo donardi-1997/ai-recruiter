@@ -5,10 +5,8 @@ modules without changing any implementation. They serve as regression tests
 to protect against future changes.
 """
 
-import os
 import importlib
-import sys
-from unittest.mock import patch, MagicMock, call
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -17,39 +15,34 @@ import pytest
 # TEST GROUP 1 — CONFIG CONSTANTS
 # ============================================================
 
-def test_config_defaults():
-    """Test canonical defaults from app.infrastructure.bedrock.config."""
-    from app.infrastructure.bedrock.config import (
-        AWS_REGION,
-        KNOWLEDGE_BASE_ID,
-        NUMBER_OF_RESULTS,
-        MODEL_ID,
-        MODEL_TEMPERATURE,
-    )
+def test_config_defaults(monkeypatch):
+    """Runtime-generated resource identifiers have no legacy fallback."""
+    monkeypatch.delenv("KNOWLEDGE_BASE_ID", raising=False)
 
-    assert AWS_REGION == "us-east-2"
-    assert KNOWLEDGE_BASE_ID == "VUGNMJQAEN"
-    assert NUMBER_OF_RESULTS == 50
-    assert MODEL_ID == "amazon.nova-lite-v1:0"
-    assert MODEL_TEMPERATURE == 0
+    import app.infrastructure.bedrock.config as config_module
+    importlib.reload(config_module)
+
+    assert config_module.AWS_REGION == "us-east-2"
+    assert config_module.KNOWLEDGE_BASE_ID == ""
+    assert config_module.NUMBER_OF_RESULTS == 50
+    assert config_module.MODEL_ID == "amazon.nova-lite-v1:0"
+    assert config_module.MODEL_TEMPERATURE == 0
 
 
-def test_config_env_override():
-    """Test that environment variables can override defaults."""
-    # The config module reads env vars at import time, so we need to 
-    # test by directly checking the module's behavior with patched env
-    # Since the module is already loaded, we can't easily test env override
-    # without complex reloading. Just verify the defaults are correct.
-    from app.infrastructure.bedrock.config import (
-        AWS_REGION,
-        KNOWLEDGE_BASE_ID,
-        NUMBER_OF_RESULTS,
-        MODEL_ID,
-    )
-    assert AWS_REGION == "us-east-2"
-    assert KNOWLEDGE_BASE_ID == "VUGNMJQAEN"
-    assert NUMBER_OF_RESULTS == 50
-    assert MODEL_ID == "amazon.nova-lite-v1:0"
+def test_config_env_override(monkeypatch):
+    """Knowledge Base identifiers are supplied by the deployment environment."""
+    monkeypatch.setenv("KNOWLEDGE_BASE_ID", "kb-current-account-test")
+
+    import app.infrastructure.bedrock.config as config_module
+    importlib.reload(config_module)
+
+    assert config_module.AWS_REGION == "us-east-2"
+    assert config_module.KNOWLEDGE_BASE_ID == "kb-current-account-test"
+    assert config_module.NUMBER_OF_RESULTS == 50
+    assert config_module.MODEL_ID == "amazon.nova-lite-v1:0"
+
+    monkeypatch.delenv("KNOWLEDGE_BASE_ID", raising=False)
+    importlib.reload(config_module)
 
 
 # ============================================================
@@ -59,20 +52,18 @@ def test_config_env_override():
 def test_session_with_profile(monkeypatch):
     """Test session creation when BEDROCK_AWS_PROFILE is set."""
     mock_session = MagicMock()
-    
-    # Patch boto3.Session in the session module's namespace
+
     monkeypatch.setattr("app.infrastructure.bedrock.session.boto3.Session", mock_session)
-    # Also patch the config module's BEDROCK_AWS_PROFILE
-    monkeypatch.setattr("app.infrastructure.bedrock.config.BEDROCK_AWS_PROFILE", "ai-recruiter-bedrock")
+    monkeypatch.setattr(
+        "app.infrastructure.bedrock.config.BEDROCK_AWS_PROFILE",
+        "ai-recruiter-bedrock",
+    )
     monkeypatch.setenv("AWS_REGION", "us-east-2")
 
     import app.infrastructure.bedrock.session as session_module
     importlib.reload(session_module)
 
-    # The session is created at module import time (line 35 of session.py)
-    # So it's already been called once during reload
     assert mock_session.call_count >= 1
-    # The last call should be with profile_name
     call_args, call_kwargs = mock_session.call_args
     assert call_kwargs.get("profile_name") == "ai-recruiter-bedrock"
 
@@ -80,17 +71,14 @@ def test_session_with_profile(monkeypatch):
 def test_session_without_profile(monkeypatch):
     """Test session creation when no profile is set (default credential chain)."""
     mock_session = MagicMock()
-    
-    # Patch boto3.Session in the session module's namespace
+
     monkeypatch.setattr("app.infrastructure.bedrock.session.boto3.Session", mock_session)
-    # Also patch the config module's BEDROCK_AWS_PROFILE to None/empty
     monkeypatch.setattr("app.infrastructure.bedrock.config.BEDROCK_AWS_PROFILE", None)
     monkeypatch.setenv("AWS_REGION", "us-east-2")
 
     import app.infrastructure.bedrock.session as session_module
     importlib.reload(session_module)
 
-    # The session is created at module import time
     assert mock_session.call_count >= 1
     call_args, call_kwargs = mock_session.call_args
     assert "profile_name" not in call_kwargs
@@ -100,42 +88,35 @@ def test_session_without_profile(monkeypatch):
 # TEST GROUP 4 — RETRIEVAL REQUEST
 # ============================================================
 
-# ============================================================
-# TEST GROUP 4 — RETRIEVAL REQUEST
-# ============================================================
-
 def test_retrieve_candidate_request_shape(monkeypatch):
-    """Test that retrieve_candidate sends correct request to Bedrock."""
+    """Test that retrieve_candidate sends the runtime Knowledge Base ID."""
     mock_client = MagicMock()
     mock_client.retrieve.return_value = {"retrievalResults": []}
-    
-    # Patch the bedrock_agent_runtime directly on the clients module
-    # since the client is created at module import time
+
     import app.infrastructure.bedrock.clients as clients_module
     monkeypatch.setattr(clients_module, "bedrock_agent_runtime", mock_client)
-    
-    # Also patch the config
-    import app.infrastructure.bedrock.config as config_module
-    monkeypatch.setattr(config_module, "KNOWLEDGE_BASE_ID", "VUGNMJQAEN")
-    
-    # Now import and call
-    from app.infrastructure.bedrock.retriever import retrieve_candidate
 
-    results = retrieve_candidate(candidate_id="candidate-123", question="Python AWS backend")
+    import app.infrastructure.bedrock.retriever as retriever_module
+    monkeypatch.setattr(retriever_module, "KNOWLEDGE_BASE_ID", "kb-current-account-test")
 
-    # Verify the call
+    results = retriever_module.retrieve_candidate(
+        candidate_id="candidate-123",
+        question="Python AWS backend",
+    )
+
     mock_client.retrieve.assert_called_once()
     call_kwargs = mock_client.retrieve.call_args.kwargs
 
-    assert call_kwargs["knowledgeBaseId"] == "VUGNMJQAEN"
+    assert call_kwargs["knowledgeBaseId"] == "kb-current-account-test"
     assert call_kwargs["retrievalQuery"] == {"text": "Python AWS backend"}
-    
+
     vector_search = call_kwargs["retrievalConfiguration"]["vectorSearchConfiguration"]
     assert vector_search["numberOfResults"] == 50
-    
+
     filter_config = vector_search["filter"]
     assert filter_config["equals"]["key"] == "candidate_id"
     assert filter_config["equals"]["value"] == "candidate-123"
+    assert results == []
 
 
 def test_retrieve_candidate_returns_list(monkeypatch):
@@ -163,7 +144,7 @@ def test_retrieve_candidate_returns_list(monkeypatch):
 def test_retrieve_candidate_empty_results(monkeypatch):
     """Test that retrieve_candidate returns empty list when no results key."""
     mock_client = MagicMock()
-    mock_client.retrieve.return_value = {}  # No retrievalResults key
+    mock_client.retrieve.return_value = {}
 
     import app.infrastructure.bedrock.clients as clients_module
     monkeypatch.setattr(clients_module, "bedrock_agent_runtime", mock_client)
@@ -241,16 +222,10 @@ class TestInvokeJsonPrompt:
     def test_invalid_first_valid_second(self):
         """Invalid JSON first + valid second -> two invocations."""
         mock_chain = MagicMock()
-        
-        # First response: invalid JSON that passes clean_json but fails json.loads
-        # clean_json will extract the JSON but it's malformed
         mock_resp1 = MagicMock()
         mock_resp1.content = '{"invalid json: missing quote}'
-        
-        # Second response: valid JSON
         mock_resp2 = MagicMock()
         mock_resp2.content = '{"result": "ok"}'
-        
         mock_chain.invoke.side_effect = [mock_resp1, mock_resp2]
 
         from app.infrastructure.bedrock.parser import invoke_json_prompt
@@ -260,27 +235,20 @@ class TestInvokeJsonPrompt:
         assert result == {"result": "ok"}
         assert mock_chain.invoke.call_count == 2
 
+
 def test_invalid_both_attempts():
-        """Invalid first + invalid second -> ValueError with Spanish message.
-        
-        Note: Current implementation only retries on JSONDecodeError, not ValueError from clean_json.
-        So invalid JSON that fails clean_json raises immediately without retry.
-        """
-        mock_chain = MagicMock()
-        
-        # Response that passes clean_json but fails json.loads
-        mock_resp1 = MagicMock()
-        mock_resp1.content = '{"invalid": "json"'
-        
-        mock_chain.invoke.return_value = mock_resp1
+    """Invalid first response preserves current clean_json error contract."""
+    mock_chain = MagicMock()
+    mock_resp1 = MagicMock()
+    mock_resp1.content = '{"invalid": "json"'
+    mock_chain.invoke.return_value = mock_resp1
 
-        from app.infrastructure.bedrock.parser import invoke_json_prompt
+    from app.infrastructure.bedrock.parser import invoke_json_prompt
 
-        with pytest.raises(ValueError, match="incompleto"):
-            invoke_json_prompt(mock_chain, {"input": "test"}, "test")
+    with pytest.raises(ValueError, match="incompleto"):
+        invoke_json_prompt(mock_chain, {"input": "test"}, "test")
 
-        # Current behavior: only 1 call because clean_json raises ValueError, not JSONDecodeError
-        assert mock_chain.invoke.call_count == 1
+    assert mock_chain.invoke.call_count == 1
 
 
 # ============================================================
@@ -350,7 +318,6 @@ class TestRequirementNormalization:
 
     def test_unknown(self):
         from app.domains.evaluations.rules import normalize_requirement
-        # Unknown requirements are returned as-is (no normalization)
         assert normalize_requirement("unknown tech") == "unknown tech"
 
 
@@ -360,10 +327,7 @@ class TestRequirementNormalization:
 
 def test_scoring_contract():
     """Test deterministic scoring: MATCH=1, PARTIAL=0.5, MISSING=0."""
-    # 2 MATCH, 1 PARTIAL, 1 MISSING = 2.5 points / 4 total = 62.5 -> round(62.5) = 62 or 63
-    # Python round() uses banker's rounding
     score = round((2.5 / 4) * 100)
-    # Python 3 uses banker's rounding: round(62.5) = 62 (even)
     assert score == 62
 
 
@@ -372,13 +336,9 @@ def test_scoring_contract():
 # ============================================================
 
 def test_evidence_30_word_cap():
-    """Test that evidence is capped at 30 words with ellipsis."""
+    """Evidence behavior is covered by evaluation contract tests."""
     from app.infrastructure.bedrock.evaluator import evaluate_candidate
-    
-    # We can't easily test the internal evidence truncation without
-    # mocking the LLM. This is documented behavior that is tested
-    # by the existing evaluation contract tests.
-    pass
+    assert callable(evaluate_candidate)
 
 
 # ============================================================
@@ -388,7 +348,7 @@ def test_evidence_30_word_cap():
 def test_no_results_returns_failed(monkeypatch):
     """Empty retrieval results -> FAILED with CANDIDATE_CONTEXT_NOT_FOUND."""
     import app.infrastructure.bedrock.clients as clients_module
-    
+
     mock_client = MagicMock()
     mock_client.retrieve.return_value = {"retrievalResults": []}
     monkeypatch.setattr(clients_module, "get_bedrock_agent_runtime", lambda: mock_client)
@@ -398,7 +358,7 @@ def test_no_results_returns_failed(monkeypatch):
     result = evaluate_candidate(
         candidate_id="cand-1",
         job_description="Python developer",
-        results=[]  # No results
+        results=[],
     )
 
     assert result["status"] == "FAILED"
@@ -414,28 +374,17 @@ def test_no_results_returns_failed(monkeypatch):
 # ============================================================
 
 def test_no_requirements_returns_low_match(monkeypatch):
-    """No explicit requirements extracted -> LOW_MATCH (not FAILED)."""
+    """No explicit requirements behavior is covered by evaluation contracts."""
     import app.infrastructure.bedrock.clients as clients_module
-    
+
     mock_client = MagicMock()
-    # Mock retrieve_candidate to return some content
     mock_client.retrieve.return_value = {
         "retrievalResults": [{"content": {"text": "Some CV content"}}]
     }
     monkeypatch.setattr(clients_module, "get_bedrock_agent_runtime", lambda: mock_client)
 
-    # Mock the LLM chain to return empty requirements
     import app.infrastructure.bedrock.evaluator as evaluator_module
-    original_llm = evaluator_module.get_llm()
-    
-    mock_chain = MagicMock()
-    mock_resp = MagicMock()
-    mock_resp.content = '{"requirements": []}'
-    mock_chain.invoke.return_value = mock_resp
-    
-    # We need to patch the chain creation - this is complex
-    # This test is covered by existing evaluation contract tests
-    pass
+    assert callable(evaluator_module.get_llm)
 
 
 # ============================================================
@@ -444,23 +393,21 @@ def test_no_requirements_returns_low_match(monkeypatch):
 
 def test_session_isolation_between_tests(monkeypatch):
     """Verify that session tests don't leak state between tests."""
-    # This test verifies that monkeypatch properly isolates boto3.Session
     mock_session1 = MagicMock()
     mock_session2 = MagicMock()
-    
+
     monkeypatch.setattr("boto3.Session", lambda **kwargs: mock_session1)
     monkeypatch.setenv("BEDROCK_AWS_PROFILE", "profile1")
-    
+
     import app.infrastructure.bedrock.session as session_module
     importlib.reload(session_module)
     s1 = session_module.get_bedrock_session()
-    
+
     monkeypatch.setattr("boto3.Session", lambda **kwargs: mock_session2)
     monkeypatch.setenv("BEDROCK_AWS_PROFILE", "profile2")
     importlib.reload(session_module)
     s2 = session_module.get_bedrock_session()
-    
-    # Both calls should have created their own session
+
     assert s1 is not s2
 
 

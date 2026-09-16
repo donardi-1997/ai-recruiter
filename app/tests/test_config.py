@@ -51,3 +51,46 @@ def test_import_worker_overrides(monkeypatch):
     monkeypatch.setenv("IMPORT_LEASE_TIMEOUT_SECONDS", "600")
     assert config.get_import_evaluation_concurrency() == 5
     assert config.get_import_lease_timeout_seconds() == 600
+
+
+def test_gmail_settings_are_environment_driven_and_passwordless(monkeypatch):
+    monkeypatch.setenv("GMAIL_ENABLED", "true")
+    monkeypatch.setenv("GMAIL_CLIENT_ID", "personal-client-id")
+    monkeypatch.setenv("GMAIL_CLIENT_SECRET", "personal-client-secret")
+    monkeypatch.setenv("GMAIL_REFRESH_TOKEN", "personal-refresh-token")
+    monkeypatch.setenv("GMAIL_USER_ID", "me")
+    monkeypatch.setenv("GMAIL_QUERY", "label:inbox has:attachment")
+    monkeypatch.setenv("GMAIL_ALLOWED_SENDERS", "indeed@example.com, jobs@example.net")
+
+    settings = config.get_gmail_settings()
+
+    assert settings.enabled is True
+    assert settings.configured is True
+    assert settings.client_id == "personal-client-id"
+    assert settings.client_secret == "personal-client-secret"
+    assert settings.refresh_token == "personal-refresh-token"
+    assert settings.user_id == "me"
+    assert settings.query == "label:inbox has:attachment"
+    assert settings.allowed_senders == ("indeed@example.com", "jobs@example.net")
+    assert not hasattr(settings, "password")
+
+
+def test_gmail_settings_default_to_disabled_unconfigured(monkeypatch):
+    for key in (
+        "GMAIL_ENABLED",
+        "GMAIL_CLIENT_ID",
+        "GMAIL_CLIENT_SECRET",
+        "GMAIL_REFRESH_TOKEN",
+        "GMAIL_USER_ID",
+        "GMAIL_QUERY",
+        "GMAIL_ALLOWED_SENDERS",
+    ):
+        monkeypatch.delenv(key, raising=False)
+
+    settings = config.get_gmail_settings()
+
+    assert settings.enabled is False
+    assert settings.configured is False
+    assert settings.user_id == "me"
+    assert settings.query == "has:attachment"
+    assert settings.allowed_senders == ()

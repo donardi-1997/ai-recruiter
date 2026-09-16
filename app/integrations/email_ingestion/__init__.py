@@ -1,0 +1,1 @@
+"""Email ingestion transport adapters."""

@@ -36,6 +36,11 @@ def test_alembic_head_builds_current_postgres_schema():
             "indeed_candidate_links",
             "indeed_candidate_sync_state",
             "indeed_disposition_events",
+            "indeed_resume_ingestions",
+            "candidate_ingestion_events",
+            "candidate_ingestion_documents",
+            "job_reevaluation_tasks",
+            "company_contexts",
         }.issubset(tables)
 
         job_columns = {column["name"] for column in inspector.get_columns("jobs")}
@@ -45,17 +50,79 @@ def test_alembic_head_builds_current_postgres_schema():
             "employment_type",
             "public_slug",
             "published_at",
+            "evaluation_version",
+            "evaluation_profile",
+            "updated_at",
         }.issubset(job_columns)
+
+        evaluation_columns = {
+            column["name"] for column in inspector.get_columns("evaluations")
+        }
+        assert "job_evaluation_version" in evaluation_columns
 
         assignment_columns = {
             column["name"] for column in inspector.get_columns("job_candidates")
         }
         assert {"application_status", "status_changed_at"}.issubset(assignment_columns)
 
+        resume_columns = {
+            column["name"] for column in inspector.get_columns("indeed_resume_ingestions")
+        }
+        assert {
+            "candidate_link_id",
+            "status",
+            "resume_sha256",
+            "canonical_s3_key",
+            "bedrock_ingestion_job_id",
+            "attempt_count",
+            "queue_dispatched_at",
+            "processing_token",
+            "heartbeat_at",
+            "last_error_code",
+            "last_error_message",
+            "completed_at",
+        }.issubset(resume_columns)
+
+        ingestion_event_columns = {
+            column["name"]
+            for column in inspector.get_columns("candidate_ingestion_events")
+        }
+        assert {
+            "owner_sub",
+            "source",
+            "provider",
+            "external_id",
+            "job_id",
+            "candidate_id",
+            "status",
+            "raw_metadata",
+            "raw_s3_key",
+            "queue_dispatched_at",
+            "processing_token",
+            "heartbeat_at",
+            "attempt_count",
+            "last_error_code",
+            "last_error_message",
+            "completed_at",
+        }.issubset(ingestion_event_columns)
+
+        company_context_columns = {
+            column["name"] for column in inspector.get_columns("company_contexts")
+        }
+        assert {
+            "owner_sub",
+            "organization_name",
+            "version",
+            "status",
+            "context",
+            "created_at",
+            "updated_at",
+        }.issubset(company_context_columns)
+
         with engine.connect() as connection:
             revision = connection.execute(
                 text("SELECT version_num FROM alembic_version")
             ).scalar_one()
-        assert revision == "005"
+        assert revision == "009"
     finally:
         engine.dispose()

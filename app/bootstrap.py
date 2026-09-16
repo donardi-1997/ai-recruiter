@@ -10,6 +10,7 @@ from app.auth_routes import router as auth_router
 from app.config import CORS_ORIGINS, get_database_url
 from app.db import Base, get_engine
 from app.domains.candidate_imports.router import router as candidate_imports_router
+from app.domains.candidate_ingestion.router import router as candidate_ingestion_router
 from app.domains.candidates.router import assign_router, router as candidates_router
 from app.domains.evaluations.router import router as evaluations_router
 from app.domains.indeed.router import router as indeed_router
@@ -44,6 +45,7 @@ def create_app() -> FastAPI:
     app.include_router(evaluations_router)
     app.include_router(ranking_router)
     app.include_router(candidate_imports_router)
+    app.include_router(candidate_ingestion_router)
     app.include_router(indeed_router)
 
     @app.exception_handler(Exception)

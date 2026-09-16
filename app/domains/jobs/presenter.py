@@ -24,6 +24,21 @@ def job_payload(job, *, candidate_count: int | None = None) -> dict:
     if published_at is not None:
         payload["published_at"] = published_at.isoformat()
 
+    if hasattr(job, "evaluation_version"):
+        payload["evaluation_version"] = int(
+            getattr(job, "evaluation_version", 1) or 1
+        )
+        payload["evaluation_profile"] = getattr(job, "evaluation_profile", None) or {}
+
+    if hasattr(job, "_evaluation_changed"):
+        payload["evaluation_changed"] = bool(job._evaluation_changed)
+        payload["reevaluation_scheduled"] = bool(
+            getattr(job, "_reevaluation_scheduled", False)
+        )
+        payload["reevaluation_candidate_count"] = int(
+            getattr(job, "_reevaluation_candidate_count", 0) or 0
+        )
+
     if candidate_count is not None:
         payload["candidate_count"] = candidate_count
     return payload

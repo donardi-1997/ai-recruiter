@@ -13,7 +13,7 @@ from botocore.exceptions import ClientError
 from app.config import get_aws_region, get_import_staging_bucket
 from app.infrastructure.bedrock.session import get_cached_session
 
-CANONICAL_BUCKET = os.getenv("S3_BUCKET", "ai-cv-rag-adrian-2026")
+CANONICAL_BUCKET = os.getenv("S3_BUCKET", "")
 CANONICAL_PREFIX = "documents"
 PRESIGNED_POST_EXPIRY_SECONDS = 3600
 STREAM_CHUNK_BYTES = 1024 * 1024
@@ -32,6 +32,12 @@ class CanonicalWriteResult:
 
 def _s3_client():
     return get_cached_session().client("s3", region_name=get_aws_region())
+
+
+def _require_canonical_bucket() -> str:
+    if not CANONICAL_BUCKET:
+        raise RuntimeError("S3_BUCKET is required for canonical candidate documents")
+    return CANONICAL_BUCKET
 
 
 def _safe_filename(filename: str) -> str:
@@ -184,11 +190,12 @@ def _canonical_metadata(candidate_id: str, candidate_name: str) -> bytes:
 def read_existing_canonical_document(candidate_id: str) -> bytes | None:
     """Return a legacy canonical PDF/DOCX for identity backfill when present."""
     client = _s3_client()
+    bucket = _require_canonical_bucket()
     for extension in (".pdf", ".docx"):
         key = f"{CANONICAL_PREFIX}/cv-{candidate_id}{extension}"
-        if _head_or_none(CANONICAL_BUCKET, key) is None:
+        if _head_or_none(bucket, key) is None:
             continue
-        response = client.get_object(Bucket=CANONICAL_BUCKET, Key=key)
+        response = client.get_object(Bucket=bucket, Key=key)
         return response["Body"].read()
     return None
 
@@ -202,35 +209,62 @@ def write_canonical_candidate_document(
     sha256: str,
 ) -> CanonicalWriteResult:
     """Write/update a canonical CV and metadata without duplicate active variants."""
+    bucket = _require_canonical_bucket()
     extension = _document_extension(filename)
     content_type = _content_type_for_extension(extension)
     key = f"{CANONICAL_PREFIX}/cv-{candidate_id}{extension}"
     metadata_key = f"{key}.metadata.json"
 
-    existing = _head_or_none(CANONICAL_BUCKET, key)
+    existing = _head_or_none(bucket, key)
     if existing and existing.get("Metadata", {}).get("document-sha256") == sha256:
         return CanonicalWriteResult(key=key, changed=False)
 
     client = _s3_client()
     for stale_extension in {".pdf", ".docx"} - {extension}:
         stale_key = f"{CANONICAL_PREFIX}/cv-{candidate_id}{stale_extension}"
-        client.delete_object(Bucket=CANONICAL_BUCKET, Key=stale_key)
+        client.delete_object(Bucket=bucket, Key=stale_key)
         client.delete_object(
-            Bucket=CANONICAL_BUCKET,
+            Bucket=bucket,
             Key=f"{stale_key}.metadata.json",
         )
 
     client.put_object(
-        Bucket=CANONICAL_BUCKET,
+        Bucket=bucket,
         Key=key,
         Body=data,
         ContentType=content_type,
         Metadata={"document-sha256": sha256},
     )
     client.put_object(
-        Bucket=CANONICAL_BUCKET,
+        Bucket=bucket,
         Key=metadata_key,
         Body=_canonical_metadata(candidate_id, candidate_name),
         ContentType="application/json",
     )
     return CanonicalWriteResult(key=key, changed=True)
+
+
+def create_canonical_candidate_download(
+    candidate_id: str,
+    *,
+    expires_in: int = 300,
+) -> dict | None:
+    """Return a short-lived GET URL for an existing canonical candidate CV."""
+    bucket = _require_canonical_bucket()
+    bounded_expiry = max(60, min(int(expires_in), 3600))
+    client = _s3_client()
+    for extension in (".pdf", ".docx"):
+        key = f"{CANONICAL_PREFIX}/cv-{candidate_id}{extension}"
+        if _head_or_none(bucket, key) is None:
+            continue
+        url = client.generate_presigned_url(
+            "get_object",
+            Params={"Bucket": bucket, "Key": key},
+            ExpiresIn=bounded_expiry,
+        )
+        return {
+            "url": url,
+            "expires_in": bounded_expiry,
+            "key": key,
+        }
+    return None

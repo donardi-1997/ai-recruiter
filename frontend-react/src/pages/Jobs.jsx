@@ -44,10 +44,14 @@ function Jobs() {
   const [city, setCity] = useState("");
   const [employmentType, setEmploymentType] = useState("");
   const [publicSlug, setPublicSlug] = useState("");
+  const [evaluationProfile, setEvaluationProfile] = useState(null);
   const [editingJob, setEditingJob] = useState(null);
   const [showForm, setShowForm] = useState(false);
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
+  const [enriching, setEnriching] = useState(false);
+  const [enrichmentProposal, setEnrichmentProposal] = useState(null);
+  const [enrichmentError, setEnrichmentError] = useState("");
 
   const [viewJob, setViewJob] = useState(null);
   const [jobCandidates, setJobCandidates] = useState([]);
@@ -260,6 +264,45 @@ function Jobs() {
     }
   }
 
+  async function enrichJobDraft() {
+    if (editingJob || enriching || !title.trim()) return;
+    setEnriching(true);
+    setEnrichmentError("");
+    setEnrichmentProposal(null);
+    try {
+      const { data } = await api.post("/jobs/enrich", {
+        title,
+        description: description || null,
+        country_code: countryCode || null,
+        city: city || null,
+        employment_type: employmentType || null,
+        evaluation_profile: evaluationProfile,
+      });
+      setEnrichmentProposal(data?.proposal || null);
+    } catch (requestError) {
+      setEnrichmentError(
+        requestError.response?.data?.detail ||
+        "No fue posible enriquecer la vacante. Puedes continuar con tu borrador."
+      );
+    } finally {
+      setEnriching(false);
+    }
+  }
+
+  function applyEnrichmentProposal() {
+    if (!enrichmentProposal) return;
+    const { improved_description: improvedDescription, ...profile } = enrichmentProposal;
+    setDescription(improvedDescription || description);
+    setEvaluationProfile(profile);
+    setEnrichmentProposal(null);
+    setEnrichmentError("");
+  }
+
+  function discardEnrichmentProposal() {
+    setEnrichmentProposal(null);
+    setEnrichmentError("");
+  }
+
   async function saveJob(event) {
     event.preventDefault();
     setError("");
@@ -271,12 +314,25 @@ function Jobs() {
       city,
       employment_type: employmentType,
       public_slug: publicSlug,
+      evaluation_profile: evaluationProfile,
     };
     try {
-      if (editingJob) await api.put(`/jobs/${editingJob}`, payload);
-      else await api.post("/jobs", payload);
+      if (editingJob) {
+        const { data } = await api.put(`/jobs/${editingJob}`, payload);
+        if (data?.reevaluation_scheduled) {
+          setSuccessMessage(
+            `Perfil actualizado · reevaluación de ${data.reevaluation_candidate_count || 0} candidatos pendiente`
+          );
+        } else {
+          setSuccessMessage("Vacante actualizada.");
+        }
+      } else {
+        await api.post("/jobs", payload);
+        setSuccessMessage("Vacante creada.");
+      }
       cancelForm();
       await loadJobs();
+      setTimeout(() => setSuccessMessage(""), 5000);
     } catch (requestError) {
       setError(requestError.response?.data?.detail || requestError.response?.data?.error || "No fue posible guardar la vacante.");
     } finally {
@@ -292,6 +348,9 @@ function Jobs() {
     setCity(job.city || "");
     setEmploymentType(job.employment_type || "");
     setPublicSlug(job.public_slug || "");
+    setEvaluationProfile(job.evaluation_profile || null);
+    setEnrichmentProposal(null);
+    setEnrichmentError("");
     setError("");
     setShowForm(true);
     window.scrollTo({ top: 0, behavior: "smooth" });
@@ -304,6 +363,9 @@ function Jobs() {
     setCity("");
     setEmploymentType("");
     setPublicSlug("");
+    setEvaluationProfile(null);
+    setEnrichmentProposal(null);
+    setEnrichmentError("");
   }
 
   function cancelForm() {
@@ -321,6 +383,7 @@ function Jobs() {
   const indeedReady = !!(indeedIntegration?.enabled && indeedIntegration?.configured);
   const lifecycle = indeedLifecycle(indeedJobStatus);
   const indeedPublished = !!(indeedJobStatus?.sourced_posting_id && !indeedJobStatus?.unpublished);
+  const editingJobData = editingJob ? jobs.find((job) => job.job_id === editingJob) : null;
 
   return (
     <div className="page">
@@ -338,6 +401,35 @@ function Jobs() {
           <form onSubmit={saveJob} className="job-form">
             <div className="form-group"><label htmlFor="job-title">Título de la vacante</label><input id="job-title" maxLength={75} placeholder="Ej. Cloud Engineer" value={title} onChange={(e) => setTitle(e.target.value)} required /></div>
             <div className="form-group"><label htmlFor="job-description">Descripción y requisitos</label><textarea id="job-description" placeholder="Responsabilidades, experiencia, habilidades y criterios de éxito…" value={description} onChange={(e) => setDescription(e.target.value)} required /></div>
+
+            {!editingJob && (
+              <div className="job-enrichment-actions">
+                <div>
+                  <strong>¿Quieres ayuda para completar el perfil?</strong>
+                  <p className="muted">La IA usa el contexto de Asiati y tu borrador. Nada se guarda hasta que crees la vacante.</p>
+                </div>
+                <button type="button" className="btn btn-secondary" onClick={enrichJobDraft} disabled={enriching || !title.trim()}>{enriching ? "Enriqueciendo…" : "Enriquecer con IA"}</button>
+              </div>
+            )}
+
+            {enrichmentError && <div className="alert alert-error" role="alert"><span>{enrichmentError}</span></div>}
+
+            {enrichmentProposal && !editingJob && (
+              <section className="job-enrichment-proposal" aria-label="Propuesta de IA">
+                <div className="job-enrichment-heading"><div><span className="eyebrow">Asistente de vacantes</span><h3>Propuesta de IA</h3></div><span className="badge">Revisar antes de aplicar</span></div>
+                <p>{enrichmentProposal.improved_description}</p>
+                <div className="job-enrichment-grid">
+                  <div><strong>Tecnologías requeridas</strong><ul>{(enrichmentProposal.required_technologies || []).map((item) => <li key={`required-${item}`}>{item}</li>)}</ul></div>
+                  <div><strong>Tecnologías deseables</strong><ul>{(enrichmentProposal.preferred_technologies || []).map((item) => <li key={`preferred-${item}`}>{item}</li>)}</ul></div>
+                  <div><strong>Certificaciones sugeridas</strong><ul>{[...(enrichmentProposal.required_certifications || []), ...(enrichmentProposal.preferred_certifications || [])].map((item) => <li key={`cert-${item}`}>{item}</li>)}</ul></div>
+                  <div><strong>Experiencia específica</strong><ul>{(enrichmentProposal.specific_experience || []).map((item) => <li key={`experience-${item}`}>{item}</li>)}</ul></div>
+                  <div><strong>Responsabilidades</strong><ul>{(enrichmentProposal.responsibilities || []).map((item) => <li key={`responsibility-${item}`}>{item}</li>)}</ul></div>
+                  <div><strong>Preguntas por validar</strong><ul>{(enrichmentProposal.assumptions_to_validate || []).map((item) => <li key={`assumption-${item}`}>{item}</li>)}</ul></div>
+                </div>
+                <div className="form-actions"><button type="button" className="btn btn-ghost" onClick={discardEnrichmentProposal}>Descartar</button><button type="button" className="btn btn-secondary" onClick={applyEnrichmentProposal}>Aplicar propuesta</button></div>
+              </section>
+            )}
+
             <div className="job-publication-grid">
               <div className="form-group"><label htmlFor="job-country">País (ISO)</label><input id="job-country" maxLength={2} placeholder="CO" value={countryCode} onChange={(e) => setCountryCode(e.target.value.toUpperCase())} /></div>
               <div className="form-group"><label htmlFor="job-city">Ciudad</label><input id="job-city" placeholder="Bogotá" value={city} onChange={(e) => setCity(e.target.value)} /></div>
@@ -345,6 +437,14 @@ function Jobs() {
               <div className="form-group"><label htmlFor="job-slug">URL pública</label><input id="job-slug" placeholder="country-manager-chile" value={publicSlug} onChange={(e) => setPublicSlug(e.target.value)} /></div>
             </div>
             <p className="muted job-publication-hint">Estos datos permiten publicar la misma vacante en asiaticorp.com/jobs e Indeed sin duplicarla.</p>
+
+            {editingJob && (editingJobData?.candidate_count || 0) > 0 && (
+              <div className="job-reevaluation-note" role="note">
+                <strong>Esta vacante tiene candidatos evaluados.</strong>
+                <span>Los cambios en el perfil harán que sus evaluaciones se actualicen automáticamente.</span>
+              </div>
+            )}
+
             <div className="form-actions"><button type="button" className="btn btn-ghost" onClick={cancelForm}>Cancelar</button><button type="submit" className="btn btn-primary" disabled={saving}>{saving ? "Guardando…" : editingJob ? "Guardar cambios" : "Crear vacante"}<span aria-hidden="true">→</span></button></div>
           </form>
         </section>
