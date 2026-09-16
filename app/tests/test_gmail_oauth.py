@@ -1,3 +1,4 @@
+from dataclasses import replace
 from urllib.parse import parse_qs, urlparse
 
 import pytest
@@ -123,6 +124,33 @@ def test_oauth_start_builds_offline_readonly_authorization_url():
     assert query["scope"] == ["https://www.googleapis.com/auth/gmail.readonly"]
     assert query["state"][0]
     assert "google-client-secret" not in result["authorization_url"]
+
+
+def test_oauth_redirect_uri_can_be_managed_in_secret_without_container_restart():
+    store_payload = oauth_secret()
+    store_payload["redirect_uri"] = (
+        "https://regional.execute-api.us-east-2.amazonaws.com/"
+        "api/integrations/gmail/oauth/callback"
+    )
+    store = FakeStore(store_payload)
+    settings_without_redirect = replace(oauth_settings(), redirect_uri="")
+
+    result = gmail_integration.oauth_start(
+        owner_sub="owner-a",
+        settings=gmail_settings(),
+        oauth_settings=settings_without_redirect,
+        oauth_store=store,
+    )
+    query = parse_qs(urlparse(result["authorization_url"]).query)
+    status = gmail_integration.integration_status(
+        settings=gmail_settings(),
+        oauth_settings=settings_without_redirect,
+        oauth_store=store,
+    )
+
+    assert query["redirect_uri"] == [store_payload["redirect_uri"]]
+    assert status["redirect_uri"] == store_payload["redirect_uri"]
+    assert status["oauth_configured"] is True
 
 
 def test_oauth_callback_validates_state_and_persists_refresh_token_and_mailbox():
