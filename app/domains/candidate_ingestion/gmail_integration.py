@@ -91,13 +91,52 @@ def _read_oauth_secret(
     return dict(payload or {})
 
 
+def _secret_bool(secret_payload: dict, key: str, fallback: bool) -> bool:
+    """Resolve an optional JSON boolean while retaining env fallback semantics."""
+    if key not in secret_payload:
+        return fallback
+    value = secret_payload.get(key)
+    if isinstance(value, bool):
+        return value
+    return str(value or "").strip().casefold() in {"1", "true", "yes", "on"}
+
+
+def _secret_allowed_senders(
+    secret_payload: dict,
+    fallback: tuple[str, ...],
+) -> tuple[str, ...]:
+    """Normalize an optional JSON list or comma-separated sender allowlist."""
+    if "allowed_senders" not in secret_payload:
+        return fallback
+    raw = secret_payload.get("allowed_senders")
+    values = raw.split(",") if isinstance(raw, str) else raw
+    if not isinstance(values, (list, tuple, set)):
+        return ()
+    return tuple(
+        str(value).strip().casefold()
+        for value in values
+        if str(value).strip()
+    )
+
+
 def _resolved_gmail_settings(
     settings: GmailSettings,
     secret_payload: dict,
 ) -> GmailSettings:
-    """Overlay Secrets Manager OAuth values while preserving env fallback for local dev."""
+    """Overlay runtime Gmail values while preserving environment fallback for local dev."""
+    query = (
+        str(secret_payload.get("query") or "").strip()
+        if "query" in secret_payload
+        else settings.query
+    )
+    provider = (
+        str(secret_payload.get("ingestion_provider") or "").strip().upper()
+        if "ingestion_provider" in secret_payload
+        else settings.ingestion_provider
+    )
     return replace(
         settings,
+        enabled=_secret_bool(secret_payload, "enabled", settings.enabled),
         client_id=str(secret_payload.get("client_id") or settings.client_id or "").strip(),
         client_secret=str(
             secret_payload.get("client_secret") or settings.client_secret or ""
@@ -105,6 +144,12 @@ def _resolved_gmail_settings(
         refresh_token=str(
             secret_payload.get("refresh_token") or settings.refresh_token or ""
         ).strip(),
+        query=query,
+        allowed_senders=_secret_allowed_senders(
+            secret_payload,
+            settings.allowed_senders,
+        ),
+        ingestion_provider=provider or settings.ingestion_provider,
     )
 
 
@@ -148,13 +193,13 @@ def integration_status(
     connected_email = str(payload.get("connected_email") or "").strip().casefold()
     connected = bool(resolved.refresh_token and connected_email)
     return {
-        "enabled": current.enabled,
+        "enabled": resolved.enabled,
         "configured": resolved.configured,
         "oauth_configured": _oauth_is_configured(resolved_oauth, payload),
         "connected": connected,
         "connected_email": connected_email or None,
-        "provider": current.ingestion_provider,
-        "safe_filter": is_safe_mailbox_filter(current),
+        "provider": resolved.ingestion_provider,
+        "safe_filter": is_safe_mailbox_filter(resolved),
         "redirect_uri": resolved_oauth.redirect_uri or None,
     }
 
@@ -345,7 +390,7 @@ def sync_mailbox(
         tolerate_unavailable=True,
     )
     resolved = _resolved_gmail_settings(current, payload)
-    if not current.enabled:
+    if not resolved.enabled:
         raise GmailDisabled("Gmail ingestion is disabled.")
     if not resolved.configured:
         raise GmailNotConfigured("Gmail OAuth is not configured.")
