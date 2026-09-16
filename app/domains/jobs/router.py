@@ -21,6 +21,11 @@ def _publication_fields(body) -> dict:
     }
 
 
+def _evaluation_profile(body) -> dict | None:
+    profile = body.evaluation_profile
+    return profile.model_dump() if profile is not None else None
+
+
 @router.get("")
 def list_jobs(
     db: Session = Depends(get_db),
@@ -42,6 +47,7 @@ def create_job(
         db,
         title=body.title,
         description=body.description,
+        evaluation_profile=_evaluation_profile(body),
         owner_sub=_user["sub"],
         **_publication_fields(body),
     )
@@ -61,6 +67,7 @@ def update_job(
             job_id=job_id,
             title=body.title,
             description=body.description,
+            evaluation_profile=_evaluation_profile(body),
             owner_sub=_user["sub"],
             **_publication_fields(body),
         )
