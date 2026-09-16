@@ -24,6 +24,21 @@ class EvaluationProfile(BaseModel):
     assumptions_to_validate: list[str] = Field(default_factory=list)
 
 
+class JobEnrichmentRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    title: str
+    description: str | None = None
+    country_code: str | None = None
+    city: str | None = None
+    employment_type: str | None = None
+    evaluation_profile: EvaluationProfile | None = None
+
+
+class JobEnrichmentProposal(EvaluationProfile):
+    improved_description: str
+
+
 class CreateJobRequest(BaseModel):
     title: str
     description: str | None = None
