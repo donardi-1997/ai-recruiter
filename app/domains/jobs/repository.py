@@ -30,6 +30,7 @@ def create_job(
     employment_type: str | None = None,
     public_slug: str | None = None,
     published_at=None,
+    evaluation_profile: dict | None = None,
 ) -> Job:
     job = Job(
         title=title,
@@ -40,6 +41,8 @@ def create_job(
         employment_type=employment_type,
         public_slug=public_slug,
         published_at=published_at,
+        evaluation_profile=evaluation_profile or {},
+        evaluation_version=1,
     )
     db.add(job)
     db.commit()
@@ -58,11 +61,19 @@ def update_job(
     employment_type: str | None = None,
     public_slug: str | None = None,
     published_at=None,
+    evaluation_profile: dict | None = None,
+    evaluation_version: int | None = None,
+    commit: bool = True,
 ) -> Job:
     if title is not None:
         job.title = title
     if description is not None:
         job.description = description
+    if evaluation_profile is not None:
+        job.evaluation_profile = evaluation_profile
+    if evaluation_version is not None:
+        job.evaluation_version = int(evaluation_version)
+
     for name, value in {
         "country_code": country_code,
         "city": city,
@@ -72,8 +83,12 @@ def update_job(
     }.items():
         if value is not None:
             setattr(job, name, value)
-    db.commit()
-    db.refresh(job)
+
+    if commit:
+        db.commit()
+        db.refresh(job)
+    else:
+        db.flush()
     return job
 
 
@@ -126,8 +141,13 @@ def delete_job(
 
 
 def count_candidates_for_job(db: Session, job_id: str, owner_sub: str | None = None) -> int:
-    from app.models import JobCandidate, Candidate
-    query = db.query(JobCandidate).join(Candidate, Candidate.id == JobCandidate.candidate_id).filter(JobCandidate.job_id == job_id)
+    from app.models import Candidate, JobCandidate
+
+    query = (
+        db.query(JobCandidate)
+        .join(Candidate, Candidate.id == JobCandidate.candidate_id)
+        .filter(JobCandidate.job_id == job_id)
+    )
     if owner_sub is not None:
         query = query.filter(Candidate.owner_sub == owner_sub)
     return query.count()
