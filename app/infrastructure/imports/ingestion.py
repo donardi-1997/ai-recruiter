@@ -8,12 +8,20 @@ import os
 from app.config import get_aws_region
 from app.infrastructure.bedrock.session import get_cached_session
 
-KNOWLEDGE_BASE_ID = os.getenv("KNOWLEDGE_BASE_ID", "VUGNMJQAEN")
-DATA_SOURCE_ID = os.getenv("DATA_SOURCE_ID", "P8SUL2VFHA")
+KNOWLEDGE_BASE_ID = os.getenv("KNOWLEDGE_BASE_ID", "")
+DATA_SOURCE_ID = os.getenv("DATA_SOURCE_ID", "")
 
 
 def _client():
     return get_cached_session().client("bedrock-agent", region_name=get_aws_region())
+
+
+def _require_ingestion_config() -> tuple[str, str]:
+    if not KNOWLEDGE_BASE_ID:
+        raise RuntimeError("KNOWLEDGE_BASE_ID is required for Bedrock ingestion")
+    if not DATA_SOURCE_ID:
+        raise RuntimeError("DATA_SOURCE_ID is required for Bedrock ingestion")
+    return KNOWLEDGE_BASE_ID, DATA_SOURCE_ID
 
 
 def client_token_for_operation(operation_key: str) -> str:
@@ -28,9 +36,10 @@ def client_token_for_batch(batch_id: str) -> str:
 
 def start_ingestion(*, operation_key: str, description: str) -> tuple[str, str]:
     """Start one logical Knowledge Base ingestion with deterministic idempotency."""
+    knowledge_base_id, data_source_id = _require_ingestion_config()
     response = _client().start_ingestion_job(
-        knowledgeBaseId=KNOWLEDGE_BASE_ID,
-        dataSourceId=DATA_SOURCE_ID,
+        knowledgeBaseId=knowledge_base_id,
+        dataSourceId=data_source_id,
         clientToken=client_token_for_operation(operation_key),
         description=description[:200],
     )
@@ -64,9 +73,10 @@ def start_indeed_resume_ingestion(
 
 def get_ingestion_status(job_id: str) -> str:
     """Read the real status of an existing Bedrock ingestion job."""
+    knowledge_base_id, data_source_id = _require_ingestion_config()
     response = _client().get_ingestion_job(
-        knowledgeBaseId=KNOWLEDGE_BASE_ID,
-        dataSourceId=DATA_SOURCE_ID,
+        knowledgeBaseId=knowledge_base_id,
+        dataSourceId=data_source_id,
         ingestionJobId=job_id,
     )
     job = response.get("ingestionJob") or {}
