@@ -104,12 +104,10 @@ def test_frontend_is_not_deployed_to_s3(deploy_yml_content):
     assert "s3 cp" not in deploy_yml_content
 
 
-def test_cloudfront_is_optional_and_never_uses_previous_distribution(deploy_yml_content):
-    assert "cloudfront create-invalidation" in deploy_yml_content
-    assert "invalidation-completed" in deploy_yml_content
-    assert "CLOUDFRONT_INVALIDATION_SKIPPED" in deploy_yml_content
-    assert 'if [ -z "${CLOUDFRONT_DISTRIBUTION_ID:-}" ]' in deploy_yml_content
-    assert "E1IBIX4EWENEP7" not in deploy_yml_content
+def test_deploy_has_no_cloudfront_dependency(deploy_yml_content):
+    assert "CLOUDFRONT_DISTRIBUTION_ID" not in deploy_yml_content
+    assert "cloudfront create-invalidation" not in deploy_yml_content
+    assert "us-east-1" not in deploy_yml_content
 
 
 def test_runtime_resource_configuration_comes_from_aws_secret(deploy_yml_content):
