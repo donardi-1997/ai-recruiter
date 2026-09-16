@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
+from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
 from app.domains.candidate_ingestion.models import (
@@ -11,6 +12,8 @@ from app.domains.candidate_ingestion.models import (
     CandidateIngestionDocument,
     CandidateIngestionEvent,
 )
+
+TERMINAL_INGESTION_STATUSES = {"COMPLETED", "FAILED", "NEEDS_REVIEW"}
 
 
 def get_event_by_external_id(
@@ -33,6 +36,20 @@ def get_event_by_external_id(
         )
         .one_or_none()
     )
+
+
+def get_event(
+    db: Session,
+    event_id: str,
+    *,
+    owner_sub: str | None = None,
+) -> CandidateIngestionEvent | None:
+    query = db.query(CandidateIngestionEvent).filter(
+        CandidateIngestionEvent.id == event_id
+    )
+    if owner_sub is not None:
+        query = query.filter(CandidateIngestionEvent.owner_sub == owner_sub)
+    return query.one_or_none()
 
 
 def create_event(
@@ -83,6 +100,101 @@ def create_document(
     db.add(document)
     db.flush()
     return document
+
+
+def list_documents(
+    db: Session,
+    *,
+    event_id: str,
+) -> list[CandidateIngestionDocument]:
+    return (
+        db.query(CandidateIngestionDocument)
+        .filter(CandidateIngestionDocument.ingestion_event_id == event_id)
+        .order_by(
+            CandidateIngestionDocument.created_at.asc(),
+            CandidateIngestionDocument.id.asc(),
+        )
+        .all()
+    )
+
+
+def list_undispatched_events(
+    db: Session,
+    *,
+    limit: int = 100,
+) -> list[CandidateIngestionEvent]:
+    return (
+        db.query(CandidateIngestionEvent)
+        .filter(
+            CandidateIngestionEvent.status == "STORED",
+            CandidateIngestionEvent.queue_dispatched_at.is_(None),
+        )
+        .order_by(
+            CandidateIngestionEvent.created_at.asc(),
+            CandidateIngestionEvent.id.asc(),
+        )
+        .limit(max(1, min(int(limit), 1000)))
+        .all()
+    )
+
+
+def claim_event(
+    db: Session,
+    *,
+    event_id: str,
+    token: str,
+    now: datetime | None = None,
+    lease_seconds: int = 300,
+) -> bool:
+    now = now or datetime.now(timezone.utc)
+    stale_before = now - timedelta(seconds=max(1, int(lease_seconds)))
+    updated = (
+        db.query(CandidateIngestionEvent)
+        .filter(
+            CandidateIngestionEvent.id == event_id,
+            ~CandidateIngestionEvent.status.in_(TERMINAL_INGESTION_STATUSES),
+            or_(
+                CandidateIngestionEvent.processing_token.is_(None),
+                CandidateIngestionEvent.heartbeat_at.is_(None),
+                CandidateIngestionEvent.heartbeat_at < stale_before,
+            ),
+        )
+        .update(
+            {
+                CandidateIngestionEvent.processing_token: token,
+                CandidateIngestionEvent.heartbeat_at: now,
+                CandidateIngestionEvent.attempt_count: CandidateIngestionEvent.attempt_count
+                + 1,
+            },
+            synchronize_session=False,
+        )
+    )
+    db.commit()
+    return bool(updated)
+
+
+def release_event(
+    db: Session,
+    *,
+    event_id: str,
+    token: str,
+) -> bool:
+    updated = (
+        db.query(CandidateIngestionEvent)
+        .filter(
+            CandidateIngestionEvent.id == event_id,
+            CandidateIngestionEvent.processing_token == token,
+        )
+        .update(
+            {
+                CandidateIngestionEvent.processing_token: None,
+                CandidateIngestionEvent.heartbeat_at: None,
+            },
+            synchronize_session=False,
+        )
+    )
+    db.commit()
+    return bool(updated)
 
 
 def get_cursor(
