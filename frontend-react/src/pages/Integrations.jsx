@@ -1,18 +1,25 @@
-import { useCallback, useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 
 import api from "../api/client";
 import "./Integrations.css";
 
 function Integrations() {
-  const [searchParams, setSearchParams] = useSearchParams();
+  const [searchParams] = useSearchParams();
+  const oauthOutcome = searchParams.get("gmail");
   const [status, setStatus] = useState(null);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState("");
-  const [message, setMessage] = useState("");
-  const [error, setError] = useState("");
+  const [message, setMessage] = useState(() =>
+    oauthOutcome === "connected" ? "Gmail corporativo conectado correctamente." : "",
+  );
+  const [error, setError] = useState(() => {
+    if (oauthOutcome === "denied") return "La autorización de Gmail fue cancelada.";
+    if (oauthOutcome === "error") return "No fue posible completar la autorización de Gmail.";
+    return "";
+  });
 
-  const loadStatus = useCallback(async () => {
+  async function loadStatus() {
     try {
       setError("");
       const { data } = await api.get("/integrations/gmail/status");
@@ -23,29 +30,39 @@ function Integrations() {
     } finally {
       setLoading(false);
     }
+  }
+
+  useEffect(() => {
+    let active = true;
+
+    api.get("/integrations/gmail/status")
+      .then(({ data }) => {
+        if (active) setStatus(data);
+      })
+      .catch((requestError) => {
+        if (!active) return;
+        const detail = requestError?.response?.data?.detail;
+        setError(detail || "No fue posible consultar el estado de Gmail.");
+      })
+      .finally(() => {
+        if (active) setLoading(false);
+      });
+
+    return () => {
+      active = false;
+    };
   }, []);
 
   useEffect(() => {
-    loadStatus();
-  }, [loadStatus]);
-
-  useEffect(() => {
-    const outcome = searchParams.get("gmail");
-    if (!outcome) return;
-
-    if (outcome === "connected") {
-      setMessage("Gmail corporativo conectado correctamente.");
-      loadStatus();
-    } else if (outcome === "denied") {
-      setError("La autorización de Gmail fue cancelada.");
-    } else if (outcome === "error") {
-      setError("No fue posible completar la autorización de Gmail.");
-    }
-
-    const next = new URLSearchParams(searchParams);
-    next.delete("gmail");
-    setSearchParams(next, { replace: true });
-  }, [loadStatus, searchParams, setSearchParams]);
+    if (!oauthOutcome || typeof window === "undefined") return;
+    const url = new URL(window.location.href);
+    url.searchParams.delete("gmail");
+    window.history.replaceState(
+      window.history.state,
+      "",
+      `${url.pathname}${url.search}${url.hash}`,
+    );
+  }, [oauthOutcome]);
 
   async function connectGmail() {
     setBusy("connect");
