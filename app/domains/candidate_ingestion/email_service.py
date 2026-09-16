@@ -23,12 +23,13 @@ class EmailIngestionResult:
     created: bool
 
 
-def _metadata(parsed) -> dict[str, Any]:
+def _metadata(parsed, *, source_account: str) -> dict[str, Any]:
     return {
         "gmail_message_id": parsed.message_id,
         "gmail_thread_id": parsed.thread_id,
         "gmail_history_id": parsed.history_id,
         "provider_message_id": parsed.provider_message_id,
+        "source_account": source_account,
         "sender": parsed.sender,
         "subject": parsed.subject,
         "internal_date_ms": parsed.internal_date_ms,
@@ -49,11 +50,13 @@ def ingest_gmail_message(
     message_id: str,
     mailbox_client,
     provider: str,
+    source_account: str = "",
     allowed_senders: tuple[str, ...] = (),
     storage=None,
 ) -> EmailIngestionResult:
     """Persist one Gmail message and supported resume attachments idempotently."""
     normalized_provider = str(provider or "").strip().upper()
+    normalized_source_account = str(source_account or "").strip().casefold()
     if not normalized_provider:
         raise ValueError("INGESTION_PROVIDER_REQUIRED")
 
@@ -62,6 +65,7 @@ def ingest_gmail_message(
         owner_sub=owner_sub,
         source="EMAIL",
         provider=normalized_provider,
+        source_account=normalized_source_account,
         external_id=message_id,
     )
     if existing is not None:
@@ -79,9 +83,10 @@ def ingest_gmail_message(
             owner_sub=owner_sub,
             source="EMAIL",
             provider=normalized_provider,
+            source_account=normalized_source_account,
             external_id=parsed.message_id,
             status="RECEIVED",
-            raw_metadata=_metadata(parsed),
+            raw_metadata=_metadata(parsed, source_account=normalized_source_account),
         )
         db.commit()
         db.refresh(event)
@@ -92,6 +97,7 @@ def ingest_gmail_message(
             owner_sub=owner_sub,
             source="EMAIL",
             provider=normalized_provider,
+            source_account=normalized_source_account,
             external_id=parsed.message_id,
         )
         if winner is None:
@@ -148,6 +154,7 @@ def ingest_gmail_message(
             owner_sub=owner_sub,
             source="EMAIL",
             provider=normalized_provider,
+            source_account=normalized_source_account,
             external_id=parsed.message_id,
         )
         if persisted is not None:
