@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
+
 from sqlalchemy.orm import Session
 
 from app.domains.candidate_ingestion.models import (
+    CandidateIngestionCursor,
     CandidateIngestionDocument,
     CandidateIngestionEvent,
 )
@@ -16,6 +19,7 @@ def get_event_by_external_id(
     owner_sub: str,
     source: str,
     provider: str,
+    source_account: str,
     external_id: str,
 ) -> CandidateIngestionEvent | None:
     return (
@@ -24,6 +28,7 @@ def get_event_by_external_id(
             CandidateIngestionEvent.owner_sub == owner_sub,
             CandidateIngestionEvent.source == source,
             CandidateIngestionEvent.provider == provider,
+            CandidateIngestionEvent.source_account == source_account,
             CandidateIngestionEvent.external_id == external_id,
         )
         .one_or_none()
@@ -36,6 +41,7 @@ def create_event(
     owner_sub: str,
     source: str,
     provider: str,
+    source_account: str,
     external_id: str,
     status: str,
     raw_metadata: dict,
@@ -44,6 +50,7 @@ def create_event(
         owner_sub=owner_sub,
         source=source,
         provider=provider,
+        source_account=source_account,
         external_id=external_id,
         status=status,
         raw_metadata=raw_metadata,
@@ -76,3 +83,53 @@ def create_document(
     db.add(document)
     db.flush()
     return document
+
+
+def get_cursor(
+    db: Session,
+    *,
+    owner_sub: str,
+    source: str,
+    provider: str,
+    source_account: str,
+) -> CandidateIngestionCursor | None:
+    return (
+        db.query(CandidateIngestionCursor)
+        .filter(
+            CandidateIngestionCursor.owner_sub == owner_sub,
+            CandidateIngestionCursor.source == source,
+            CandidateIngestionCursor.provider == provider,
+            CandidateIngestionCursor.source_account == source_account,
+        )
+        .one_or_none()
+    )
+
+
+def upsert_cursor(
+    db: Session,
+    *,
+    owner_sub: str,
+    source: str,
+    provider: str,
+    source_account: str,
+    cursor_value: str,
+) -> CandidateIngestionCursor:
+    cursor = get_cursor(
+        db,
+        owner_sub=owner_sub,
+        source=source,
+        provider=provider,
+        source_account=source_account,
+    )
+    if cursor is None:
+        cursor = CandidateIngestionCursor(
+            owner_sub=owner_sub,
+            source=source,
+            provider=provider,
+            source_account=source_account,
+        )
+        db.add(cursor)
+    cursor.cursor_value = str(cursor_value)
+    cursor.last_synced_at = datetime.now(timezone.utc)
+    db.flush()
+    return cursor
