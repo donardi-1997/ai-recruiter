@@ -10,7 +10,7 @@ import os
 # ============================================================
 
 AWS_REGION = os.getenv("AWS_REGION", "us-east-2")
-KNOWLEDGE_BASE_ID = os.getenv("KNOWLEDGE_BASE_ID", "VUGNMJQAEN")
+KNOWLEDGE_BASE_ID = os.getenv("KNOWLEDGE_BASE_ID", "")
 BEDROCK_AWS_PROFILE = os.getenv("BEDROCK_AWS_PROFILE")
 NUMBER_OF_RESULTS = 50
 MODEL_ID = "amazon.nova-lite-v1:0"
