@@ -240,3 +240,53 @@ def test_force_true_reevaluates_even_current_complete_evaluation(monkeypatch):
     finally:
         db.close()
         engine.dispose()
+
+
+def test_structured_job_profile_is_included_in_evaluation_input(monkeypatch):
+    engine, db = _db()
+    try:
+        candidate, job = _seed_pair(db, job_version=2)
+        job.evaluation_profile = {
+            "required_technologies": ["AWS", "Terraform"],
+            "preferred_technologies": ["Kubernetes"],
+            "required_certifications": ["AWS Solutions Architect"],
+            "preferred_certifications": ["CKA"],
+            "minimum_years_experience": 3,
+            "specific_experience": ["Infrastructure as code"],
+            "responsibilities": ["Own cloud reliability"],
+            "domain_knowledge": ["Cloud operations"],
+            "education": [],
+            "languages": ["English B2"],
+            "technical_competencies": ["Observability"],
+            "assumptions_to_validate": ["Confirm whether EKS is used"],
+        }
+        db.commit()
+        calls = []
+
+        import app.evaluation as evaluation_backend
+
+        monkeypatch.setattr(
+            evaluation_backend,
+            "retrieve_candidate",
+            lambda **kwargs: calls.append(("retrieve", kwargs)) or [{"content": "evidence"}],
+        )
+        monkeypatch.setattr(
+            evaluation_backend,
+            "evaluate_candidate",
+            lambda **kwargs: calls.append(("evaluate", kwargs)) or _valid_llm_result(),
+        )
+
+        service.evaluate_candidate_for_job(db, candidate=candidate, job=job)
+
+        evaluation_input = calls[1][1]["job_description"]
+        assert "AWS" in evaluation_input
+        assert "Terraform" in evaluation_input
+        assert "AWS Solutions Architect" in evaluation_input
+        assert "3" in evaluation_input
+        assert "Infrastructure as code" in evaluation_input
+        assert "Kubernetes" in evaluation_input
+        assert "deseable" in evaluation_input.casefold()
+        assert "Confirm whether EKS is used" not in evaluation_input
+    finally:
+        db.close()
+        engine.dispose()
