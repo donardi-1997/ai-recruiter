@@ -72,3 +72,57 @@ def evaluation_signature(
         normalize_text(description),
         profile_signature,
     )
+
+
+def _list_section(label: str, values: list[str], *, preferred: bool = False) -> str | None:
+    if not values:
+        return None
+    suffix = " — deseables, no obligatorios" if preferred else ""
+    items = "\n".join(f"- {value}" for value in values)
+    return f"{label}{suffix}:\n{items}"
+
+
+def build_evaluation_text(job) -> str:
+    """Build the vacancy text consumed by retrieval and candidate evaluation.
+
+    Recruiter-approved structured criteria are appended to the authored job
+    description. Preferred technologies/certifications are explicitly marked as
+    non-mandatory and unresolved assumptions are intentionally excluded so they
+    cannot silently become candidate filters.
+    """
+    profile = normalize_evaluation_profile(getattr(job, "evaluation_profile", None))
+    base = normalize_text(getattr(job, "description", None)) or normalize_text(
+        getattr(job, "title", None)
+    )
+
+    sections: list[str] = []
+    for label, field, preferred in (
+        ("Tecnologías requeridas", "required_technologies", False),
+        ("Tecnologías preferidas", "preferred_technologies", True),
+        ("Certificaciones requeridas", "required_certifications", False),
+        ("Certificaciones preferidas", "preferred_certifications", True),
+        ("Experiencia específica", "specific_experience", False),
+        ("Responsabilidades", "responsibilities", False),
+        ("Conocimiento de dominio", "domain_knowledge", False),
+        ("Educación", "education", False),
+        ("Idiomas", "languages", False),
+        ("Competencias técnicas", "technical_competencies", False),
+    ):
+        section = _list_section(label, profile[field], preferred=preferred)
+        if section:
+            sections.append(section)
+
+    years = profile.get("minimum_years_experience")
+    if years is not None:
+        sections.append(f"Experiencia mínima: {years} años.")
+
+    if not sections:
+        return base
+
+    return "\n\n".join(
+        [
+            base,
+            "CRITERIOS ESTRUCTURADOS APROBADOS POR RR. HH.",
+            *sections,
+        ]
+    ).strip()
