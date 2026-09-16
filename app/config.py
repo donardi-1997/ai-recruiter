@@ -33,6 +33,27 @@ class IndeedSettings:
         return bool(self.client_id and self.client_secret and self.source_name and self.company_name)
 
 
+@dataclass(frozen=True)
+class GmailSettings:
+    """OAuth-backed Gmail transport settings loaded exclusively from environment."""
+
+    enabled: bool
+    client_id: str
+    client_secret: str
+    refresh_token: str
+    user_id: str
+    query: str
+    allowed_senders: tuple[str, ...]
+    scope: str
+    token_url: str
+    api_base_url: str
+    request_timeout_seconds: float
+
+    @property
+    def configured(self) -> bool:
+        return bool(self.client_id and self.client_secret and self.refresh_token)
+
+
 def get_aws_region() -> str:
     """Return the configured AWS region without caching environment state."""
     return os.getenv("AWS_REGION", DEFAULT_AWS_REGION)
@@ -61,6 +82,40 @@ def get_import_evaluation_concurrency() -> int:
 def get_import_lease_timeout_seconds() -> int:
     """Return the stale-worker lease timeout used for crash recovery."""
     return int(os.getenv("IMPORT_LEASE_TIMEOUT_SECONDS", "300"))
+
+
+def get_gmail_settings() -> GmailSettings:
+    """Return swappable Gmail OAuth settings without ever reading a mailbox password."""
+    allowed_senders = tuple(
+        value.strip().casefold()
+        for value in os.getenv("GMAIL_ALLOWED_SENDERS", "").split(",")
+        if value.strip()
+    )
+    return GmailSettings(
+        enabled=os.getenv("GMAIL_ENABLED", "false").strip().lower()
+        in {"1", "true", "yes", "on"},
+        client_id=os.getenv("GMAIL_CLIENT_ID", "").strip(),
+        client_secret=os.getenv("GMAIL_CLIENT_SECRET", "").strip(),
+        refresh_token=os.getenv("GMAIL_REFRESH_TOKEN", "").strip(),
+        user_id=os.getenv("GMAIL_USER_ID", "me").strip() or "me",
+        query=os.getenv("GMAIL_QUERY", "has:attachment").strip(),
+        allowed_senders=allowed_senders,
+        scope=os.getenv(
+            "GMAIL_SCOPE",
+            "https://www.googleapis.com/auth/gmail.readonly",
+        ).strip(),
+        token_url=os.getenv(
+            "GMAIL_TOKEN_URL",
+            "https://oauth2.googleapis.com/token",
+        ).strip(),
+        api_base_url=os.getenv(
+            "GMAIL_API_BASE_URL",
+            "https://gmail.googleapis.com/gmail/v1",
+        ).rstrip("/"),
+        request_timeout_seconds=float(
+            os.getenv("GMAIL_REQUEST_TIMEOUT_SECONDS", "15")
+        ),
+    )
 
 
 def get_indeed_settings() -> IndeedSettings:
