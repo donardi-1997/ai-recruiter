@@ -40,6 +40,7 @@ def test_alembic_head_builds_current_postgres_schema():
             "candidate_ingestion_events",
             "candidate_ingestion_documents",
             "job_reevaluation_tasks",
+            "company_contexts",
         }.issubset(tables)
 
         job_columns = {column["name"] for column in inspector.get_columns("jobs")}
@@ -105,10 +106,23 @@ def test_alembic_head_builds_current_postgres_schema():
             "completed_at",
         }.issubset(ingestion_event_columns)
 
+        company_context_columns = {
+            column["name"] for column in inspector.get_columns("company_contexts")
+        }
+        assert {
+            "owner_sub",
+            "organization_name",
+            "version",
+            "status",
+            "context",
+            "created_at",
+            "updated_at",
+        }.issubset(company_context_columns)
+
         with engine.connect() as connection:
             revision = connection.execute(
                 text("SELECT version_num FROM alembic_version")
             ).scalar_one()
-        assert revision == "008"
+        assert revision == "009"
     finally:
         engine.dispose()
