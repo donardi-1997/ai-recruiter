@@ -66,11 +66,10 @@ def test_deploy_has_no_cloudfront_runtime_dependency():
     assert "cloudfront create-invalidation" not in workflow
 
 
-def test_lightsail_bootstrap_generates_runtime_identity_on_host_and_registers_only_public_ca():
-    workflow = (ROOT / ".github" / "workflows" / "deploy.yml").read_text(
+def test_one_time_bootstrap_generates_runtime_identity_and_registers_only_public_ca():
+    workflow = (ROOT / ".github" / "workflows" / "bootstrap-prod.yml").read_text(
         encoding="utf-8"
     )
-    assert "Bootstrap Lightsail runtime identity" in workflow
     assert "openssl req -x509" in workflow
     assert "client.key" in workflow
     assert "scp" in workflow
