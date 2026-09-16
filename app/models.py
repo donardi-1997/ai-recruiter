@@ -31,9 +31,6 @@ class Candidate(Base):
     )
     name = Column(Text, nullable=False)
     email = Column(Text, nullable=True)
-    # Cognito subject that owns this candidate.
-    # Nullable in ORM for backwards-compatible tests; production
-    # migration enforces NOT NULL after legacy backfill.
     owner_sub = Column(Text, nullable=True)
     created_at = Column(
         DateTime(timezone=True),
@@ -57,17 +54,24 @@ class Job(Base):
     )
     title = Column(Text, nullable=False)
     description = Column(Text, nullable=True)
-    # Cognito subject that owns this job.
     owner_sub = Column(Text, nullable=True)
     country_code = Column(Text, nullable=True)
     city = Column(Text, nullable=True)
     employment_type = Column(Text, nullable=True)
     public_slug = Column(Text, nullable=True)
     published_at = Column(DateTime(timezone=True), nullable=True)
+    evaluation_version = Column(Integer, nullable=False, default=1)
+    evaluation_profile = Column(JSON, nullable=False, default=dict)
     created_at = Column(
         DateTime(timezone=True),
         nullable=False,
         default=lambda: datetime.now(timezone.utc),
+    )
+    updated_at = Column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
     )
 
     rankings = relationship("Ranking", back_populates="job", cascade="all, delete-orphan")
@@ -129,14 +133,13 @@ class Evaluation(Base):
         ForeignKey("jobs.id", ondelete="CASCADE"),
         nullable=False,
     )
+    job_evaluation_version = Column(Integer, nullable=False, default=1)
     status = Column(Text, nullable=False, default="COMPLETED")
     match_score = Column(Float, nullable=False, default=0.0)
     recommendation = Column(Text, nullable=True)
     summary = Column(Text, nullable=True)
     strengths = Column(JSON, nullable=True, default=list)
     gaps = Column(JSON, nullable=True, default=list)
-    # Full requirement-level analysis:
-    # requirement/status/evidence.
     requirements = Column(JSON, nullable=True, default=list)
     error_message = Column(Text, nullable=True)
     created_at = Column(
@@ -144,6 +147,47 @@ class Evaluation(Base):
         nullable=False,
         default=lambda: datetime.now(timezone.utc),
     )
+
+
+class JobReevaluationTask(Base):
+    """Durable asynchronous reevaluation request for one job version."""
+
+    __tablename__ = "job_reevaluation_tasks"
+    __table_args__ = (
+        UniqueConstraint(
+            "job_id",
+            "target_evaluation_version",
+            name="uq_job_reevaluation_job_version",
+        ),
+        Index("idx_job_reevaluation_owner_created", "owner_sub", "created_at"),
+        Index("idx_job_reevaluation_status_heartbeat", "status", "heartbeat_at"),
+    )
+
+    id = Column(
+        UUID(as_uuid=False),
+        primary_key=True,
+        default=lambda: str(uuid.uuid4()),
+    )
+    owner_sub = Column(Text, nullable=False)
+    job_id = Column(
+        UUID(as_uuid=False),
+        ForeignKey("jobs.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    target_evaluation_version = Column(Integer, nullable=False)
+    status = Column(Text, nullable=False, default="PENDING")
+    attempt_count = Column(Integer, nullable=False, default=0)
+    queue_dispatched_at = Column(DateTime(timezone=True), nullable=True)
+    processing_token = Column(Text, nullable=True)
+    heartbeat_at = Column(DateTime(timezone=True), nullable=True)
+    last_error_code = Column(Text, nullable=True)
+    last_error_message = Column(Text, nullable=True)
+    created_at = Column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=lambda: datetime.now(timezone.utc),
+    )
+    completed_at = Column(DateTime(timezone=True), nullable=True)
 
 
 class Ranking(Base):
