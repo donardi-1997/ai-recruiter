@@ -30,7 +30,8 @@ CONTAINER_SIGNING_HELPER="/usr/local/bin/aws_signing_helper"
 CONTAINER_CLIENT_CRT="/run/rolesanywhere/client.crt"
 CONTAINER_CLIENT_KEY="/run/rolesanywhere/client.key"
 BEDROCK_PROFILE="ai-recruiter-bedrock"
-ECR_IMAGE="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${ECR_REPO}:${ECR_TAG}"
+ECR_REGISTRY="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
+ECR_IMAGE="${ECR_REGISTRY}/${ECR_REPO}:${ECR_TAG}"
 
 DRY_RUN=false
 [[ "${1:-}" == "--dry-run" ]] && DRY_RUN=true
@@ -68,11 +69,14 @@ done
 grep -q "$BEDROCK_PROFILE" "$HOST_AWS_CONFIG" || { echo "Missing profile $BEDROCK_PROFILE" >&2; exit 1; }
 
 if [[ "$DRY_RUN" == "true" ]]; then
+  echo "[DRY RUN] aws ecr get-login-password --region $AWS_REGION --profile $BEDROCK_PROFILE | docker login $ECR_REGISTRY"
   echo "[DRY RUN] docker pull $ECR_IMAGE"
   echo "[DRY RUN] docker run ai-recruiter-worker python -m app.workers.dispatcher"
   exit 0
 fi
 
+AWS_CONFIG_FILE="$HOST_AWS_CONFIG" aws ecr get-login-password --region "$AWS_REGION" --profile "$BEDROCK_PROFILE" | \
+  docker login --username AWS --password-stdin "$ECR_REGISTRY"
 docker pull "$ECR_IMAGE"
 docker network inspect "$NETWORK_NAME" >/dev/null 2>&1 || docker network create "$NETWORK_NAME"
 OLD_WORKER_IMAGE=""
