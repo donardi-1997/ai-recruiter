@@ -5,8 +5,9 @@ from sqlalchemy.orm import Session
 
 from app.deps import get_current_user, get_db
 from app.domains.jobs import presenter, service
+from app.domains.jobs.enrichment import JobEnrichmentError, enrich_job_draft
 from app.domains.jobs.exceptions import JobNotFound
-from app.domains.jobs.schemas import CreateJobRequest, UpdateJobRequest
+from app.domains.jobs.schemas import CreateJobRequest, JobEnrichmentRequest, UpdateJobRequest
 
 router = APIRouter(prefix="/api/jobs", tags=["jobs"])
 
@@ -35,6 +36,27 @@ def list_jobs(
         presenter.job_payload(job, candidate_count=candidate_count)
         for job, candidate_count in service.list_jobs(db, _user["sub"])
     ]
+
+
+@router.post("/enrich")
+def enrich_job(
+    body: JobEnrichmentRequest,
+    db: Session = Depends(get_db),
+    _user: dict = Depends(get_current_user),
+):
+    try:
+        proposal, context_version = enrich_job_draft(
+            db,
+            owner_sub=_user["sub"],
+            request=body,
+        )
+    except JobEnrichmentError as exc:
+        raise HTTPException(status_code=502, detail=str(exc))
+
+    return {
+        "company_context_version": context_version,
+        "proposal": proposal.model_dump(),
+    }
 
 
 @router.post("", status_code=201)
