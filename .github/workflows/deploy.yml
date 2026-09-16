@@ -20,7 +20,6 @@ env:
   ECR_FRONTEND_REPO: ai-recruiter-frontend
   INSTANCE_NAME: ai-recruiter-micro-prod
   RUNTIME_CONFIG_SECRET: /ai-recruiter/prod/runtime-config
-  LIGHTSAIL_SSH_KEY_SECRET: /ai-recruiter/prod/lightsail-ssh-key
   CLOUDFRONT_DISTRIBUTION_ID: ${{ vars.CLOUDFRONT_DISTRIBUTION_ID }}
   PUBLIC_BASE_URL: ${{ vars.PUBLIC_BASE_URL }}
 
@@ -158,6 +157,20 @@ jobs:
           echo "IMPORT_QUEUE_URL=$IMPORT_QUEUE_URL" >> "$GITHUB_ENV"
           echo "CANDIDATE_IMPORT_INFRA_OK"
 
+      - name: Acquire temporary Lightsail SSH credentials
+        run: |
+          set -euo pipefail
+          KEY_FILE="/tmp/lightsail-key.pem"
+          ACCESS_JSON=$(aws lightsail get-instance-access-details \
+            --instance-name "$INSTANCE_NAME" \
+            --protocol ssh \
+            --region "$AWS_REGION")
+          echo "$ACCESS_JSON" | jq -er '.accessDetails.privateKey' > "$KEY_FILE"
+          chmod 600 "$KEY_FILE"
+          EXPIRES_AT=$(echo "$ACCESS_JSON" | jq -r '.accessDetails.expiresAt')
+          echo "LIGHTSAIL_KEY_FILE=$KEY_FILE" >> "$GITHUB_ENV"
+          echo "LIGHTSAIL_SSH_TEMPORARY_KEY_OK expires=$EXPIRES_AT"
+
       - name: Migrate and backfill production database
         env:
           ECR_REGISTRY: ${{ steps.ecr-login.outputs.registry }}
@@ -168,11 +181,7 @@ jobs:
             --region "$AWS_REGION" \
             --query "instance.publicIpAddress" \
             --output text)
-          KEY_FILE="/tmp/lightsail-key.pem"
-          aws secretsmanager get-secret-value \
-            --secret-id "$LIGHTSAIL_SSH_KEY_SECRET" \
-            --query SecretString --output text > "$KEY_FILE"
-          chmod 600 "$KEY_FILE"
+          KEY_FILE="${LIGHTSAIL_KEY_FILE:?temporary Lightsail SSH key missing}"
 
           ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -i "$KEY_FILE" ubuntu@$INSTANCE_IP \
             "sudo docker network inspect ai-recruiter >/dev/null 2>&1 || sudo docker network create ai-recruiter"
@@ -237,11 +246,7 @@ jobs:
             --region "$AWS_REGION" \
             --query "instance.publicIpAddress" \
             --output text)
-          KEY_FILE="/tmp/lightsail-key.pem"
-          aws secretsmanager get-secret-value \
-            --secret-id "$LIGHTSAIL_SSH_KEY_SECRET" \
-            --query SecretString --output text > "$KEY_FILE"
-          chmod 600 "$KEY_FILE"
+          KEY_FILE="${LIGHTSAIL_KEY_FILE:?temporary Lightsail SSH key missing}"
 
           scp -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -i "$KEY_FILE" \
             scripts/deploy-api.sh ubuntu@$INSTANCE_IP:/tmp/ai-recruiter-deploy-api.sh
@@ -427,3 +432,7 @@ jobs:
           docker push "$ECR_REGISTRY/$ECR_FRONTEND_REPO:latest"
           echo "FRONTEND_LATEST_PROMOTED"
           echo "DEPLOYMENT_OK"
+
+      - name: Remove temporary Lightsail SSH credentials
+        if: always()
+        run: rm -f /tmp/lightsail-key.pem
