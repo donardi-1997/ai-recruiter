@@ -20,8 +20,20 @@ class GmailNotConfigured(RuntimeError):
     pass
 
 
+class GmailUnsafeConfiguration(RuntimeError):
+    pass
+
+
 class GmailRemoteError(RuntimeError):
     pass
+
+
+def is_safe_mailbox_filter(settings: GmailSettings) -> bool:
+    """Require either a sender allowlist or an explicit Gmail from: restriction."""
+    if settings.allowed_senders:
+        return True
+    query = str(settings.query or "").casefold()
+    return "from:" in query
 
 
 def integration_status(*, settings: GmailSettings | None = None) -> dict:
@@ -30,6 +42,7 @@ def integration_status(*, settings: GmailSettings | None = None) -> dict:
         "enabled": current.enabled,
         "configured": current.configured,
         "provider": current.ingestion_provider,
+        "safe_filter": is_safe_mailbox_filter(current),
     }
 
 
@@ -47,6 +60,10 @@ def sync_mailbox(
         raise GmailDisabled("Gmail ingestion is disabled.")
     if not current.configured:
         raise GmailNotConfigured("Gmail OAuth is not configured.")
+    if not is_safe_mailbox_filter(current):
+        raise GmailUnsafeConfiguration(
+            "Gmail ingestion requires GMAIL_ALLOWED_SENDERS or a restrictive from: query."
+        )
 
     client = mailbox_client or GmailClient(current)
     try:
