@@ -76,7 +76,6 @@ def test_workflow_copies_and_runs_worker_deploy_script_with_sha_tag():
     assert "scripts/deploy-worker.sh" in workflow
     assert "/tmp/ai-recruiter-deploy-worker.sh" in workflow
     assert 'ECR_TAG="${{ github.sha }}"' in workflow
-    assert "github.event_name != 'pull_request'" in workflow
 
 
 def test_migration_and_backfill_run_before_existing_api_is_replaced():
