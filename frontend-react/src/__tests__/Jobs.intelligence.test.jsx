@@ -53,6 +53,8 @@ describe("Jobs AI enrichment", () => {
               title: "Existing Cloud Engineer",
               description: "Existing description",
               candidate_count: 2,
+              evaluation_version: 1,
+              evaluation_profile: {},
               created_at: "2026-09-01T10:00:00Z",
             },
           ],
@@ -106,7 +108,7 @@ describe("Jobs AI enrichment", () => {
         description: "Necesitamos apoyo con AWS.",
         country_code: "CO",
         city: "Bogotá",
-        employment_type: "",
+        employment_type: null,
         evaluation_profile: null,
       });
     });
@@ -172,5 +174,38 @@ describe("Jobs AI enrichment", () => {
 
     expect(await screen.findByText("No fue posible enriquecer.")).toBeInTheDocument();
     expect(screen.getByLabelText("Descripción y requisitos")).toHaveValue("Mi borrador original");
+  });
+
+  it("shows a non-blocking reevaluation notice when editing a job with candidates", async () => {
+    renderJobs();
+    await screen.findByText("Existing Cloud Engineer");
+
+    fireEvent.click(screen.getByText("Editar"));
+
+    expect(screen.getByRole("note")).toHaveTextContent("Esta vacante tiene candidatos evaluados.");
+    expect(screen.getByRole("note")).toHaveTextContent(
+      "Los cambios en el perfil harán que sus evaluaciones se actualicen automáticamente."
+    );
+    expect(screen.getByRole("button", { name: /guardar cambios/i })).toBeEnabled();
+  });
+
+  it("shows pending reevaluation feedback after an evaluation-relevant edit", async () => {
+    api.put.mockResolvedValueOnce({
+      data: {
+        evaluation_changed: true,
+        reevaluation_scheduled: true,
+        reevaluation_candidate_count: 2,
+      },
+    });
+    renderJobs();
+    await screen.findByText("Existing Cloud Engineer");
+
+    fireEvent.click(screen.getByText("Editar"));
+    fireEvent.change(screen.getByLabelText("Descripción y requisitos"), {
+      target: { value: "Updated AWS platform requirements" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: /guardar cambios/i }));
+
+    expect(await screen.findByText("Perfil actualizado · reevaluación de 2 candidatos pendiente")).toBeInTheDocument();
   });
 });
