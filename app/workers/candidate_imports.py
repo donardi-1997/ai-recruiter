@@ -630,6 +630,13 @@ def _run_evaluation_stage(db: Session, batch) -> None:
     if batch.current_stage != "EVALUATING":
         return
 
+    # Snapshot ORM-backed scalars before releasing the coordinator session.
+    # The reads below autobegin a transaction; keeping it open while child
+    # sessions write can deadlock SQLite and unnecessarily retain a DB snapshot.
+    batch_id = batch.id
+    job_id = batch.job_id
+    owner_sub = batch.owner_sub
+
     candidate_ids = _successful_candidate_ids(db, batch)
     outstanding = [
         candidate_id
@@ -638,14 +645,15 @@ def _run_evaluation_stage(db: Session, batch) -> None:
     ]
 
     if outstanding:
+        db.rollback()
         max_workers = max(1, int(get_import_evaluation_concurrency()))
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
             futures = [
                 executor.submit(
                     _evaluate_candidate_with_retries,
                     candidate_id=candidate_id,
-                    job_id=batch.job_id,
-                    owner_sub=batch.owner_sub,
+                    job_id=job_id,
+                    owner_sub=owner_sub,
                 )
                 for candidate_id in outstanding
             ]
@@ -653,7 +661,7 @@ def _run_evaluation_stage(db: Session, batch) -> None:
                 future.result()
 
     db.expire_all()
-    batch = repository.get_batch_for_worker(db, batch.id)
+    batch = repository.get_batch_for_worker(db, batch_id)
     if batch is None:
         raise BatchMissing()
 
