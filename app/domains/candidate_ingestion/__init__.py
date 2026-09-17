@@ -3,6 +3,11 @@
 from app.domains.candidate_ingestion.models import (
     CandidateIngestionDocument,
     CandidateIngestionEvent,
+    IndeedEmailResumeTask,
 )
 
-__all__ = ["CandidateIngestionEvent", "CandidateIngestionDocument"]
+__all__ = [
+    "CandidateIngestionEvent",
+    "CandidateIngestionDocument",
+    "IndeedEmailResumeTask",
+]
