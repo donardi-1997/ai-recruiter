@@ -294,9 +294,14 @@ def test_existing_different_document_is_conflict_not_replaced():
 @pytest.mark.parametrize(
     ("content_type", "data", "expected_status"),
     [
-        ("text/plain", b"%PDF-1.7\nvalid", 422),
-        ("application/pdf", b"not-a-pdf", 422),
-        ("application/pdf", b"%PDF-" + b"x" * (15 * 1024 * 1024 + 1), 413),
+        pytest.param("text/plain", b"%PDF-1.7\nvalid", 422, id="invalid-content-type"),
+        pytest.param("application/pdf", b"not-a-pdf", 422, id="invalid-pdf-signature"),
+        pytest.param(
+            "application/pdf",
+            b"%PDF-" + b"x" * (15 * 1024 * 1024 + 1),
+            413,
+            id="pdf-too-large",
+        ),
     ],
 )
 def test_upload_validation_rejects_invalid_content_before_storage(
