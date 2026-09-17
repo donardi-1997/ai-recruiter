@@ -82,15 +82,16 @@ def test_only_deploy_runs_automatically_on_main():
     assert "pull_request:" in ci_trigger
     assert "push:" not in ci_trigger
 
+    diagnostics_trigger = _trigger_block(workflows / "nano-diagnostics.yml")
+    assert "workflow_dispatch:" in diagnostics_trigger
+    assert "push:" not in diagnostics_trigger
+
     for filename in (
         "bootstrap-prod.yml",
         "bootstrap-recovery.yml",
         "fix-runtime-key-owner.yml",
-        "nano-diagnostics.yml",
     ):
-        trigger = _trigger_block(workflows / filename)
-        assert "workflow_dispatch:" in trigger
-        assert "push:" not in trigger
+        assert not (workflows / filename).exists()
 
 
 def test_deploy_has_no_cloudfront_runtime_dependency():
@@ -99,20 +100,6 @@ def test_deploy_has_no_cloudfront_runtime_dependency():
     )
     assert "CLOUDFRONT_DISTRIBUTION_ID" not in workflow
     assert "cloudfront create-invalidation" not in workflow
-
-
-def test_one_time_bootstrap_generates_runtime_identity_and_registers_only_public_ca():
-    workflow = (ROOT / ".github" / "workflows" / "bootstrap-prod.yml").read_text(
-        encoding="utf-8"
-    )
-    assert "openssl req -x509" in workflow
-    assert "client.key" in workflow
-    assert "scp" in workflow
-    assert "ca.crt" in workflow
-    assert "rolesanywhere create-trust-anchor" in workflow
-    assert "aws_signing_helper" in workflow
-    assert "credential_process" in workflow
-    assert "scp" in workflow and "client.key ubuntu@" not in workflow
 
 
 def test_api_and_worker_require_runtime_resource_environment():
