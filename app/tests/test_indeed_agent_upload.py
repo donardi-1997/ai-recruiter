@@ -180,6 +180,41 @@ def test_valid_pdf_upload_completes_task_and_keeps_event_undispatched():
         engine.dispose()
 
 
+def test_uploaded_pdf_is_dispatched_once_by_existing_candidate_ingestion_repair(monkeypatch):
+    from app.domains.candidate_ingestion import indeed_email_agent_service as service
+    from app.workers import candidate_ingestions
+
+    engine, db = _db()
+    event, task = _event_task(db)
+    storage = FakeStorage()
+    sent = []
+    monkeypatch.setattr(
+        candidate_ingestions.queue,
+        "send_candidate_ingestion",
+        lambda event_id: sent.append(event_id),
+    )
+    try:
+        claimed = service.claim_next_task(db, owner_sub="owner-1")
+        service.store_resume_pdf(
+            db,
+            owner_sub="owner-1",
+            task_id=task.id,
+            lease_token=claimed.lease_token,
+            filename="candidate.pdf",
+            content_type="application/pdf",
+            data=b"%PDF-1.7\nqueued",
+            storage=storage,
+        )
+
+        assert candidate_ingestions.dispatch_undispatched_ingestions(db) == 1
+        assert sent == [event.id]
+        assert candidate_ingestions.dispatch_undispatched_ingestions(db) == 0
+        assert sent == [event.id]
+    finally:
+        db.close()
+        engine.dispose()
+
+
 def test_repeated_same_upload_after_completion_is_idempotent_even_with_old_lease():
     from app.domains.candidate_ingestion import indeed_email_agent_service as service
 
