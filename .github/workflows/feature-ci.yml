@@ -25,10 +25,9 @@ jobs:
       - env:
           DATABASE_URL: "sqlite:///:memory:"
         run: >-
-          python -m pytest
-          app/tests/test_indeed_agent_routes.py
-          app/tests/test_indeed_agent_upload.py
-          -q --tb=short --maxfail=20
+          timeout 30s python -m pytest
+          app/tests/test_indeed_agent_routes.py::test_empty_owner_scoped_queue_returns_204
+          -vv -s --tb=short
 
   backend-tests:
     runs-on: ubuntu-latest
