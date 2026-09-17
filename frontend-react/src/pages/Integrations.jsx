@@ -179,10 +179,10 @@ function Integrations() {
             ) : (
               <div className="integration-account is-warning">
                 <span className="integration-account-label">Configuración requerida</span>
-                <strong>OAuth de Gmail no configurado</strong>
+                <strong>Credenciales de Google pendientes</strong>
                 <span>
-                  Crea el cliente OAuth Web en Google Cloud y registra exactamente este
-                  callback HTTPS.
+                  El callback HTTPS ya está preparado. Falta cargar el client ID y el client
+                  secret del cliente OAuth Web de Google Cloud.
                 </span>
               </div>
             )}

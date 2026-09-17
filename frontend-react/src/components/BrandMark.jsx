@@ -1,14 +1,12 @@
+// eslint-disable-next-line no-unused-vars
+import React from "react";
+import "./BrandMark.css";
+
 function BrandMark({ compact = false }) {
   return (
     <span className={`asiati-brand ${compact ? "asiati-brand--compact" : ""}`}>
-      <span className="asiati-mark" aria-hidden="true">
-        <span>A</span>
-        <i />
-      </span>
-      <span className="asiati-wordmark">
-        <strong>ASIATI</strong>
-        <small>Talent intelligence</small>
-      </span>
+      <img className="asiati-logo" src="/asiati-logo.svg" alt="ASIATI" />
+      <span className="asiati-brand-tagline">Talent intelligence</span>
     </span>
   );
 }
