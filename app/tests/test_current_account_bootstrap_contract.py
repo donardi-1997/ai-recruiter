@@ -54,13 +54,15 @@ def test_lightsail_ssh_uses_temporary_access_details_not_persistent_private_key_
     assert "/ai-recruiter/prod/lightsail-ssh-key" not in workflow
 
 
-def test_lightsail_ssh_uses_temporary_certificate_for_every_connection():
+def test_lightsail_ssh_uses_openssh_key_certificate_pairing_convention():
     workflow = (ROOT / ".github" / "workflows" / "deploy.yml").read_text(
         encoding="utf-8"
     )
     assert ".accessDetails.certKey" in workflow
-    assert "LIGHTSAIL_CERT_FILE" in workflow
-    assert "CertificateFile=" in workflow
+    assert 'KEY_FILE=/tmp/lightsail-key' in workflow
+    assert 'CERT_FILE="${KEY_FILE}-cert.pub"' in workflow
+    assert "CertificateFile=" not in workflow
+    assert 'SSH=(-i "$LIGHTSAIL_KEY_FILE"' in workflow
 
 
 def test_lightsail_temporary_key_and_certificate_are_private():

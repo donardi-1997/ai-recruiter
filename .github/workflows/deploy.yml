@@ -34,13 +34,13 @@ jobs:
       - run: |
           pip install --upgrade pip
           pip install -r requirements.txt
-          pip install pytest
+          pip install pytest pytest-xdist
       - run: |
           python -m py_compile app/main.py
           python -m py_compile app/evaluation.py
       - env:
           DATABASE_URL: "sqlite:///:memory:"
-        run: python -m pytest app/tests/ -v --tb=short
+        run: python -m pytest app/tests/ -n 2 --dist=loadfile -v --tb=short
 
   frontend-tests:
     runs-on: ubuntu-latest
@@ -129,8 +129,8 @@ jobs:
         run: |
           set -euo pipefail
           ACCESS_JSON=$(aws lightsail get-instance-access-details --instance-name "$INSTANCE_NAME" --protocol ssh --region "$AWS_REGION")
-          KEY_FILE=/tmp/lightsail-key.pem
-          CERT_FILE=/tmp/lightsail-key-cert.pub
+          KEY_FILE=/tmp/lightsail-key
+          CERT_FILE="${KEY_FILE}-cert.pub"
           echo "$ACCESS_JSON" | jq -er '.accessDetails.privateKey' > "$KEY_FILE"
           echo "$ACCESS_JSON" | jq -er '.accessDetails.certKey' > "$CERT_FILE"
           chmod 600 "$KEY_FILE"
@@ -145,7 +145,7 @@ jobs:
       - name: Verify existing Roles Anywhere identity
         run: |
           set -euo pipefail
-          SSH=(-i "$LIGHTSAIL_KEY_FILE" -o "CertificateFile=$LIGHTSAIL_CERT_FILE" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null)
+          SSH=(-i "$LIGHTSAIL_KEY_FILE" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null)
           ssh "${SSH[@]}" "$LIGHTSAIL_SSH_USER@$INSTANCE_IP" 'set -euo pipefail; for f in /opt/ai-recruiter/aws/config /usr/local/bin/aws_signing_helper /opt/ai-recruiter/rolesanywhere/client.crt /opt/ai-recruiter/rolesanywhere/client.key; do test -f "$f"; done; AWS_CONFIG_FILE=/opt/ai-recruiter/aws/config aws sts get-caller-identity --profile ai-recruiter-bedrock >/tmp/ai-recruiter-sts.json; test "$(jq -r .Account /tmp/ai-recruiter-sts.json)" = "890876258895"; echo ROLES_ANYWHERE_OK'
 
       - name: Migrate and backfill production database
@@ -153,7 +153,7 @@ jobs:
           ECR_REGISTRY: ${{ steps.ecr-login.outputs.registry }}
         run: |
           set -euo pipefail
-          SSH=(-i "$LIGHTSAIL_KEY_FILE" -o "CertificateFile=$LIGHTSAIL_CERT_FILE" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null)
+          SSH=(-i "$LIGHTSAIL_KEY_FILE" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null)
           ssh "${SSH[@]}" "$LIGHTSAIL_SSH_USER@$INSTANCE_IP" bash -s <<REMOTE_PREFLIGHT
             set -euo pipefail
             export AWS_DEFAULT_REGION="$AWS_REGION"
@@ -194,7 +194,7 @@ jobs:
           ECR_REGISTRY: ${{ steps.ecr-login.outputs.registry }}
         run: |
           set -euo pipefail
-          SSH=(-i "$LIGHTSAIL_KEY_FILE" -o "CertificateFile=$LIGHTSAIL_CERT_FILE" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null)
+          SSH=(-i "$LIGHTSAIL_KEY_FILE" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null)
           scp "${SSH[@]}" scripts/deploy-api.sh "$LIGHTSAIL_SSH_USER@$INSTANCE_IP:/tmp/ai-recruiter-deploy-api.sh"
           scp "${SSH[@]}" scripts/deploy-worker.sh "$LIGHTSAIL_SSH_USER@$INSTANCE_IP:/tmp/ai-recruiter-deploy-worker.sh"
           ssh "${SSH[@]}" "$LIGHTSAIL_SSH_USER@$INSTANCE_IP" bash -s <<REMOTE_DEPLOY
@@ -278,4 +278,4 @@ jobs:
 
       - name: Cleanup temporary SSH credentials
         if: always()
-        run: rm -f /tmp/lightsail-key.pem /tmp/lightsail-key-cert.pub
+        run: rm -f /tmp/lightsail-key /tmp/lightsail-key-cert.pub

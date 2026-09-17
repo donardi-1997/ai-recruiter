@@ -18,7 +18,7 @@ jobs:
   # BACKEND TESTS
   # ─────────────────────────────────────────────────────────
   backend-tests:
-    name: Backend tests (pytest)
+    name: Backend tests (pytest x2)
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -34,7 +34,7 @@ jobs:
         run: |
           pip install --upgrade pip
           pip install -r requirements.txt
-          pip install pytest alembic psycopg2-binary
+          pip install pytest pytest-xdist alembic psycopg2-binary
 
       - name: Validate Python syntax
         run: |
@@ -43,25 +43,19 @@ jobs:
           python -m py_compile app/crud.py
           python -m py_compile app/deps.py
 
-      - name: Run pytest (SQLite)
+      - name: Run pytest in parallel (SQLite)
         env:
           DATABASE_URL: "sqlite:///:memory:"
         run: |
-          python -m pytest app/tests/ -v --tb=short
-
-      - name: Run contract tests
-        env:
-          DATABASE_URL: "sqlite:///:memory:"
-        run: |
-          python -m pytest app/tests/test_contract.py -v --tb=short
+          python -m pytest app/tests/ -n 2 --dist=loadfile -v --tb=short
 
   # ─────────────────────────────────────────────────────────
   # POSTGRESQL + ALEMBIC SMOKE TEST
+  # Runs independently from SQLite to reduce wall-clock time.
   # ─────────────────────────────────────────────────────────
   backend-smoke:
     name: Backend smoke (Postgres)
     runs-on: ubuntu-latest
-    needs: backend-tests
     services:
       postgres:
         image: postgres:16
