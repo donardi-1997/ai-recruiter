@@ -1,5 +1,6 @@
 """Contracts for durable Gmail -> Candidate Ingestion Core handoff."""
 
+import base64
 import importlib
 
 import pytest
@@ -72,6 +73,30 @@ def _message(*, include_attachment=True):
                 {"name": "Subject", "value": "New application for Country Manager Chile"},
             ],
             "parts": parts,
+        },
+    }
+
+
+def _indeed_link_message():
+    html = (
+        "<html><body>"
+        "<p>Ana Perez se postulo para Country Manager Chile</p>"
+        '<a href="https://employers.indeed.com/resume/ana-perez">Ver CV</a>'
+        "</body></html>"
+    )
+    data = base64.urlsafe_b64encode(html.encode("utf-8")).decode("ascii").rstrip("=")
+    return {
+        "id": "gmail-indeed-link",
+        "threadId": "thread-indeed-link",
+        "historyId": "77",
+        "internalDate": "1789574400000",
+        "payload": {
+            "mimeType": "text/html",
+            "headers": [
+                {"name": "From", "value": "Indeed <conversation-abc@indeedemail.com>"},
+                {"name": "Subject", "value": "Ana Perez se postulo"},
+            ],
+            "body": {"data": data},
         },
     }
 
@@ -175,6 +200,35 @@ def test_email_without_supported_resume_is_durable_needs_review_not_silently_dro
         assert result.event.status == "NEEDS_REVIEW"
         assert result.event.last_error_code == "RESUME_ATTACHMENT_MISSING"
         assert result.event.documents == []
+        assert storage.calls == []
+    finally:
+        db.close()
+        engine.dispose()
+
+
+def test_indeed_notification_without_attachment_creates_download_task():
+    service = _service_module()
+    engine, db = _db()
+    mailbox = FakeMailboxClient(_indeed_link_message(), {})
+    storage = FakeStorage()
+    try:
+        result = service.ingest_gmail_message(
+            db,
+            owner_sub="owner-1",
+            message_id="gmail-indeed-link",
+            mailbox_client=mailbox,
+            storage=storage,
+            provider="INDEED",
+            source_account="katherine@example.com",
+        )
+
+        assert result.created is True
+        assert result.event.status == "RECEIVED"
+        assert result.event.last_error_code == "RESUME_DOWNLOAD_PENDING"
+        assert result.event.indeed_email_resume_task is not None
+        assert result.event.indeed_email_resume_task.status == "WAITING_DOWNLOAD"
+        assert result.event.documents == []
+        assert mailbox.attachment_calls == []
         assert storage.calls == []
     finally:
         db.close()
