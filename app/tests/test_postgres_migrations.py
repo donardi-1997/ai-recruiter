@@ -52,6 +52,7 @@ def test_alembic_head_builds_current_postgres_schema():
             "indeed_resume_ingestions",
             "candidate_ingestion_events",
             "candidate_ingestion_documents",
+            "indeed_email_resume_tasks",
             "job_reevaluation_tasks",
             "company_contexts",
         }.issubset(tables)
@@ -109,6 +110,29 @@ def test_alembic_head_builds_current_postgres_schema():
             "completed_at",
         }.issubset(ingestion_event_columns)
 
+        indeed_email_task_columns = {
+            column["name"]
+            for column in inspector.get_columns("indeed_email_resume_tasks")
+        }
+        assert {
+            "owner_sub",
+            "ingestion_event_id",
+            "job_id",
+            "candidate_name",
+            "job_title",
+            "status",
+            "lease_token",
+            "lease_expires_at",
+            "claimed_at",
+            "available_at",
+            "attempt_count",
+            "last_error_code",
+            "last_error_message",
+            "completed_at",
+            "created_at",
+            "updated_at",
+        }.issubset(indeed_email_task_columns)
+
         company_context_columns = {
             column["name"] for column in inspector.get_columns("company_contexts")
         }
@@ -126,6 +150,6 @@ def test_alembic_head_builds_current_postgres_schema():
             revision = connection.execute(
                 text("SELECT version_num FROM alembic_version")
             ).scalar_one()
-        assert revision == "010"
+        assert revision == "011"
     finally:
         engine.dispose()
