@@ -72,6 +72,17 @@ class GmailOAuthSettings:
     state_max_age_seconds: int
 
 
+@dataclass(frozen=True)
+class IndeedResumeAgentSettings:
+    """Non-secret settings for the machine that downloads Indeed resumes."""
+
+    secret_id: str
+    lease_seconds: int
+    max_attempts: int
+    sender_domains: tuple[str, ...]
+    resume_host_suffixes: tuple[str, ...]
+
+
 def get_aws_region() -> str:
     """Return the configured AWS region without caching environment state."""
     return os.getenv("AWS_REGION", DEFAULT_AWS_REGION)
@@ -164,6 +175,36 @@ def get_gmail_oauth_settings() -> GmailOAuthSettings:
             60,
             int(os.getenv("GMAIL_OAUTH_STATE_MAX_AGE_SECONDS", "600")),
         ),
+    )
+
+
+def get_indeed_resume_agent_settings() -> IndeedResumeAgentSettings:
+    """Return non-secret resume-agent settings."""
+    sender_domains = tuple(
+        value.strip().casefold()
+        for value in os.getenv(
+            "INDEED_RESUME_AGENT_SENDER_DOMAINS",
+            "indeedemail.com",
+        ).split(",")
+        if value.strip()
+    )
+    resume_host_suffixes = tuple(
+        value.strip().casefold()
+        for value in os.getenv(
+            "INDEED_RESUME_AGENT_RESUME_HOST_SUFFIXES",
+            "indeed.com,indeedemail.com",
+        ).split(",")
+        if value.strip()
+    )
+    return IndeedResumeAgentSettings(
+        secret_id=os.getenv(
+            "INDEED_RESUME_AGENT_SECRET_ID",
+            "/ai-recruiter/prod/indeed-resume-agent",
+        ).strip(),
+        lease_seconds=int(os.getenv("INDEED_RESUME_AGENT_LEASE_SECONDS", "600")),
+        max_attempts=int(os.getenv("INDEED_RESUME_AGENT_MAX_ATTEMPTS", "3")),
+        sender_domains=sender_domains,
+        resume_host_suffixes=resume_host_suffixes,
     )
 
 

@@ -54,8 +54,8 @@ def runtime_secret():
             "api/integrations/gmail/oauth/callback"
         ),
         "enabled": True,
-        "query": "from:indeed.com has:attachment",
-        "allowed_senders": ["jobs@indeed.com"],
+        "query": "from:indeedemail.com",
+        "allowed_senders": [],
         "ingestion_provider": "INDEED",
     }
 
@@ -73,6 +73,13 @@ def test_status_resolves_operational_configuration_from_secret():
     assert status["safe_filter"] is True
     assert status["provider"] == "INDEED"
     assert status["redirect_uri"] == runtime_secret()["redirect_uri"]
+
+
+def test_runtime_secret_uses_link_discovery_not_attachment_filter():
+    secret = runtime_secret()
+    assert secret["query"] == "from:indeedemail.com"
+    assert secret["allowed_senders"] == []
+    assert "has:attachment" not in secret["query"]
 
 
 def test_sync_uses_operational_configuration_from_secret(monkeypatch):
@@ -120,5 +127,5 @@ def test_sync_uses_operational_configuration_from_secret(monkeypatch):
     assert captured == {
         "owner_sub": "owner-a",
         "provider": "INDEED",
-        "allowed_senders": ("jobs@indeed.com",),
+        "allowed_senders": (),
     }

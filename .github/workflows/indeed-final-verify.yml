@@ -1,0 +1,103 @@
+name: Final verify — Indeed Resume Bridge
+
+on:
+  push:
+    branches:
+      - feat/indeed-email-resume-bridge
+
+permissions:
+  contents: read
+
+env:
+  PYTHON_VERSION: "3.10"
+  NODE_VERSION: "24"
+
+jobs:
+  backend-tests:
+    name: Backend full suite (pytest x2)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+      - run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pytest pytest-xdist alembic psycopg2-binary
+      - name: Run full backend suite
+        env:
+          DATABASE_URL: "sqlite:///:memory:"
+          PYTHONFAULTHANDLER: "1"
+          PYTHONUNBUFFERED: "1"
+        run: |
+          set +e
+          timeout --signal=TERM --kill-after=5s 180s \
+            python -m pytest app/tests/ -n 2 --dist=loadfile -v --tb=short
+          rc=$?
+          set -e
+          if [ "$rc" -eq 124 ] || [ "$rc" -eq 137 ]; then
+            echo "::error::Backend pytest exceeded 180s and was hard-killed"
+          fi
+          exit "$rc"
+
+  postgres-smoke:
+    name: PostgreSQL + Alembic
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: ai_recruiter_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+      - run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pytest alembic psycopg2-binary
+      - name: Verify migrations
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/ai_recruiter_test
+        run: python -m pytest app/tests/test_postgres_migrations.py -v --tb=short
+
+  frontend:
+    name: Frontend lint + test + build
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: frontend-react/package-lock.json
+      - name: Install
+        working-directory: frontend-react
+        run: npm ci
+      - name: Lint
+        working-directory: frontend-react
+        run: npm run lint
+      - name: Test
+        working-directory: frontend-react
+        run: npm test
+      - name: Build
+        working-directory: frontend-react
+        env:
+          VITE_API_URL: /api
+        run: npm run build

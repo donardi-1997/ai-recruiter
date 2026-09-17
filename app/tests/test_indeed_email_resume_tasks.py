@@ -1,0 +1,116 @@
+"""Persistence contracts for durable Indeed email resume-download tasks."""
+
+from __future__ import annotations
+
+import importlib
+from pathlib import Path
+
+import pytest
+from sqlalchemy import create_engine, inspect
+from sqlalchemy.exc import IntegrityError
+from sqlalchemy.orm import Session
+
+import app.models  # noqa: F401 - register shared FK target tables
+from app.db import Base
+from app.domains.candidate_ingestion.models import CandidateIngestionEvent
+
+
+def _task_model():
+    module = importlib.import_module("app.domains.candidate_ingestion.models")
+    task_model = getattr(module, "IndeedEmailResumeTask", None)
+    if task_model is None:
+        pytest.fail("IndeedEmailResumeTask model is missing")
+    return task_model
+
+
+def _db():
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    return engine, Session(engine)
+
+
+def _event(db: Session, external_id: str = "gmail-1") -> CandidateIngestionEvent:
+    event = CandidateIngestionEvent(
+        owner_sub="owner-1",
+        source="EMAIL",
+        provider="INDEED",
+        source_account="hr@example.com",
+        external_id=external_id,
+        status="RECEIVED",
+        raw_metadata={"subject": "Indeed application"},
+    )
+    db.add(event)
+    db.flush()
+    return event
+
+
+def test_resume_task_table_exists_and_allows_unresolved_job():
+    task_model = _task_model()
+    engine, db = _db()
+    try:
+        assert "indeed_email_resume_tasks" in set(inspect(engine).get_table_names())
+        event = _event(db)
+        task = task_model(
+            owner_sub="owner-1",
+            ingestion_event_id=event.id,
+            candidate_name="Ana Perez",
+            job_title="Country Manager Chile",
+        )
+        db.add(task)
+        db.commit()
+        db.refresh(task)
+
+        assert task.job_id is None
+        assert task.status == "WAITING_DOWNLOAD"
+        assert task.attempt_count == 0
+        assert task.lease_token is None
+        assert task.lease_expires_at is None
+        assert task.claimed_at is None
+        assert task.available_at is None
+        assert task.completed_at is None
+    finally:
+        db.close()
+        engine.dispose()
+
+
+def test_resume_task_is_unique_per_ingestion_event():
+    task_model = _task_model()
+    engine, db = _db()
+    try:
+        event = _event(db)
+        db.add(
+            task_model(
+                owner_sub="owner-1",
+                ingestion_event_id=event.id,
+                candidate_name="Ana Perez",
+                job_title="Country Manager Chile",
+            )
+        )
+        db.commit()
+
+        db.add(
+            task_model(
+                owner_sub="owner-1",
+                ingestion_event_id=event.id,
+                candidate_name="Ana Perez",
+                job_title="Country Manager Chile",
+            )
+        )
+        with pytest.raises(IntegrityError):
+            db.commit()
+    finally:
+        db.close()
+        engine.dispose()
+
+
+def test_migration_011_is_additive_and_revises_010():
+    migration = Path("app/migrations/versions/011_indeed_email_resume_agent.py")
+
+    assert migration.exists()
+    text = migration.read_text(encoding="utf-8")
+    assert 'revision = "011"' in text
+    assert 'down_revision = "010"' in text
+    assert '"indeed_email_resume_tasks"' in text
+    assert '"uq_indeed_email_resume_task_event"' in text
+    assert '"idx_indeed_email_resume_task_claim"' in text
+    assert '"idx_indeed_email_resume_task_owner_status"' in text

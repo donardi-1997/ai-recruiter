@@ -1,5 +1,6 @@
 """Contracts for Gmail full/incremental mailbox synchronization."""
 
+import base64
 from types import SimpleNamespace
 
 from sqlalchemy import create_engine
@@ -9,6 +10,7 @@ import app.models  # noqa: F401
 from app.db import Base
 from app.domains.candidate_ingestion import repository
 from app.domains.candidate_ingestion.mailbox_sync import sync_gmail_mailbox
+from app.domains.candidate_ingestion.models import IndeedEmailResumeTask
 
 
 class FakeStorage:
@@ -87,6 +89,33 @@ class FakeMailboxClient:
         return b"pdfdata"
 
 
+class FakeIndeedLinkMailbox(FakeMailboxClient):
+    def get_message(self, message_id):
+        html = (
+            "<html><body>"
+            "<p>Ana Perez se postulo para Country Manager Chile</p>"
+            '<a href="https://employers.indeed.com/resume/ana-perez">Ver CV</a>'
+            "</body></html>"
+        )
+        data = base64.urlsafe_b64encode(html.encode("utf-8")).decode("ascii").rstrip("=")
+        return {
+            "id": message_id,
+            "threadId": f"thread-{message_id}",
+            "historyId": self.profile_history_id,
+            "payload": {
+                "mimeType": "text/html",
+                "headers": [
+                    {
+                        "name": "From",
+                        "value": "Indeed <conversation-abc@indeedemail.com>",
+                    },
+                    {"name": "Subject", "value": "Ana Perez se postulo"},
+                ],
+                "body": {"data": data},
+            },
+        }
+
+
 def _db():
     engine = create_engine("sqlite:///:memory:")
     Base.metadata.create_all(engine)
@@ -135,6 +164,36 @@ def test_first_sync_uses_discovered_mailbox_identity_and_persists_baseline_curso
         )
         assert event is not None
         assert event.source_account == "personal@example.com"
+    finally:
+        db.close()
+        engine.dispose()
+
+
+def test_indeed_link_notification_advances_cursor_and_creates_download_task():
+    engine, db = _db()
+    client = FakeIndeedLinkMailbox(
+        email_address="katherine@example.com",
+        profile_history_id="700",
+        full_message_ids=("gmail-indeed-1",),
+    )
+    try:
+        result = sync_gmail_mailbox(
+            db,
+            owner_sub="owner-1",
+            provider="INDEED",
+            mailbox_client=client,
+        )
+
+        assert result.mode == "FULL"
+        assert result.discovered == 1
+        assert result.created == 1
+        assert result.needs_review == 0
+        assert result.skipped == 0
+        assert result.cursor_value == "700"
+        assert db.query(IndeedEmailResumeTask).count() == 1
+        task = db.query(IndeedEmailResumeTask).one()
+        assert task.status == "WAITING_DOWNLOAD"
+        assert task.candidate_name == "Ana Perez"
     finally:
         db.close()
         engine.dispose()

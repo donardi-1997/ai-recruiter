@@ -4,79 +4,65 @@ This document defines how candidate-ingestion Gmail credentials are configured a
 
 ## Authentication model
 
-The application does **not** store or use the mailbox password.
+The application does **not** store or use the mailbox password. Gmail access uses Google OAuth 2.0 with the read-only Gmail scope and an offline refresh token. `GMAIL_USER_ID=me` means the API operates on the account that granted that token.
 
-Gmail access uses Google OAuth 2.0 with offline access:
+Never commit OAuth client secrets, refresh tokens, state secrets, mailbox passwords, or agent tokens to GitHub.
 
-- `GMAIL_CLIENT_ID`
-- `GMAIL_CLIENT_SECRET`
-- `GMAIL_REFRESH_TOKEN`
+## Runtime source of truth
 
-The short-lived access token is obtained at runtime from Google's token endpoint.
+Production Gmail OAuth/runtime values live in AWS Secrets Manager under `/ai-recruiter/prod/gmail-oauth`. Environment variables remain useful for local development, but the production secret overlays the operational values.
 
-`GMAIL_USER_ID=me` means the Gmail API operates on whichever Google account granted the refresh token. This lets us switch mailboxes by reauthorizing another account instead of changing code.
+For Indeed application notifications, the target runtime configuration **after the backend and local resume agent are deployed and verified** is:
 
-## Current development account
-
-Until the Asiati corporate mailbox is available, development may use a personal Gmail account authorized against the development Google Cloud OAuth client.
-
-Do not commit real values to GitHub. Local values belong in `.env`, which is ignored by git.
-
-Recommended development configuration:
-
-```text
-GMAIL_ENABLED=true
-GMAIL_CLIENT_ID=<development oauth client id>
-GMAIL_CLIENT_SECRET=<development oauth client secret>
-GMAIL_REFRESH_TOKEN=<personal gmail refresh token>
-GMAIL_USER_ID=me
-GMAIL_QUERY=has:attachment
-GMAIL_ALLOWED_SENDERS=<optional comma-separated sender allowlist>
+```json
+{
+  "enabled": true,
+  "query": "from:indeedemail.com",
+  "allowed_senders": [],
+  "ingestion_provider": "INDEED"
+}
 ```
 
-## Switching to the corporate mailbox
+Do not add `has:attachment`: Indeed application emails in this flow contain a **resume link**, not the resume PDF itself. The Gmail `from:` query is only a mailbox-discovery restriction; the specialized Indeed parser independently validates the parsed sender domain and the resume-link host before creating a download task.
 
-When the corporate mailbox is ready:
+## Local development
 
-1. Authorize the corporate Google account with the same approved Gmail read-only scope.
-2. Obtain a new refresh token for that account.
-3. Replace the Gmail OAuth secret values in the target environment.
-4. Keep `GMAIL_USER_ID=me` unless there is a specific reason to address another mailbox explicitly.
-5. Run a mailbox connectivity smoke test.
-6. Verify one known test application is ingested idempotently.
+A local test mailbox can still use environment-derived values. Keep the mailbox disabled until a restrictive sender query or sender allowlist is configured.
 
-No application-code change should be required for this mailbox swap.
+```text
+GMAIL_ENABLED=false
+GMAIL_USER_ID=me
+GMAIL_QUERY=from:indeedemail.com
+GMAIL_INGESTION_PROVIDER=INDEED
+```
+
+OAuth credentials belong in local secret storage or the configured Secrets Manager document, never in committed files.
+
+## Reauthorizing another mailbox
+
+To change the Gmail account used by the integration:
+
+1. Authorize the replacement Google account with the approved Gmail read-only scope.
+2. Complete the existing OAuth callback flow so the new refresh token is stored in Secrets Manager.
+3. Confirm the connected mailbox identity from the integrations status endpoint/UI.
+4. Keep ingestion disabled until the source filter is reviewed.
+5. Run a controlled sync and one known application before processing backlog.
+
+No mailbox password is required.
 
 ## Secret rotation
 
-If OAuth credentials need rotation:
+Issue and validate a replacement OAuth credential before revoking the old one. Replace secret material atomically, validate Gmail connectivity, then revoke the superseded credential. Never add a `GMAIL_PASSWORD` setting.
 
-- issue/re-authorize the replacement credential first;
-- validate it against Gmail;
-- replace the secret atomically in the runtime environment;
-- revoke the old refresh token/client credential after successful verification.
+## Indeed resume bridge gate
 
-Never add a `GMAIL_PASSWORD` variable or persist a human mailbox password.
+Gmail ingestion must stay disabled until all of these are true:
 
-## AWS GATE
+- migration `011` and the backend agent endpoints are deployed;
+- the machine credential exists in `/ai-recruiter/prod/indeed-resume-agent`;
+- the raw machine token is provisioned only on the authorized Windows workstation;
+- the Windows agent authenticates successfully and can read queue stats;
+- one controlled application can be claimed, downloaded, uploaded, and handed to the existing candidate-ingestion worker;
+- no credential value exists in the repository.
 
-Do **not** provision production Gmail secrets or continuous mailbox polling in AWS during early local/CI development.
-
-The project is ready for the AWS Gmail deployment step only when all of the following are true:
-
-- Gmail OAuth transport tests are green;
-- Candidate Ingestion Core persistence and migration `007` are green;
-- a normalized Gmail message can create an idempotent ingestion event;
-- PDF/DOCX attachments are written to the source/staging S3 path;
-- the `candidate_ingestion` SQS message contract is green;
-- the worker can resume and process an event safely;
-- ambiguous job resolution becomes `NEEDS_REVIEW` instead of guessing;
-- no credentials are committed to the repository.
-
-At that point the next infrastructure step is:
-
-1. store Gmail OAuth secrets in AWS Secrets Manager;
-2. grant the runtime role permission only to that Gmail secret;
-3. configure the worker/poller environment from the secret;
-4. provision the continuous mailbox polling schedule/service;
-5. validate end-to-end with a test email before enabling the corporate mailbox.
+The detailed cutover and rollback sequence is in `docs/indeed-resume-agent-operations.md`.
