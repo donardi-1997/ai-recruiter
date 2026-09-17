@@ -1,20 +1,40 @@
-"""State machine for leased Indeed email resume-download tasks."""
+"""State machine and document handoff for Indeed email resume-download tasks."""
 
 from __future__ import annotations
 
+import hashlib
 import hmac
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
+from pathlib import PurePosixPath
 
 from sqlalchemy.orm import Session
 
-from app.domains.candidate_ingestion import indeed_email_repository
-from app.domains.candidate_ingestion.models import IndeedEmailResumeTask
+from app.config import (
+    get_gmail_oauth_settings,
+    get_gmail_settings,
+    get_indeed_resume_agent_settings,
+)
+from app.domains.candidate_ingestion import gmail_integration, indeed_email_repository, repository
+from app.domains.candidate_ingestion.models import (
+    CandidateIngestionDocument,
+    IndeedEmailResumeTask,
+)
+from app.infrastructure.gmail_oauth_store import GmailOAuthSecretStore
+from app.infrastructure.ingestion.storage import EmailIngestionStorage
+from app.integrations.email_ingestion.gmail import GmailClient
+from app.integrations.email_ingestion.indeed_email_parser import (
+    InvalidIndeedMessage,
+    InvalidIndeedResumeLink,
+    NotIndeedMessage,
+    parse_indeed_application_email,
+)
 
 LEASE_SECONDS = 600
 MAX_ATTEMPTS = 3
 FIRST_RETRY_SECONDS = 15
 SECOND_RETRY_SECONDS = 60
+MAX_DOCUMENT_BYTES = 15 * 1024 * 1024
 
 
 class ResumeTaskNotFound(LookupError):
@@ -29,11 +49,36 @@ class ResumeTaskStateConflict(RuntimeError):
     pass
 
 
+class ResumeClaimResolutionError(RuntimeError):
+    """Public-safe failure while resolving the current Indeed resume URL."""
+
+
+class ResumeUploadConflict(RuntimeError):
+    """Raised when a task already has a different persisted resume document."""
+
+
+class ResumeUploadValidationError(ValueError):
+    def __init__(self, status_code: int, code: str):
+        self.status_code = int(status_code)
+        self.code = str(code)
+        super().__init__(self.code)
+
+
 @dataclass(frozen=True)
 class ClaimedResumeTask:
     task_id: str
     candidate_name: str
     job_title: str
+    lease_token: str
+    lease_expires_at: datetime
+
+
+@dataclass(frozen=True)
+class ClaimedResumeTaskWithUrl:
+    task_id: str
+    candidate_name: str
+    job_title: str
+    resume_url: str
     lease_token: str
     lease_expires_at: datetime
 
@@ -105,6 +150,133 @@ def claim_next_task(
         job_title=task.job_title,
         lease_token=str(task.lease_token),
         lease_expires_at=task.lease_expires_at,
+    )
+
+
+def _gmail_client_from_oauth():
+    """Build a Gmail transport from the existing OAuth secret without exposing it."""
+    current = get_gmail_settings()
+    oauth = get_gmail_oauth_settings()
+    store = GmailOAuthSecretStore(oauth.secret_id)
+    payload = gmail_integration._read_oauth_secret(oauth, store)
+    resolved = gmail_integration._resolved_gmail_settings(current, payload)
+    if not resolved.configured:
+        raise RuntimeError("GMAIL_NOT_CONFIGURED")
+    return GmailClient(resolved)
+
+
+def _safe_resolution_failure(
+    db: Session,
+    *,
+    owner_sub: str,
+    task_id: str,
+    lease_token: str,
+    code: str,
+    human_required: bool,
+) -> None:
+    if human_required:
+        task = _owned_task(db, owner_sub=owner_sub, task_id=task_id)
+        event = repository.get_event(
+            db,
+            task.ingestion_event_id,
+            owner_sub=owner_sub,
+        )
+        if event is not None:
+            event.status = "NEEDS_REVIEW"
+            event.last_error_code = code
+            event.last_error_message = "El enlace del CV de Indeed requiere revision manual."
+            db.commit()
+        mark_needs_human(
+            db,
+            owner_sub=owner_sub,
+            task_id=task_id,
+            lease_token=lease_token,
+            code=code,
+        )
+    else:
+        record_failure(
+            db,
+            owner_sub=owner_sub,
+            task_id=task_id,
+            lease_token=lease_token,
+            code=code,
+        )
+
+
+def claim_next_task_with_resume_url(
+    db: Session,
+    *,
+    owner_sub: str,
+    mailbox_client=None,
+) -> ClaimedResumeTaskWithUrl | None:
+    """Lease one task and resolve its current Indeed URL only for this response."""
+    claimed = claim_next_task(db, owner_sub=owner_sub)
+    if claimed is None:
+        return None
+
+    task = _owned_task(db, owner_sub=owner_sub, task_id=claimed.task_id)
+    event = repository.get_event(
+        db,
+        task.ingestion_event_id,
+        owner_sub=owner_sub,
+    )
+    metadata = dict(event.raw_metadata or {}) if event is not None else {}
+    message_id = str(metadata.get("gmail_message_id") or "").strip()
+    if event is None or not message_id:
+        _safe_resolution_failure(
+            db,
+            owner_sub=owner_sub,
+            task_id=claimed.task_id,
+            lease_token=claimed.lease_token,
+            code="GMAIL_MESSAGE_ID_MISSING",
+            human_required=False,
+        )
+        raise ResumeClaimResolutionError("Gmail message is unavailable.")
+
+    client = mailbox_client
+    try:
+        if client is None:
+            client = _gmail_client_from_oauth()
+        raw_message = client.get_message(message_id)
+        parser_settings = get_indeed_resume_agent_settings()
+        parsed = parse_indeed_application_email(
+            raw_message,
+            sender_domains=parser_settings.sender_domains,
+            resume_host_suffixes=parser_settings.resume_host_suffixes,
+        )
+    except (InvalidIndeedResumeLink, InvalidIndeedMessage, NotIndeedMessage) as exc:
+        code = (
+            "INDEED_RESUME_LINK_INVALID"
+            if isinstance(exc, InvalidIndeedResumeLink)
+            else "INDEED_EMAIL_INVALID"
+        )
+        _safe_resolution_failure(
+            db,
+            owner_sub=owner_sub,
+            task_id=claimed.task_id,
+            lease_token=claimed.lease_token,
+            code=code,
+            human_required=True,
+        )
+        raise ResumeClaimResolutionError("Indeed resume link requires review.") from exc
+    except Exception as exc:
+        _safe_resolution_failure(
+            db,
+            owner_sub=owner_sub,
+            task_id=claimed.task_id,
+            lease_token=claimed.lease_token,
+            code="GMAIL_MESSAGE_UNAVAILABLE",
+            human_required=False,
+        )
+        raise ResumeClaimResolutionError("Gmail message is unavailable.") from exc
+
+    return ClaimedResumeTaskWithUrl(
+        task_id=claimed.task_id,
+        candidate_name=claimed.candidate_name,
+        job_title=claimed.job_title,
+        resume_url=parsed.resume_url,
+        lease_token=claimed.lease_token,
+        lease_expires_at=claimed.lease_expires_at,
     )
 
 
@@ -211,6 +383,99 @@ def record_failure(
 
     db.commit()
     return task.status
+
+
+def _safe_pdf_filename(filename: str | None) -> str:
+    raw = str(filename or "").replace("\\", "/").rsplit("/", 1)[-1].strip()
+    stem = PurePosixPath(raw).stem.strip() if raw else "indeed-resume"
+    stem = stem or "indeed-resume"
+    safe = "".join(ch if ch.isalnum() or ch in " ._-" else "_" for ch in stem).strip()
+    return f"{safe or 'indeed-resume'}.pdf"
+
+
+def store_resume_pdf(
+    db: Session,
+    *,
+    owner_sub: str,
+    task_id: str,
+    lease_token: str,
+    filename: str | None,
+    content_type: str,
+    data: bytes,
+    storage=None,
+    now: datetime | None = None,
+) -> CandidateIngestionDocument:
+    """Validate and persist a downloaded PDF exactly once for the leased task."""
+    payload = bytes(data or b"")
+    if str(content_type or "").strip().casefold() != "application/pdf":
+        raise ResumeUploadValidationError(422, "RESUME_CONTENT_TYPE_INVALID")
+    if len(payload) > MAX_DOCUMENT_BYTES:
+        raise ResumeUploadValidationError(413, "RESUME_TOO_LARGE")
+    if not payload.startswith(b"%PDF-"):
+        raise ResumeUploadValidationError(422, "RESUME_NOT_PDF")
+
+    digest = hashlib.sha256(payload).hexdigest()
+    task = _owned_task(db, owner_sub=owner_sub, task_id=task_id)
+    event = repository.get_event(
+        db,
+        task.ingestion_event_id,
+        owner_sub=owner_sub,
+    )
+    if event is None:
+        raise ResumeTaskNotFound("RESUME_EVENT_NOT_FOUND")
+
+    existing_documents = repository.list_documents(db, event_id=event.id)
+    if existing_documents:
+        if (
+            len(existing_documents) == 1
+            and existing_documents[0].document_sha256 == digest
+            and task.status == "COMPLETED"
+        ):
+            return existing_documents[0]
+        raise ResumeUploadConflict("RESUME_DOCUMENT_CONFLICT")
+
+    task = require_active_lease(
+        db,
+        owner_sub=owner_sub,
+        task_id=task_id,
+        lease_token=lease_token,
+        now=now,
+    )
+
+    safe_filename = _safe_pdf_filename(filename)
+    source_storage = storage or EmailIngestionStorage()
+    source_key = source_storage.store_source_document(
+        event_id=event.id,
+        attachment_id=f"indeed-agent-{task.id}",
+        filename=safe_filename,
+        data=payload,
+        content_type="application/pdf",
+    )
+    document = repository.create_document(
+        db,
+        ingestion_event_id=event.id,
+        filename=safe_filename,
+        content_type="application/pdf",
+        size_bytes=len(payload),
+        source_s3_key=source_key,
+        document_sha256=digest,
+        status="STORED",
+    )
+
+    current = _now(now)
+    event.status = "STORED"
+    event.last_error_code = None
+    event.last_error_message = None
+    event.queue_dispatched_at = None
+    task.status = "COMPLETED"
+    task.available_at = None
+    task.last_error_code = None
+    task.last_error_message = None
+    task.completed_at = current
+    _clear_lease(task)
+    db.commit()
+    db.refresh(document)
+    return document
 
 
 def stats(db: Session, *, owner_sub: str) -> dict[str, int]:
