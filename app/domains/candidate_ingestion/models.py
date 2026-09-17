@@ -90,6 +90,12 @@ class CandidateIngestionEvent(Base):
         back_populates="ingestion_event",
         cascade="all, delete-orphan",
     )
+    indeed_email_resume_task = relationship(
+        "IndeedEmailResumeTask",
+        back_populates="ingestion_event",
+        uselist=False,
+        cascade="all, delete-orphan",
+    )
 
 
 class CandidateIngestionDocument(Base):
@@ -187,4 +193,71 @@ class CandidateIngestionCursor(Base):
         nullable=False,
         default=lambda: datetime.now(timezone.utc),
         onupdate=lambda: datetime.now(timezone.utc),
+    )
+
+
+class IndeedEmailResumeTask(Base):
+    """Durable browser-download task for one Indeed application email."""
+
+    __tablename__ = "indeed_email_resume_tasks"
+    __table_args__ = (
+        UniqueConstraint(
+            "ingestion_event_id",
+            name="uq_indeed_email_resume_task_event",
+        ),
+        Index(
+            "idx_indeed_email_resume_task_claim",
+            "status",
+            "available_at",
+            "created_at",
+        ),
+        Index(
+            "idx_indeed_email_resume_task_owner_status",
+            "owner_sub",
+            "status",
+        ),
+    )
+
+    id = Column(
+        UUID(as_uuid=False),
+        primary_key=True,
+        default=lambda: str(uuid.uuid4()),
+    )
+    owner_sub = Column(Text, nullable=False)
+    ingestion_event_id = Column(
+        UUID(as_uuid=False),
+        ForeignKey("candidate_ingestion_events.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    job_id = Column(
+        UUID(as_uuid=False),
+        ForeignKey("jobs.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    candidate_name = Column(Text, nullable=False)
+    job_title = Column(Text, nullable=False)
+    status = Column(Text, nullable=False, default="WAITING_DOWNLOAD")
+    lease_token = Column(Text, nullable=True)
+    lease_expires_at = Column(DateTime(timezone=True), nullable=True)
+    claimed_at = Column(DateTime(timezone=True), nullable=True)
+    available_at = Column(DateTime(timezone=True), nullable=True)
+    attempt_count = Column(Integer, nullable=False, default=0)
+    last_error_code = Column(Text, nullable=True)
+    last_error_message = Column(Text, nullable=True)
+    completed_at = Column(DateTime(timezone=True), nullable=True)
+    created_at = Column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=lambda: datetime.now(timezone.utc),
+    )
+    updated_at = Column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
+    )
+
+    ingestion_event = relationship(
+        "CandidateIngestionEvent",
+        back_populates="indeed_email_resume_task",
     )
