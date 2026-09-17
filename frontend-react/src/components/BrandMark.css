@@ -1,10 +1,26 @@
+.asiati-logo-frame {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 104px;
+  height: 104px;
+  flex: 0 0 104px;
+  box-sizing: border-box;
+  overflow: hidden;
+  padding: 8px;
+  background: #fff;
+  box-shadow: 0 10px 24px rgba(0, 0, 0, 0.14);
+}
+
+.asiati-logo-frame--round {
+  border-radius: 50%;
+}
+
 .asiati-logo {
   display: block;
-  width: 116px;
-  height: auto;
-  flex: 0 0 auto;
-  border-radius: 12px;
-  box-shadow: 0 10px 24px rgba(0, 0, 0, 0.14);
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
 }
 
 .asiati-brand-tagline {
@@ -16,8 +32,11 @@
   text-transform: uppercase;
 }
 
-.asiati-brand--compact .asiati-logo {
-  width: 92px;
+.asiati-brand--compact .asiati-logo-frame {
+  width: 84px;
+  height: 84px;
+  flex-basis: 84px;
+  padding: 7px;
 }
 
 .auth-mobile-brand .asiati-brand-tagline {
