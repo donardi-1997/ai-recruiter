@@ -13,10 +13,10 @@ env:
   NODE_VERSION: "24"
 
 jobs:
-  backend-tests:
-    name: Backend full suite (pytest x2)
+  backend-serial:
+    name: Backend diagnostic — serial
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 8
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -26,11 +26,49 @@ jobs:
       - run: |
           pip install --upgrade pip
           pip install -r requirements.txt
-          pip install pytest pytest-xdist alembic psycopg2-binary
-      - name: Run full backend suite
+          pip install pytest pytest-timeout alembic psycopg2-binary
+      - name: Run full backend suite serially with per-test timeout
         env:
           DATABASE_URL: "sqlite:///:memory:"
-        run: python -m pytest app/tests/ -n 2 --dist=loadfile -v --tb=short
+          PYTHONFAULTHANDLER: "1"
+        run: |
+          python -m pytest app/tests/ \
+            -vv \
+            --tb=short \
+            --maxfail=1 \
+            --timeout=45 \
+            --timeout-method=thread \
+            --durations=25
+
+  backend-parallel:
+    name: Backend diagnostic — xdist x2
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+      - run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pytest pytest-xdist pytest-timeout alembic psycopg2-binary
+      - name: Run full backend suite with xdist and per-test timeout
+        env:
+          DATABASE_URL: "sqlite:///:memory:"
+          PYTHONFAULTHANDLER: "1"
+        run: |
+          python -m pytest app/tests/ \
+            -n 2 \
+            --dist=loadfile \
+            -vv \
+            --tb=short \
+            --maxfail=1 \
+            --timeout=45 \
+            --timeout-method=thread \
+            --max-worker-restart=0 \
+            --durations=25
 
   postgres-smoke:
     name: PostgreSQL + Alembic
