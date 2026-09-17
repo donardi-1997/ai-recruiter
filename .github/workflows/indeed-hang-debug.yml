@@ -1,0 +1,38 @@
+name: Debug — candidate import evaluation hang
+
+on:
+  push:
+    branches:
+      - feat/indeed-email-resume-bridge
+
+permissions:
+  contents: read
+
+jobs:
+  isolated-test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+          cache: pip
+      - run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pytest pytest-xdist
+      - name: Reproduce exact test with faulthandler
+        env:
+          DATABASE_URL: "sqlite:///:memory:"
+        run: |
+          timeout 60s python -m pytest \
+            app/tests/test_candidate_import_evaluation_worker.py::test_transient_bedrock_error_stops_after_three_retries \
+            -vv -s --tb=long -o faulthandler_timeout=15
+      - name: Run full evaluation-worker file
+        env:
+          DATABASE_URL: "sqlite:///:memory:"
+        run: |
+          timeout 90s python -m pytest \
+            app/tests/test_candidate_import_evaluation_worker.py \
+            -vv -s --tb=long -o faulthandler_timeout=20
