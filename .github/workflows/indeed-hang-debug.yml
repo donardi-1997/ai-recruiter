@@ -9,7 +9,7 @@ permissions:
   contents: read
 
 jobs:
-  isolated-test:
+  full-suite-xdist:
     runs-on: ubuntu-latest
     timeout-minutes: 3
     steps:
@@ -22,17 +22,10 @@ jobs:
           pip install --upgrade pip
           pip install -r requirements.txt
           pip install pytest pytest-xdist
-      - name: Reproduce exact test with faulthandler
+      - name: Reproduce full-suite xdist hang with faulthandler
         env:
           DATABASE_URL: "sqlite:///:memory:"
         run: |
-          timeout 60s python -m pytest \
-            app/tests/test_candidate_import_evaluation_worker.py::test_transient_bedrock_error_stops_after_three_retries \
-            -vv -s --tb=long -o faulthandler_timeout=15
-      - name: Run full evaluation-worker file
-        env:
-          DATABASE_URL: "sqlite:///:memory:"
-        run: |
-          timeout 90s python -m pytest \
-            app/tests/test_candidate_import_evaluation_worker.py \
-            -vv -s --tb=long -o faulthandler_timeout=20
+          timeout 90s python -m pytest app/tests/ \
+            -n 2 --dist=loadfile -vv -s --tb=long \
+            -o faulthandler_timeout=20
