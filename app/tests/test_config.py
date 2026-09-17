@@ -95,3 +95,44 @@ def test_gmail_settings_default_to_disabled_unconfigured(monkeypatch):
     assert settings.user_id == "me"
     assert settings.query == "has:attachment"
     assert settings.allowed_senders == ()
+
+
+def test_indeed_resume_agent_settings_defaults(monkeypatch):
+    for key in (
+        "INDEED_RESUME_AGENT_SECRET_ID",
+        "INDEED_RESUME_AGENT_LEASE_SECONDS",
+        "INDEED_RESUME_AGENT_MAX_ATTEMPTS",
+        "INDEED_RESUME_AGENT_SENDER_DOMAINS",
+        "INDEED_RESUME_AGENT_RESUME_HOST_SUFFIXES",
+    ):
+        monkeypatch.delenv(key, raising=False)
+
+    settings = config.get_indeed_resume_agent_settings()
+
+    assert settings.secret_id == "/ai-recruiter/prod/indeed-resume-agent"
+    assert settings.lease_seconds == 600
+    assert settings.max_attempts == 3
+    assert settings.sender_domains == ("indeedemail.com",)
+    assert settings.resume_host_suffixes == ("indeed.com", "indeedemail.com")
+
+
+def test_indeed_resume_agent_settings_environment_overrides(monkeypatch):
+    monkeypatch.setenv("INDEED_RESUME_AGENT_SECRET_ID", "/custom/agent")
+    monkeypatch.setenv("INDEED_RESUME_AGENT_LEASE_SECONDS", "900")
+    monkeypatch.setenv("INDEED_RESUME_AGENT_MAX_ATTEMPTS", "5")
+    monkeypatch.setenv(
+        "INDEED_RESUME_AGENT_SENDER_DOMAINS",
+        " indeedemail.com , notify.indeed.test ",
+    )
+    monkeypatch.setenv(
+        "INDEED_RESUME_AGENT_RESUME_HOST_SUFFIXES",
+        "indeed.com,secure.indeed.test",
+    )
+
+    settings = config.get_indeed_resume_agent_settings()
+
+    assert settings.secret_id == "/custom/agent"
+    assert settings.lease_seconds == 900
+    assert settings.max_attempts == 5
+    assert settings.sender_domains == ("indeedemail.com", "notify.indeed.test")
+    assert settings.resume_host_suffixes == ("indeed.com", "secure.indeed.test")
