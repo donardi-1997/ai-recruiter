@@ -9,6 +9,7 @@ const navItems = [
   { to: "/jobs", label: "Vacantes", icon: "▤" },
   { to: "/candidates", label: "Candidatos", icon: "◎" },
   { to: "/ranking", label: "Ranking IA", icon: "↗" },
+  { to: "/integrations", label: "Integraciones", icon: "◇" },
 ];
 
 function Brand() {
@@ -36,7 +37,6 @@ function Navbar() {
     localStorage.removeItem("access_token");
     localStorage.removeItem("id_token");
     localStorage.removeItem("refresh_token");
-
     navigate("/login");
   }
 
@@ -69,17 +69,17 @@ function Navbar() {
           </div>
 
           <nav id="primary-navigation" className="navbar-links" aria-label="Navegación principal">
-          {navItems.map((item) => (
-            <NavLink
-              key={item.to}
-              to={item.to}
-              onClick={() => setOpen(false)}
-              className={({ isActive }) => `navbar-link ${isActive ? "active" : ""}`}
-            >
-              <span className="navbar-icon" aria-hidden="true">{item.icon}</span>
-              <span>{item.label}</span>
-            </NavLink>
-          ))}
+            {navItems.map((item) => (
+              <NavLink
+                key={item.to}
+                to={item.to}
+                onClick={() => setOpen(false)}
+                className={({ isActive }) => `navbar-link ${isActive ? "active" : ""}`}
+              >
+                <span className="navbar-icon" aria-hidden="true">{item.icon}</span>
+                <span>{item.label}</span>
+              </NavLink>
+            ))}
           </nav>
 
           <div className="nav-insight">

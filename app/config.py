@@ -9,6 +9,7 @@ CORS_ORIGINS = (
     "http://localhost:5173",
     "http://localhost:5174",
     "http://localhost:5175",
+    "http://3.23.27.223",
     "https://ai.adrianguerra.net",
     "https://air.adrianguerra.net",
 )
@@ -35,7 +36,11 @@ class IndeedSettings:
 
 @dataclass(frozen=True)
 class GmailSettings:
-    """OAuth-backed Gmail transport settings loaded exclusively from environment."""
+    """OAuth-backed Gmail transport settings.
+
+    Client credentials may be empty in the environment in production. The Gmail
+    integration composition layer overlays values read from Secrets Manager.
+    """
 
     enabled: bool
     client_id: str
@@ -53,6 +58,18 @@ class GmailSettings:
     @property
     def configured(self) -> bool:
         return bool(self.client_id and self.client_secret and self.refresh_token)
+
+
+@dataclass(frozen=True)
+class GmailOAuthSettings:
+    """Non-secret settings for the single corporate Gmail OAuth connection."""
+
+    secret_id: str
+    redirect_uri: str
+    frontend_return_url: str
+    authorization_url: str
+    token_url: str
+    state_max_age_seconds: int
 
 
 def get_aws_region() -> str:
@@ -86,7 +103,7 @@ def get_import_lease_timeout_seconds() -> int:
 
 
 def get_gmail_settings() -> GmailSettings:
-    """Return swappable Gmail OAuth settings without ever reading a mailbox password."""
+    """Return Gmail ingestion settings without ever reading a mailbox password."""
     allowed_senders = tuple(
         value.strip().casefold()
         for value in os.getenv("GMAIL_ALLOWED_SENDERS", "").split(",")
@@ -119,6 +136,33 @@ def get_gmail_settings() -> GmailSettings:
         ).rstrip("/"),
         request_timeout_seconds=float(
             os.getenv("GMAIL_REQUEST_TIMEOUT_SECONDS", "15")
+        ),
+    )
+
+
+def get_gmail_oauth_settings() -> GmailOAuthSettings:
+    """Return non-secret corporate Gmail OAuth settings."""
+    return GmailOAuthSettings(
+        secret_id=os.getenv(
+            "GMAIL_OAUTH_SECRET_ID",
+            "/ai-recruiter/prod/gmail-oauth",
+        ).strip(),
+        redirect_uri=os.getenv("GMAIL_OAUTH_REDIRECT_URI", "").strip(),
+        frontend_return_url=os.getenv(
+            "GMAIL_OAUTH_FRONTEND_RETURN_URL",
+            "http://3.23.27.223/integrations",
+        ).strip(),
+        authorization_url=os.getenv(
+            "GMAIL_AUTHORIZATION_URL",
+            "https://accounts.google.com/o/oauth2/v2/auth",
+        ).strip(),
+        token_url=os.getenv(
+            "GMAIL_TOKEN_URL",
+            "https://oauth2.googleapis.com/token",
+        ).strip(),
+        state_max_age_seconds=max(
+            60,
+            int(os.getenv("GMAIL_OAUTH_STATE_MAX_AGE_SECONDS", "600")),
         ),
     )
 

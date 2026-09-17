@@ -10,7 +10,7 @@ def test_frontend_local_readiness_is_retried_on_remote_host_before_success():
     workflow = (ROOT / ".github/workflows/deploy.yml").read_text(encoding="utf-8")
 
     start = workflow.index('echo "FRONTEND_IMAGE_OK=\\$FRONTEND_IMAGE"')
-    end = workflow.index('echo "DEPLOYMENT_FRONTEND_OK"', start)
+    end = workflow.index("DEPLOYMENT_FRONTEND_OK", start)
     readiness = workflow[start:end]
 
     # REMOTE_DEPLOY uses an unquoted heredoc, so command substitutions that must

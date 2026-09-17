@@ -1,85 +1,156 @@
-# AI Recruiter
+# AI Recruiter — ASIATI Talent Intelligence
 
-Aplicación web para gestionar vacantes y candidatos, cargar hojas de vida en PDF y evaluar la afinidad de cada perfil mediante inteligencia artificial generativa en AWS.
+Plataforma de reclutamiento para gestionar vacantes, candidatos e ingestión de hojas de vida, con evaluación y ranking asistidos por inteligencia artificial sobre AWS.
 
-La plataforma centraliza el proceso de selección: almacena los CV, los indexa en Amazon Bedrock Knowledge Bases y genera rankings, fortalezas, brechas, evidencias y recomendaciones para cada vacante.
+La aplicación centraliza el flujo de selección: recibe candidatos por carga manual, importación masiva e integraciones; almacena los documentos de forma duradera; los indexa en Amazon Bedrock Knowledge Bases; y genera evaluaciones versionadas con fortalezas, brechas, evidencia y ranking por vacante.
 
-**Aplicación:** [air.adrianguerra.net](https://air.adrianguerra.net)
+**Aplicación actual:** http://3.23.27.223
 
-## Capturas de pantalla
+**Health check:** http://3.23.27.223/api/health
 
-### Dashboard
+> El entorno actual utiliza una IP estática de Lightsail y HTTP mientras se define el dominio corporativo. El workload productivo se mantiene en `us-east-2`.
 
-![Dashboard de AI Recruiter](docs/screenshots/dashboard.png)
+## Funcionalidades principales
 
-### Vacantes
+- Registro con Amazon Cognito y confirmación administrativa automática; no requiere código de verificación por correo.
+- Inicio de sesión y aislamiento de datos por propietario autenticado.
+- Gestión de vacantes con perfil estructurado de evaluación y enriquecimiento asistido por IA.
+- Gestión de candidatos y asignación a vacantes.
+- Carga individual de CV y descarga controlada de documentos.
+- Importación masiva de PDF/DOCX/ZIP mediante S3 + SQS + worker asíncrono.
+- Resolución de identidad de candidatos y deduplicación por señales fuertes.
+- Ingesta de documentos en Amazon Bedrock Knowledge Bases.
+- Recuperación semántica mediante S3 Vectors.
+- Evaluación versionada de candidatos con Amazon Nova Lite.
+- Re-evaluación automática cuando cambia información relevante de una vacante.
+- Ranking por vacante con estados de evaluación y materialización persistente.
+- Integración con Indeed para publicación/sincronización y recuperación de candidatos.
+- Integración Gmail corporativa OAuth para recibir CVs desde un único buzón compartido.
+- Sincronización Gmail completa e incremental mediante `historyId`.
+- Filtros seguros de correo para evitar escanear indiscriminadamente todo el buzón.
 
-![Gestión de vacantes](docs/screenshots/vacantes.png)
-
-### Candidatos
-
-![Gestión de candidatos](docs/screenshots/candidatos.png)
-
-### Ranking IA
-
-![Ranking de candidatos asistido por IA](docs/screenshots/ranking.png)
-
-### Versión móvil
-
-| Dashboard | Vacantes |
-| :---: | :---: |
-| <img src="docs/screenshots/dashboard-mobile.png" alt="Dashboard móvil" width="360"> | <img src="docs/screenshots/vacantes-mobile.png" alt="Vacantes en móvil" width="360"> |
-
-| Candidatos | Ranking IA |
-| :---: | :---: |
-| <img src="docs/screenshots/candidatos-mobile.png" alt="Candidatos en móvil" width="360"> | <img src="docs/screenshots/ranking-mobile.png" alt="Ranking IA en móvil" width="360"> |
-
-## Funcionalidades
-
-- Registro, confirmación e inicio de sesión con Amazon Cognito.
-- Gestión de vacantes por usuario.
-- Carga, consulta, descarga y eliminación de CV en formato PDF.
-- Indexación de documentos mediante Amazon Bedrock Knowledge Bases.
-- Evaluación de candidatos contra los requisitos de una vacante.
-- Ranking por puntaje y clasificación de coincidencia.
-- Identificación de fortalezas, brechas y evidencia encontrada en el CV.
-- Comparación y resumen de candidatos por vacante.
-- Consulta del historial de evaluaciones.
-- Aislamiento de vacantes y candidatos por propietario autenticado.
-
-## Arquitectura
+## Arquitectura de producción
 
 ```mermaid
-flowchart LR
-    U[Usuario] --> LS[Lightsail]
-    LS --> NGINX[Nginx + React]
-    NGINX --> API[FastAPI]
+flowchart TD
+    U[Usuario] --> N[Nginx / React]
+    N --> API[FastAPI API]
+
+    subgraph LS[Amazon Lightsail - us-east-2]
+        N
+        API
+        W[Worker asíncrono]
+        PG[(PostgreSQL local)]
+    end
+
     API --> COG[Amazon Cognito]
-    API --> PG[PostgreSQL]
-    API --> S3CV[S3 - Hojas de vida]
-    S3CV --> KB[Bedrock Knowledge Base]
-    API --> KB
-    API --> LLM[Amazon Nova Lite]
+    API --> S3[S3 candidatos]
+    API --> SQ[SQS]
+    W --> SQ
+    W --> S3
+    API --> KB[Bedrock Knowledge Base]
+    W --> KB
+    KB --> VEC[S3 Vectors]
+    API --> NOVA[Amazon Nova Lite]
+    W --> NOVA
+
+    GH[GitHub Actions] -->|OIDC| AWS[AWS IAM]
+    LS -->|Roles Anywhere| AWS
+
+    GOOGLE[Google OAuth] --> APIGW[API Gateway HTTP API - us-east-2]
+    APIGW --> API
+    API --> SM[Secrets Manager]
 ```
 
-La aplicación se ejecuta en una instancia Lightsail con Docker. Nginx sirve el frontend React y enruta `/api/*` al backend FastAPI en la misma instancia. Cognito, PostgreSQL, S3 y Bedrock se mantienen como servicios administrados de AWS: contienen los datos actuales y no tienen un equivalente local compatible en Lightsail.
+### Runtime
 
-Para iniciar localmente la arquitectura simplificada:
+La producción se ejecuta en una instancia Lightsail `ai-recruiter-micro-prod` en `us-east-2` con IP estática. Docker ejecuta tres componentes principales:
 
-```powershell
-Copy-Item .env.example .env
-# Completa las variables de Cognito y configura credenciales AWS para Boto3.
-docker compose up --build -d
+- `ai-recruiter-web`: Nginx + SPA React.
+- `ai-recruiter-api`: FastAPI.
+- `ai-recruiter-worker`: procesamiento asíncrono de importaciones, ingestión y re-evaluaciones.
+
+PostgreSQL se ejecuta localmente en la misma instancia Lightsail. No se utiliza Amazon RDS en la arquitectura productiva actual.
+
+### Identidad AWS
+
+- GitHub Actions obtiene credenciales temporales mediante GitHub OIDC.
+- La instancia Lightsail usa IAM Roles Anywhere para consumir AWS sin access keys persistentes.
+- API y worker usan el rol `AiRecruiterBedrockRuntimeRole`.
+- Las imágenes se publican en Amazon ECR.
+
+## Gmail corporativo
+
+La primera versión admite **una sola cuenta Gmail corporativa compartida**.
+
+Desde **Integraciones** el usuario puede:
+
+1. Consultar el estado de la integración.
+2. Iniciar OAuth con Google.
+3. Ver qué buzón corporativo está conectado.
+4. Ejecutar una sincronización manual.
+5. Desconectar el buzón.
+
+La aplicación solicita únicamente el scope:
+
+```text
+https://www.googleapis.com/auth/gmail.readonly
 ```
 
-La aplicación queda disponible en `http://localhost` y la API en `http://localhost/api`.
+Los secretos OAuth nunca se envían al frontend. `client_id`, `client_secret`, `refresh_token`, configuración operativa y el secreto de firma de `state` se administran mediante AWS Secrets Manager.
 
-## Tecnologías
+El callback HTTPS de producción se expone mediante un HTTP API regional en `us-east-2`:
+
+```text
+https://3fkmecjfig.execute-api.us-east-2.amazonaws.com/api/integrations/gmail/oauth/callback
+```
+
+Ese URI debe registrarse exactamente como **Authorized redirect URI** en el cliente OAuth Web de Google Cloud.
+
+### Endpoints Gmail
+
+| Endpoint | Uso |
+| --- | --- |
+| `GET /api/integrations/gmail/status` | Estado y metadata pública de la integración |
+| `GET /api/integrations/gmail/oauth/start` | Construye la autorización Google con `state` firmado |
+| `GET /api/integrations/gmail/oauth/callback` | Callback protegido por `state` HMAC temporal |
+| `POST /api/integrations/gmail/sync` | Sincronización manual del buzón |
+| `DELETE /api/integrations/gmail` | Elimina el grant del buzón conservando el cliente OAuth |
+
+La sincronización solo se habilita cuando existe un filtro seguro mediante `allowed_senders` o una consulta Gmail explícita con `from:`.
+
+## Flujo de candidatos
+
+```text
+Fuente
+  ├─ carga individual
+  ├─ importación masiva
+  ├─ Indeed
+  └─ Gmail corporativo
+        ↓
+Candidate Ingestion Core
+        ↓
+S3 / persistencia duradera
+        ↓
+SQS + worker
+        ↓
+resolución de identidad
+        ↓
+asignación a vacante
+        ↓
+Bedrock Knowledge Base / S3 Vectors
+        ↓
+evaluación versionada
+        ↓
+ranking
+```
+
+## Stack
 
 ### Frontend
 
 - React 19
-- Vite 8
+- Vite
 - React Router
 - Axios
 - CSS
@@ -89,67 +160,56 @@ La aplicación queda disponible en `http://localhost` y la API en `http://localh
 - Python 3.10
 - FastAPI
 - Uvicorn
-- Pydantic
+- SQLAlchemy
+- Alembic
+- PostgreSQL
 - Boto3
 - LangChain AWS
-- SQLAlchemy
-- PostgreSQL
+- HTTPX
 
-### AWS e infraestructura
+### AWS
 
-- Amazon Cognito
-- Amazon Bedrock y Amazon Nova Lite
-- Bedrock Knowledge Bases
-- Amazon S3
-- Amazon RDS (PostgreSQL)
 - Amazon Lightsail
+- Amazon ECR
+- Amazon Cognito
+- Amazon S3
+- Amazon SQS
+- Amazon Bedrock
+- Bedrock Knowledge Bases
+- S3 Vectors
+- AWS Secrets Manager
+- API Gateway HTTP API
+- IAM Roles Anywhere
+- GitHub OIDC
 - AWS CloudFormation
 
-## Estructura del proyecto
+## Estructura
 
 ```text
 ai-recruiter/
-|-- .github/workflows/       # CI/CD del frontend y de la API
-|-- frontend-react/          # SPA en React y Vite
-|   |-- public/
-|   `-- src/
-|       |-- api/             # Cliente HTTP y token de acceso
-|       |-- auth/            # Inicio de sesión y registro
-|       |-- components/      # Layout, navegación y pie de página
-|       `-- pages/           # Dashboard, vacantes, candidatos y ranking
-|-- iam/                     # Políticas IAM para despliegue
-|-- infra/                   # Infraestructura CloudFormation y scripts
-|-- scripts/                 # Scripts de despliegue y utilidades
-|-- tests/                   # Pruebas unitarias (app/tests/)
-|-- app/                     # Backend FastAPI modular
-|   |-- domains/             # Dominios de negocio (jobs, candidates, evaluations, ranking)
-|   |-- infrastructure/      # Infraestructura AWS (Bedrock, storage)
-|   `-- main.py              # Punto de entrada FastAPI
-|-- Dockerfile               # Imagen del backend
-|-- requirements.txt         # Dependencias de Python
-|-- docker-compose.yml       # Desarrollo local
+├── .github/workflows/       # CI/CD y bootstrap de producción
+├── app/
+│   ├── domains/             # Lógica de candidatos, vacantes, ranking e ingestión
+│   ├── infrastructure/      # AWS, storage, OAuth y persistencia externa
+│   ├── integrations/        # Adaptadores Gmail/Indeed y otras fuentes
+│   ├── tests/               # Tests backend y contratos de despliegue
+│   └── main.py
+├── frontend-react/
+│   └── src/
+│       ├── api/
+│       ├── auth/
+│       ├── components/
+│       └── pages/
+├── infra/                   # CloudFormation
+├── scripts/                 # Deploy, worker y operaciones
+├── Dockerfile
+├── docker-compose.yml
+└── requirements.txt
 ```
 
-## Requisitos
+## Desarrollo local
 
-- Python 3.10 o superior compatible.
-- Node.js 20 o superior y npm.
-- Credenciales de AWS válidas disponibles para Boto3.
-- Acceso a los recursos AWS configurados por la aplicación.
-- Docker, opcional para ejecutar el backend en un contenedor.
-
-## Configuración local
-
-### 1. Clonar el repositorio
-
-```bash
-git clone <URL_DEL_REPOSITORIO>
-cd ai-recruiter
-```
-
-### 2. Configurar el backend
-
-En Windows PowerShell:
+### Backend
 
 ```powershell
 py -3.10 -m venv .venv
@@ -158,137 +218,90 @@ python -m pip install --upgrade pip
 pip install -r requirements.txt
 ```
 
-Crea un archivo `.env` en la raíz:
+Variables mínimas de ejemplo:
 
 ```dotenv
 AWS_REGION=us-east-2
 COGNITO_USER_POOL_ID=<user-pool-id>
 COGNITO_CLIENT_ID=<app-client-id>
-DATABASE_URL=postgresql://postgres:postgres@host.docker.internal:5432/ai_recruiter
+DATABASE_URL=postgresql://postgres:postgres@localhost:5432/ai_recruiter
 ```
 
-La aplicación obtiene las credenciales de AWS mediante la cadena de proveedores estándar de Boto3. Para desarrollo local puedes usar un perfil configurado con AWS CLI:
-
-```powershell
-aws configure
-aws sts get-caller-identity
-```
-
-No almacenes claves de acceso, secretos ni tokens en Git.
-
-Inicia la API:
+Para Gmail local pueden utilizarse variables `GMAIL_*`; en producción la configuración se superpone desde Secrets Manager.
 
 ```powershell
 uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 ```
 
-La documentación interactiva queda disponible en:
+Endpoints locales útiles:
 
-- Swagger UI: [http://localhost:8000/docs](http://localhost:8000/docs)
-- OpenAPI: [http://localhost:8000/openapi.json](http://localhost:8000/openapi.json)
-- Health check: [http://localhost:8000/api/health](http://localhost:8000/api/health)
-
-### 3. Configurar el frontend
-
-En otra terminal:
-
-```powershell
-cd frontend-react
-npm ci
-```
-
-Crea `frontend-react/.env.local`:
-
-```dotenv
-VITE_API_URL=http://localhost:8000/api
-```
-
-Inicia Vite:
-
-```powershell
-npm run dev
-```
-
-Abre [http://localhost:5173](http://localhost:5173). El backend ya permite solicitudes CORS desde los puertos locales usados por Vite.
-
-## Ejecución con Docker
-
-Construye la imagen del backend:
-
-```powershell
-docker build -t ai-recruiter-api .
-```
-
-Ejecuta el contenedor:
-
-```powershell
-docker run --rm -p 8000:8000 --env-file .env ai-recruiter-api
-```
-
-El contenedor también necesita credenciales de AWS. En producción, Lightsail las proporciona mediante Roles Anywhere; en desarrollo utiliza un mecanismo de credenciales seguro y evita incluir secretos en la imagen.
-
-## Flujo principal
-
-1. El usuario se registra o inicia sesión mediante Cognito.
-2. Crea una vacante con su descripción y requisitos.
-3. Carga el CV de un candidato en PDF.
-4. La API almacena el documento y sus metadatos en S3.
-5. Bedrock inicia la ingesta del documento en la base de conocimiento.
-6. La aplicación recupera evidencia del CV y la compara con la vacante.
-7. El resultado se guarda en PostgreSQL y se presenta como puntaje, recomendación, fortalezas y brechas.
-
-## API
-
-Todas las rutas funcionales usan el prefijo `/api`. Salvo registro, inicio de sesión, confirmación y health check, los endpoints requieren el encabezado:
-
-```http
-Authorization: Bearer <access-token>
-```
-
-Grupos principales:
-
-| Grupo | Capacidades |
-| --- | --- |
-| `/api/auth` | Registro, confirmación, login y validación de sesión |
-| `/api/jobs` | Vacantes, evaluaciones, ranking, resumen y comparación |
-| `/api/candidates` | Carga, consulta, descarga, eliminación y evaluación de candidatos |
-
-Consulta Swagger UI para conocer los parámetros y esquemas vigentes de cada endpoint.
-
-## Validación
-
-### Backend
-
-```powershell
-python -m py_compile app/main.py
-```
+- Swagger: `http://localhost:8000/docs`
+- OpenAPI: `http://localhost:8000/openapi.json`
+- Health: `http://localhost:8000/api/health`
 
 ### Frontend
 
 ```powershell
 cd frontend-react
+npm ci
+npm run dev
+```
+
+Por defecto Vite queda disponible en `http://localhost:5173`.
+
+## Validación
+
+Backend:
+
+```powershell
+python -m pytest app/tests/ -v
+```
+
+Frontend:
+
+```powershell
+cd frontend-react
 npm run lint
+npm test
 npm run build
 ```
 
+CI también ejecuta un smoke test de PostgreSQL que aplica Alembic hasta `head` y valida el esquema resultante.
+
 ## Despliegue
 
-El repositorio contiene dos flujos de GitHub Actions:
+Los cambios pasan por GitHub Actions antes de producción:
 
-- **API CI/CD:** valida Python y Docker, publica la imagen en Amazon ECR y despliega a Lightsail mediante `scripts/deploy-api.sh`.
-- **Frontend CI/CD:** instala dependencias, compila React, construye imagen Docker y despliega a Lightsail con invalidación de CloudFront.
+1. Tests backend y frontend.
+2. Smoke de PostgreSQL/Alembic.
+3. Autenticación GitHub → AWS mediante OIDC.
+4. Build de imágenes backend/frontend.
+5. Push a ECR con tag inmutable por SHA.
+6. Migraciones antes de reemplazar la API.
+7. Deploy API + worker + frontend en Lightsail.
+8. Health checks locales y públicos.
+9. Promoción del artefacto validado.
 
-Los despliegues de producción se ejecutan al enviar cambios a `main` en las rutas correspondientes. Las credenciales de GitHub se intercambian por permisos temporales de AWS mediante OIDC; el entorno de producción debe definir `AWS_DEPLOY_ROLE_ARN` como variable del repositorio o del entorno.
-
-La plantilla `infra/frontend-static.yml` administra el bucket privado del frontend, el Origin Access Control, la distribución de CloudFront, la reescritura de rutas de la SPA y la conexión HTTPS con el origen de la API.
+La instancia obtiene permisos AWS mediante Roles Anywhere; no se almacenan access keys permanentes en GitHub ni dentro de las imágenes.
 
 ## Seguridad
 
-- La API valida tokens JWT emitidos por Cognito.
-- Los registros se filtran por el identificador del usuario autenticado.
-- El bucket del frontend bloquea el acceso público y CloudFront usa Origin Access Control.
-- El backend obtiene permisos mediante roles IAM y Roles Anywhere, sin credenciales incrustadas en la imagen.
-- Los secretos y valores sensibles deben mantenerse fuera del repositorio.
+- JWT de Cognito en endpoints autenticados.
+- Registro Cognito autoconfirmado por backend para evitar flujo de confirmación por correo.
+- Aislamiento de datos por `owner_sub`.
+- OAuth Gmail protegido con `state` firmado y expiración corta.
+- Refresh tokens y client secret fuera de Git y fuera del navegador.
+- Filtro de Gmail obligatorio antes de sincronizar.
+- S3 privado y URLs firmadas de corta duración cuando aplica.
+- SQS con procesamiento idempotente y recuperación de trabajos.
+- Roles Anywhere para credenciales temporales del host.
+- GitHub OIDC para CI/CD sin access keys persistentes.
+
+## Estado actual de Gmail OAuth
+
+La infraestructura del callback y Secrets Manager puede existir antes de cargar las credenciales Google. Mientras `client_id` y `client_secret` estén vacíos, la pantalla **Integraciones** muestra Gmail como no configurado y mantiene la sincronización bloqueada de forma segura.
+
+Para activar la integración deben configurarse el cliente OAuth Web de Google y un filtro real del buzón corporativo. No se deben inventar remitentes ni ampliar la consulta a todo el buzón.
 
 ## Licencia
 
