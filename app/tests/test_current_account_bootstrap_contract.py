@@ -18,6 +18,11 @@ def _combined() -> str:
     return "\n".join(path.read_text(encoding="utf-8") for path in TARGETS)
 
 
+def _trigger_block(path: Path) -> str:
+    content = path.read_text(encoding="utf-8")
+    return content.split("permissions:", 1)[0]
+
+
 def test_previous_aws_account_and_generated_resource_ids_are_not_embedded():
     content = _combined()
     for stale in (
@@ -56,6 +61,36 @@ def test_lightsail_ssh_uses_temporary_certificate_for_every_connection():
     assert ".accessDetails.certKey" in workflow
     assert "LIGHTSAIL_CERT_FILE" in workflow
     assert "CertificateFile=" in workflow
+
+
+def test_lightsail_temporary_key_and_certificate_are_private():
+    workflow = (ROOT / ".github" / "workflows" / "deploy.yml").read_text(
+        encoding="utf-8"
+    )
+    assert 'chmod 600 "$KEY_FILE"' in workflow
+    assert 'chmod 600 "$CERT_FILE"' in workflow
+    assert 'chmod 644 "$CERT_FILE"' not in workflow
+
+
+def test_only_deploy_runs_automatically_on_main():
+    workflows = ROOT / ".github" / "workflows"
+    deploy_trigger = _trigger_block(workflows / "deploy.yml")
+    assert "push:" in deploy_trigger
+    assert "branches: [main]" in deploy_trigger
+
+    ci_trigger = _trigger_block(workflows / "ci.yml")
+    assert "pull_request:" in ci_trigger
+    assert "push:" not in ci_trigger
+
+    for filename in (
+        "bootstrap-prod.yml",
+        "bootstrap-recovery.yml",
+        "fix-runtime-key-owner.yml",
+        "nano-diagnostics.yml",
+    ):
+        trigger = _trigger_block(workflows / filename)
+        assert "workflow_dispatch:" in trigger
+        assert "push:" not in trigger
 
 
 def test_deploy_has_no_cloudfront_runtime_dependency():
