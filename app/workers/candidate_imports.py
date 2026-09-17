@@ -60,6 +60,11 @@ PUBLIC_NO_USABLE_CANDIDATES_MESSAGE = (
 )
 
 
+def _sleep(seconds: float) -> None:
+    """Sleep without exposing the stdlib time module as a test patch point."""
+    time.sleep(seconds)
+
+
 class BatchMissing(Exception):
     """The queued batch was deleted before its SQS message was consumed."""
 
@@ -510,7 +515,7 @@ def _run_ingestion_stage(
             )
             return
 
-        time.sleep(max(0.0, poll_interval_seconds))
+        _sleep(max(0.0, poll_interval_seconds))
 
 
 def _successful_candidate_ids(db: Session, batch) -> list[str]:
@@ -618,7 +623,7 @@ def _evaluate_candidate_with_retries(
             return
         if attempt >= len(EVALUATION_RETRY_DELAYS):
             return
-        time.sleep(EVALUATION_RETRY_DELAYS[attempt])
+        _sleep(EVALUATION_RETRY_DELAYS[attempt])
 
 
 def _run_evaluation_stage(db: Session, batch) -> None:
@@ -714,7 +719,7 @@ def _run_ranking_stage(db: Session, batch) -> None:
                     error_message=PUBLIC_RANKING_FAILURE_MESSAGE,
                 )
                 return
-            time.sleep(RANKING_RETRY_DELAYS[attempt])
+            _sleep(RANKING_RETRY_DELAYS[attempt])
         except RankingJobNotFound:
             db.rollback()
             batch = repository.get_batch_for_worker(db, batch.id)

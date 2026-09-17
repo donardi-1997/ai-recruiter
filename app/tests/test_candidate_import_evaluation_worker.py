@@ -440,7 +440,7 @@ def test_transient_bedrock_error_retries_then_succeeds(
 
     monkeypatch.setattr(worker, "SessionLocal", db_factory)
     sleeps = []
-    monkeypatch.setattr(worker.time, "sleep", lambda seconds: sleeps.append(seconds))
+    monkeypatch.setattr(worker, "_sleep", lambda seconds: sleeps.append(seconds))
     calls = 0
 
     def _evaluate(db, *, candidate_id, job_id, owner_sub):
@@ -485,7 +485,7 @@ def test_transient_bedrock_error_stops_after_three_retries(
 
     monkeypatch.setattr(worker, "SessionLocal", db_factory)
     sleeps = []
-    monkeypatch.setattr(worker.time, "sleep", lambda seconds: sleeps.append(seconds))
+    monkeypatch.setattr(worker, "_sleep", lambda seconds: sleeps.append(seconds))
     calls = 0
 
     def _evaluate(db, *, candidate_id, job_id, owner_sub):
@@ -529,7 +529,7 @@ def test_permanent_evaluation_error_is_not_retried(
 
     monkeypatch.setattr(worker, "SessionLocal", db_factory)
     sleeps = []
-    monkeypatch.setattr(worker.time, "sleep", lambda seconds: sleeps.append(seconds))
+    monkeypatch.setattr(worker, "_sleep", lambda seconds: sleeps.append(seconds))
     calls = 0
 
     def _evaluate(db, *, candidate_id, job_id, owner_sub):
