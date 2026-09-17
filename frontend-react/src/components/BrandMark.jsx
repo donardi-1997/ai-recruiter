@@ -1,3 +1,5 @@
+import "./BrandMark.css";
+
 function BrandMark({ compact = false }) {
   return (
     <span className={`asiati-brand ${compact ? "asiati-brand--compact" : ""}`}>
