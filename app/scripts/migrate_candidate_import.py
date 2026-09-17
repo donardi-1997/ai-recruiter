@@ -1,4 +1,4 @@
-"""Safely adopt and upgrade production to candidate-import revision 003."""
+"""Safely adopt the legacy production baseline and upgrade Alembic to head."""
 
 from __future__ import annotations
 
@@ -7,12 +7,14 @@ from pathlib import Path
 from alembic import command
 from alembic.config import Config
 from alembic.runtime.migration import MigrationContext
+from alembic.script import ScriptDirectory
+from alembic.script.revision import ResolutionError
 from sqlalchemy import inspect
 
 from app.db import get_engine
 
 BASELINE_REVISION = "002"
-TARGET_REVISION = "003"
+TARGET_REVISION = "head"
 REQUIRED_BASELINE_COLUMNS = {
     "candidates": {"owner_sub"},
     "jobs": {"owner_sub"},
@@ -50,26 +52,29 @@ def database_has_current_baseline() -> bool:
     return True
 
 
+def revision_is_known(revision: str) -> bool:
+    """Return whether the revision exists in the migration graph shipped with the app."""
+    scripts = ScriptDirectory.from_config(_alembic_config())
+    try:
+        scripts.get_revision(revision)
+    except ResolutionError:
+        return False
+    return True
+
+
 def stamp(revision: str) -> None:
     """Stamp a verified pre-Alembic live baseline without running old DDL."""
     command.stamp(_alembic_config(), revision)
 
 
 def upgrade(revision: str) -> None:
-    """Upgrade the configured database to one explicit revision."""
+    """Upgrade the configured database to the requested Alembic revision."""
     command.upgrade(_alembic_config(), revision)
 
 
 def ensure_candidate_import_schema() -> None:
-    """Reach revision 003 without guessing about an unknown production schema."""
+    """Adopt the known legacy baseline when needed and otherwise migrate to head."""
     current = get_current_revision()
-
-    if current == TARGET_REVISION:
-        return
-
-    if current == BASELINE_REVISION:
-        upgrade(TARGET_REVISION)
-        return
 
     if current is None:
         if not database_has_current_baseline():
@@ -77,12 +82,12 @@ def ensure_candidate_import_schema() -> None:
                 "Unrecognized database baseline; refusing to stamp migration 002."
             )
         stamp(BASELINE_REVISION)
-        upgrade(TARGET_REVISION)
-        return
+    elif not revision_is_known(current):
+        raise RuntimeError(
+            f"Unsupported Alembic revision {current!r}; refusing automatic migration."
+        )
 
-    raise RuntimeError(
-        f"Unsupported Alembic revision {current!r}; refusing automatic migration."
-    )
+    upgrade(TARGET_REVISION)
 
 
 def main() -> None:
