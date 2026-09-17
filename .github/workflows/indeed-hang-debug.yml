@@ -10,7 +10,6 @@ permissions:
 
 jobs:
   apply-fix-and-test:
-    if: ${{ !contains(github.event.head_commit.message, 'fix: release evaluation coordinator transaction') }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -33,6 +32,10 @@ jobs:
 
           path = Path('app/workers/candidate_imports.py')
           text = path.read_text(encoding='utf-8')
+          marker = '# Snapshot ORM-backed scalars before releasing the coordinator session.'
+          if marker in text:
+              print('fix already present')
+              raise SystemExit(0)
 
           old_head = '''    candidate_ids = _successful_candidate_ids(db, batch)\n    outstanding = [\n        candidate_id\n        for candidate_id in candidate_ids\n        if not _terminal_evaluation_for_batch(db, batch, candidate_id)[0]\n    ]\n\n    if outstanding:\n        max_workers = max(1, int(get_import_evaluation_concurrency()))\n'''
           new_head = '''    # Snapshot ORM-backed scalars before releasing the coordinator session.\n    # The reads below autobegin a transaction; keeping it open while child\n    # sessions write can deadlock SQLite and unnecessarily retain a DB snapshot.\n    batch_id = batch.id\n    job_id = batch.job_id\n    owner_sub = batch.owner_sub\n\n    candidate_ids = _successful_candidate_ids(db, batch)\n    outstanding = [\n        candidate_id\n        for candidate_id in candidate_ids\n        if not _terminal_evaluation_for_batch(db, batch, candidate_id)[0]\n    ]\n\n    if outstanding:\n        db.rollback()\n        max_workers = max(1, int(get_import_evaluation_concurrency()))\n'''
@@ -60,8 +63,12 @@ jobs:
             app/tests/test_candidate_import_evaluation_transaction_boundary.py \
             app/tests/test_candidate_import_evaluation_worker.py \
             -q --tb=short
-      - name: Commit tested fix
+      - name: Commit tested fix if needed
         run: |
+          if git diff --quiet -- app/workers/candidate_imports.py; then
+            echo "No production change to commit"
+            exit 0
+          fi
           git config user.name "Adrian Felipe Guerra"
           git config user.email "adrianguerra9703@gmail.com"
           git add app/workers/candidate_imports.py
