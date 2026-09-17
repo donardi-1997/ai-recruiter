@@ -112,6 +112,22 @@ def test_mutating_other_owner_task_returns_404(api):
     assert response.status_code == 404
 
 
+def test_wrong_lease_token_returns_409(api):
+    client, db = api
+    task = _task(db, owner_sub="owner-a", status="CLAIMED")
+    task.lease_token = "current-lease"
+    task.lease_expires_at = datetime(2099, 1, 1, tzinfo=timezone.utc)
+    db.commit()
+
+    response = client.post(
+        f"/api/agents/indeed-resume/{task.id}/heartbeat",
+        headers={"X-ASIATI-Lease-Token": "stale-lease"},
+    )
+
+    assert response.status_code == 409
+    assert "lease" in response.json()["detail"].casefold()
+
+
 def test_claim_serializes_ephemeral_resume_url_and_lease(api, monkeypatch):
     from app.domains.candidate_ingestion import indeed_email_agent_service as service
 
