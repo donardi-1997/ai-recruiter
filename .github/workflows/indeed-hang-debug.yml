@@ -26,6 +26,6 @@ jobs:
         env:
           DATABASE_URL: "sqlite:///:memory:"
         run: |
-          timeout 90s python -m pytest app/tests/ \
+          timeout -k 5s 60s python -m pytest app/tests/ \
             -n 2 --dist=loadfile -vv -s --tb=long \
-            -o faulthandler_timeout=20
+            -o faulthandler_timeout=15
