@@ -10,6 +10,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.domains.candidate_ingestion import repository
+from app.domains.candidate_ingestion.indeed_email_service import discover_indeed_email
 from app.domains.candidate_ingestion.models import CandidateIngestionEvent
 from app.integrations.email_ingestion.parser import parse_gmail_message
 from app.infrastructure.ingestion.storage import EmailIngestionStorage
@@ -72,6 +73,20 @@ def ingest_gmail_message(
         return EmailIngestionResult(event=_refresh_event(db, existing), created=False)
 
     raw_message = mailbox_client.get_message(message_id)
+
+    if normalized_provider == "INDEED":
+        discovered = discover_indeed_email(
+            db,
+            owner_sub=owner_sub,
+            source_account=normalized_source_account,
+            raw_message=raw_message,
+        )
+        if discovered is not None:
+            return EmailIngestionResult(
+                event=_refresh_event(db, discovered.event),
+                created=discovered.created,
+            )
+
     parsed = parse_gmail_message(
         raw_message,
         allowed_senders=allowed_senders,
