@@ -60,6 +60,18 @@ def test_revision_003_is_noop(monkeypatch):
     assert calls == []
 
 
+def test_revision_009_is_accepted_and_migrated_to_head(monkeypatch):
+    migrate = _migrate()
+    calls = []
+    monkeypatch.setattr(migrate, "get_current_revision", lambda: "009")
+    monkeypatch.setattr(migrate, "upgrade", lambda revision: calls.append(("upgrade", revision)))
+    monkeypatch.setattr(migrate, "stamp", lambda revision: calls.append(("stamp", revision)))
+
+    migrate.ensure_candidate_import_schema()
+
+    assert calls == [("upgrade", "head")]
+
+
 def test_unknown_revision_aborts_without_downgrade(monkeypatch):
     migrate = _migrate()
     calls = []
