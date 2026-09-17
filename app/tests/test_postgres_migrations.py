@@ -8,6 +8,19 @@ from alembic import command
 from alembic.config import Config
 from sqlalchemy import create_engine, inspect, text
 
+import app.models  # noqa: F401 - register ORM tables in Base.metadata
+from app.db import Base
+
+
+CORE_TABLES = {
+    "candidates",
+    "jobs",
+    "job_candidates",
+    "evaluations",
+    "rankings",
+    "ranking_items",
+}
+
 
 def _postgres_url() -> str:
     return os.getenv("DATABASE_URL", "")
@@ -43,27 +56,17 @@ def test_alembic_head_builds_current_postgres_schema():
             "company_contexts",
         }.issubset(tables)
 
-        job_columns = {column["name"] for column in inspector.get_columns("jobs")}
-        assert {
-            "country_code",
-            "city",
-            "employment_type",
-            "public_slug",
-            "published_at",
-            "evaluation_version",
-            "evaluation_profile",
-            "updated_at",
-        }.issubset(job_columns)
-
-        evaluation_columns = {
-            column["name"] for column in inspector.get_columns("evaluations")
-        }
-        assert "job_evaluation_version" in evaluation_columns
-
-        assignment_columns = {
-            column["name"] for column in inspector.get_columns("job_candidates")
-        }
-        assert {"application_status", "status_changed_at"}.issubset(assignment_columns)
+        for table_name in sorted(CORE_TABLES):
+            assert table_name in tables
+            database_columns = {
+                column["name"] for column in inspector.get_columns(table_name)
+            }
+            orm_columns = set(Base.metadata.tables[table_name].columns.keys())
+            missing_columns = orm_columns - database_columns
+            assert not missing_columns, (
+                f"Alembic head is missing ORM columns for {table_name}: "
+                f"{sorted(missing_columns)}"
+            )
 
         resume_columns = {
             column["name"] for column in inspector.get_columns("indeed_resume_ingestions")
@@ -123,6 +126,6 @@ def test_alembic_head_builds_current_postgres_schema():
             revision = connection.execute(
                 text("SELECT version_num FROM alembic_version")
             ).scalar_one()
-        assert revision == "009"
+        assert revision == "010"
     finally:
         engine.dispose()
