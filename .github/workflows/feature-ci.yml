@@ -11,7 +11,6 @@ permissions:
 jobs:
   focused-feature-tests:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -24,11 +23,47 @@ jobs:
           pip install pytest
       - env:
           DATABASE_URL: "sqlite:///:memory:"
-        run: >-
-          python -m pytest
-          app/tests/test_indeed_agent_routes.py
-          app/tests/test_indeed_agent_upload.py
-          -q --tb=short --maxfail=20
+        run: |
+          python -m pytest -q --tb=short \
+            app/tests/test_indeed_email_parser.py \
+            app/tests/test_indeed_email_discovery.py \
+            app/tests/test_indeed_email_resume_tasks.py \
+            app/tests/test_indeed_email_resume_leases.py \
+            app/tests/test_indeed_agent_auth.py \
+            app/tests/test_indeed_agent_routes.py \
+            app/tests/test_indeed_agent_upload.py \
+            app/tests/test_gmail_safe_configuration.py \
+            app/tests/test_gmail_runtime_secret.py
+
+  shared-path-regressions:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+          cache: pip
+      - run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pytest
+      - env:
+          DATABASE_URL: "sqlite:///:memory:"
+        run: |
+          python -m pytest -q --tb=short \
+            app/tests/test_email_ingestion_parser.py \
+            app/tests/test_email_ingestion_service.py \
+            app/tests/test_gmail_mailbox_sync.py \
+            app/tests/test_gmail_history_recovery.py \
+            app/tests/test_gmail_incremental_transport.py \
+            app/tests/test_candidate_ingestion_job_resolution.py \
+            app/tests/test_candidate_ingestion_worker.py \
+            app/tests/test_candidate_ingestion_dispatcher.py \
+            app/tests/test_indeed_resume_download.py \
+            app/tests/test_indeed_resume_ingestion.py \
+            app/tests/test_indeed_resume_queue.py \
+            app/tests/test_indeed_resume_routes.py \
+            app/tests/test_indeed_resume_worker.py
 
   backend-tests:
     runs-on: ubuntu-latest
@@ -75,3 +110,56 @@ jobs:
       - env:
           DATABASE_URL: "postgresql://postgres:postgres@localhost:5432/ai_recruiter_test"
         run: python -m pytest app/tests/test_postgres_migrations.py -q --tb=short
+
+  repository-hygiene:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Check whitespace and patch integrity
+        run: git diff --check origin/main...HEAD
+      - name: List files containing credential field names without exposing values
+        shell: bash
+        run: |
+          set -euo pipefail
+          git grep -lE '(client_secret|refresh_token|X-ASIATI-Agent-Token|token_sha256)' -- \
+            ':!docs/superpowers/plans/*' ':!app/tests/*' || true
+      - name: Reject common committed secret-value signatures in changed production files
+        shell: bash
+        run: |
+          python - <<'PY'
+          import re
+          import subprocess
+          from pathlib import Path
+
+          changed = subprocess.check_output(
+              ["git", "diff", "--name-only", "origin/main...HEAD"],
+              text=True,
+          ).splitlines()
+          excluded = ("app/tests/", "docs/superpowers/plans/")
+          patterns = {
+              "aws_access_key": re.compile(r"AKIA[0-9A-Z]{16}"),
+              "google_api_key": re.compile(r"AIza[0-9A-Za-z_-]{30,}"),
+              "google_oauth_secret": re.compile(r"GOCSPX-[0-9A-Za-z_-]{10,}"),
+              "openai_key": re.compile(r"sk-(?:proj-)?[0-9A-Za-z_-]{20,}"),
+          }
+          hits = []
+          for name in changed:
+              if name.startswith(excluded):
+                  continue
+              path = Path(name)
+              if not path.is_file():
+                  continue
+              try:
+                  text = path.read_text(encoding="utf-8")
+              except UnicodeDecodeError:
+                  continue
+              for label, pattern in patterns.items():
+                  if pattern.search(text):
+                      hits.append(f"{name}: potential {label}")
+          if hits:
+              print("\n".join(hits))
+              raise SystemExit(1)
+          print("No common secret-value signatures found in changed production files.")
+          PY
