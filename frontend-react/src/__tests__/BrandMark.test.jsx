@@ -12,4 +12,12 @@ describe("ASIATI brand mark", () => {
     const logo = screen.getByRole("img", { name: "ASIATI" });
     expect(logo).toHaveAttribute("src", "/asiati-logo.svg");
   });
+
+  it("renders the logo inside a circular frame", () => {
+    render(<BrandMark />);
+
+    const logo = screen.getByRole("img", { name: "ASIATI" });
+    expect(logo.parentElement).toHaveClass("asiati-logo-frame");
+    expect(logo.parentElement).toHaveClass("asiati-logo-frame--round");
+  });
 });
