@@ -55,3 +55,15 @@ def test_restrictive_from_query_can_be_used_without_separate_allowlist(monkeypat
         query="from:(alerts@example.com) has:attachment",
     )
     assert gmail_integration.is_safe_mailbox_filter(settings) is True
+
+
+def test_indeed_link_discovery_query_is_safe_without_attachment_or_allowlist(monkeypatch):
+    settings = _settings(
+        monkeypatch,
+        query="from:indeedemail.com",
+        allowed_senders="",
+    )
+    assert settings.query == "from:indeedemail.com"
+    assert settings.allowed_senders == ()
+    assert "has:attachment" not in settings.query
+    assert gmail_integration.is_safe_mailbox_filter(settings) is True
