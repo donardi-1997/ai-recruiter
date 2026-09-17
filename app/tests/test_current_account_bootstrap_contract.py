@@ -18,6 +18,11 @@ def _combined() -> str:
     return "\n".join(path.read_text(encoding="utf-8") for path in TARGETS)
 
 
+def _trigger_block(path: Path) -> str:
+    content = path.read_text(encoding="utf-8")
+    return content.split("permissions:", 1)[0]
+
+
 def test_previous_aws_account_and_generated_resource_ids_are_not_embedded():
     content = _combined()
     for stale in (
@@ -58,26 +63,43 @@ def test_lightsail_ssh_uses_temporary_certificate_for_every_connection():
     assert "CertificateFile=" in workflow
 
 
+def test_lightsail_temporary_key_and_certificate_are_private():
+    workflow = (ROOT / ".github" / "workflows" / "deploy.yml").read_text(
+        encoding="utf-8"
+    )
+    assert 'chmod 600 "$KEY_FILE"' in workflow
+    assert 'chmod 600 "$CERT_FILE"' in workflow
+    assert 'chmod 644 "$CERT_FILE"' not in workflow
+
+
+def test_only_deploy_runs_automatically_on_main():
+    workflows = ROOT / ".github" / "workflows"
+    deploy_trigger = _trigger_block(workflows / "deploy.yml")
+    assert "push:" in deploy_trigger
+    assert "branches: [main]" in deploy_trigger
+
+    ci_trigger = _trigger_block(workflows / "ci.yml")
+    assert "pull_request:" in ci_trigger
+    assert "push:" not in ci_trigger
+
+    diagnostics_trigger = _trigger_block(workflows / "nano-diagnostics.yml")
+    assert "workflow_dispatch:" in diagnostics_trigger
+    assert "push:" not in diagnostics_trigger
+
+    for filename in (
+        "bootstrap-prod.yml",
+        "bootstrap-recovery.yml",
+        "fix-runtime-key-owner.yml",
+    ):
+        assert not (workflows / filename).exists()
+
+
 def test_deploy_has_no_cloudfront_runtime_dependency():
     workflow = (ROOT / ".github" / "workflows" / "deploy.yml").read_text(
         encoding="utf-8"
     )
     assert "CLOUDFRONT_DISTRIBUTION_ID" not in workflow
     assert "cloudfront create-invalidation" not in workflow
-
-
-def test_one_time_bootstrap_generates_runtime_identity_and_registers_only_public_ca():
-    workflow = (ROOT / ".github" / "workflows" / "bootstrap-prod.yml").read_text(
-        encoding="utf-8"
-    )
-    assert "openssl req -x509" in workflow
-    assert "client.key" in workflow
-    assert "scp" in workflow
-    assert "ca.crt" in workflow
-    assert "rolesanywhere create-trust-anchor" in workflow
-    assert "aws_signing_helper" in workflow
-    assert "credential_process" in workflow
-    assert "scp" in workflow and "client.key ubuntu@" not in workflow
 
 
 def test_api_and_worker_require_runtime_resource_environment():

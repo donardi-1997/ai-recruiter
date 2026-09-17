@@ -134,7 +134,7 @@ jobs:
           echo "$ACCESS_JSON" | jq -er '.accessDetails.privateKey' > "$KEY_FILE"
           echo "$ACCESS_JSON" | jq -er '.accessDetails.certKey' > "$CERT_FILE"
           chmod 600 "$KEY_FILE"
-          chmod 644 "$CERT_FILE"
+          chmod 600 "$CERT_FILE"
           SSH_USER=$(echo "$ACCESS_JSON" | jq -er '.accessDetails.username')
           INSTANCE_IP=$(echo "$ACCESS_JSON" | jq -er '.accessDetails.ipAddress')
           echo "LIGHTSAIL_KEY_FILE=$KEY_FILE" >> "$GITHUB_ENV"
