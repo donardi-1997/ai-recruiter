@@ -22,10 +22,30 @@ jobs:
           pip install --upgrade pip
           pip install -r requirements.txt
           pip install pytest pytest-xdist
-      - name: Reproduce full-suite xdist hang with faulthandler
+      - name: Capture xdist hang stacks and terminate process group
+        shell: bash
         env:
           DATABASE_URL: "sqlite:///:memory:"
         run: |
-          timeout -k 5s 60s python -m pytest app/tests/ \
+          set -uo pipefail
+          LOG=/tmp/pytest-hang.log
+          setsid python -m pytest app/tests/ \
             -n 2 --dist=loadfile -vv -s --tb=long \
-            -o faulthandler_timeout=15
+            -o faulthandler_timeout=10 >"$LOG" 2>&1 &
+          PID=$!
+          EXIT_CODE=0
+          for _ in $(seq 1 25); do
+            if ! kill -0 "$PID" 2>/dev/null; then
+              wait "$PID" || EXIT_CODE=$?
+              cat "$LOG"
+              exit "$EXIT_CODE"
+            fi
+            sleep 2
+          done
+          echo "=== PYTEST DID NOT FINISH WITHIN 50s; DUMP FOLLOWS ==="
+          cat "$LOG"
+          kill -TERM -- "-$PID" 2>/dev/null || true
+          sleep 2
+          kill -KILL -- "-$PID" 2>/dev/null || true
+          wait "$PID" 2>/dev/null || true
+          exit 124
