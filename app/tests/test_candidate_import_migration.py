@@ -1,4 +1,4 @@
-"""Contracts for safely adopting the live database into candidate-import migration 003."""
+"""Contracts for safely adopting production and migrating Alembic to head."""
 
 import importlib
 
@@ -19,7 +19,7 @@ def test_existing_schema_without_alembic_version_is_stamped_then_upgraded(monkey
 
     migrate.ensure_candidate_import_schema()
 
-    assert calls == [("stamp", "002"), ("upgrade", "003")]
+    assert calls == [("stamp", "002"), ("upgrade", "head")]
 
 
 def test_unknown_or_incomplete_baseline_aborts_without_stamp(monkeypatch):
@@ -36,43 +36,20 @@ def test_unknown_or_incomplete_baseline_aborts_without_stamp(monkeypatch):
     assert calls == []
 
 
-def test_revision_002_upgrades_without_stamp(monkeypatch):
+@pytest.mark.parametrize("revision", ["002", "003", "009"])
+def test_known_revision_upgrades_to_head_without_stamp(monkeypatch, revision):
     migrate = _migrate()
     calls = []
-    monkeypatch.setattr(migrate, "get_current_revision", lambda: "002")
-    monkeypatch.setattr(migrate, "upgrade", lambda revision: calls.append(("upgrade", revision)))
-    monkeypatch.setattr(migrate, "stamp", lambda revision: calls.append(("stamp", revision)))
-
-    migrate.ensure_candidate_import_schema()
-
-    assert calls == [("upgrade", "003")]
-
-
-def test_revision_003_is_noop(monkeypatch):
-    migrate = _migrate()
-    calls = []
-    monkeypatch.setattr(migrate, "get_current_revision", lambda: "003")
-    monkeypatch.setattr(migrate, "upgrade", lambda revision: calls.append(("upgrade", revision)))
-    monkeypatch.setattr(migrate, "stamp", lambda revision: calls.append(("stamp", revision)))
-
-    migrate.ensure_candidate_import_schema()
-
-    assert calls == []
-
-
-def test_revision_009_is_accepted_and_migrated_to_head(monkeypatch):
-    migrate = _migrate()
-    calls = []
-    monkeypatch.setattr(migrate, "get_current_revision", lambda: "009")
-    monkeypatch.setattr(migrate, "upgrade", lambda revision: calls.append(("upgrade", revision)))
-    monkeypatch.setattr(migrate, "stamp", lambda revision: calls.append(("stamp", revision)))
+    monkeypatch.setattr(migrate, "get_current_revision", lambda: revision)
+    monkeypatch.setattr(migrate, "upgrade", lambda target: calls.append(("upgrade", target)))
+    monkeypatch.setattr(migrate, "stamp", lambda target: calls.append(("stamp", target)))
 
     migrate.ensure_candidate_import_schema()
 
     assert calls == [("upgrade", "head")]
 
 
-def test_unknown_revision_aborts_without_downgrade(monkeypatch):
+def test_unknown_revision_aborts_without_upgrade_or_stamp(monkeypatch):
     migrate = _migrate()
     calls = []
     monkeypatch.setattr(migrate, "get_current_revision", lambda: "999")
@@ -83,6 +60,14 @@ def test_unknown_revision_aborts_without_downgrade(monkeypatch):
         migrate.ensure_candidate_import_schema()
 
     assert calls == []
+
+
+def test_revision_validation_uses_shipped_migration_graph():
+    migrate = _migrate()
+
+    assert migrate.revision_is_known("002") is True
+    assert migrate.revision_is_known("009") is True
+    assert migrate.revision_is_known("999") is False
 
 
 def test_baseline_inspection_requires_owner_and_requirements_columns(monkeypatch):
