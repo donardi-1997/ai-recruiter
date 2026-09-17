@@ -47,7 +47,7 @@ describe("Gmail corporate integration", () => {
 
     expect(await screen.findByRole("heading", { name: "Integraciones" })).toBeInTheDocument();
     expect(screen.getByText("Gmail corporativo")).toBeInTheDocument();
-    expect(screen.getByText("OAuth de Gmail no configurado")).toBeInTheDocument();
+    expect(screen.getByText("Credenciales de Google pendientes")).toBeInTheDocument();
     expect(screen.getByText(/abc\.execute-api\.us-east-2\.amazonaws\.com/)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Conectar Gmail" })).toBeDisabled();
   });
