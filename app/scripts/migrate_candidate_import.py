@@ -8,7 +8,7 @@ from alembic import command
 from alembic.config import Config
 from alembic.runtime.migration import MigrationContext
 from alembic.script import ScriptDirectory
-from alembic.script.revision import ResolutionError
+from alembic.util.exc import CommandError
 from sqlalchemy import inspect
 
 from app.db import get_engine
@@ -57,7 +57,7 @@ def revision_is_known(revision: str) -> bool:
     scripts = ScriptDirectory.from_config(_alembic_config())
     try:
         scripts.get_revision(revision)
-    except ResolutionError:
+    except CommandError:
         return False
     return True
 
