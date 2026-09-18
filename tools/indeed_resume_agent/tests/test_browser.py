@@ -115,7 +115,7 @@ def cfg(tmp_path):
     return AgentConfig(api_base_url="https://agent.test", browser_profile_dir=tmp_path / "profile")
 
 
-def test_start_uses_dedicated_visible_edge_profile(tmp_path):
+def test_start_uses_dedicated_visible_edge_profile_with_sandbox(tmp_path):
     context=FakeContext(FakeResponse(), FakePage())
     chromium=FakeChromium(context)
     browser=IndeedBrowser(cfg(tmp_path), playwright_factory=lambda: FakeManager(FakePlaywright(chromium)))
@@ -126,9 +126,39 @@ def test_start_uses_dedicated_visible_edge_profile(tmp_path):
         "channel": "msedge",
         "headless": False,
         "accept_downloads": True,
+        "chromium_sandbox": True,
     }
     browser.close()
     assert context.closed
+
+
+def test_open_indeed_uses_normal_edge_with_same_dedicated_profile(tmp_path):
+    context=FakeContext(FakeResponse(), FakePage())
+    chromium=FakeChromium(context)
+    calls=[]
+
+    def run(command, **kwargs):
+        calls.append((command, kwargs))
+
+    browser=IndeedBrowser(
+        cfg(tmp_path),
+        playwright_factory=lambda: FakeManager(FakePlaywright(chromium)),
+        edge_executable_resolver=lambda: r"C:\Program Files\Microsoft\Edge\Application\msedge.exe",
+        process_runner=run,
+    )
+    browser.start()
+    browser.open_indeed()
+
+    assert context.closed is True
+    assert len(calls) == 1
+    command, kwargs = calls[0]
+    assert command[0].endswith("msedge.exe")
+    assert f"--user-data-dir={tmp_path / 'profile'}" in command
+    assert "--new-window" in command
+    assert "--no-sandbox" not in command
+    assert not any(item.startswith("--remote-debugging") for item in command)
+    assert command[-1] == "https://www.indeed.com/"
+    assert kwargs == {"check": False}
 
 
 def test_direct_authenticated_request_returns_pdf_without_page_navigation(tmp_path):
