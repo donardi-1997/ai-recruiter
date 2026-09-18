@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy.pool import StaticPool
 
 import app.models  # noqa: F401
+from app.models import IndeedJobLink, Job
 from app.db import Base
 from app.deps import get_db
 from app.domains.candidate_ingestion.indeed_agent_auth import (
@@ -184,3 +185,51 @@ def test_claim_preserves_specific_parser_failure_code(api, monkeypatch):
     db.refresh(task)
     assert task.status == "NEEDS_HUMAN"
     assert task.last_error_code == "INDEED_APPLICATION_FIELDS_MISSING"
+
+
+def test_claim_historical_task_auto_creates_and_links_indeed_job(api, monkeypatch):
+    from app.domains.candidate_ingestion import indeed_email_agent_service as service
+
+    client, db = api
+    task = _task(db, owner_sub="owner-a")
+
+    class Mailbox:
+        def get_message(self, message_id):
+            return {"id": message_id}
+
+    class Parsed:
+        message_id = "gmail-owner-a-WAITING_DOWNLOAD"
+        thread_id = "thread-1"
+        sender = "conversation@indeedemail.com"
+        subject = "CESAR ARCILA se postuló"
+        candidate_name = "CESAR ARCILA"
+        job_title = "Líder de Contact Center Comercial"
+        external_job_id = "JK-CESAR-123"
+        resume_url = "https://employers.indeed.com/resume/cesar"
+        internal_date_ms = None
+
+    monkeypatch.setattr(service, "_gmail_client_from_oauth", lambda: Mailbox())
+    monkeypatch.setattr(
+        service,
+        "parse_indeed_application_email",
+        lambda *args, **kwargs: Parsed(),
+    )
+
+    response = client.post("/api/agents/indeed-resume/claim")
+
+    assert response.status_code == 200
+    assert response.json()["candidate_name"] == "CESAR ARCILA"
+    assert response.json()["job_title"] == "Líder de Contact Center Comercial"
+
+    db.refresh(task)
+    assert task.job_id is not None
+    assert task.job_title == "Líder de Contact Center Comercial"
+
+    job = db.query(Job).filter(Job.id == task.job_id).one()
+    assert job.title == "Líder de Contact Center Comercial"
+    assert job.owner_sub == "owner-a"
+
+    link = db.query(IndeedJobLink).filter(IndeedJobLink.job_id == job.id).one()
+    assert link.discovery_key == "posting:jk-cesar-123"
+    assert link.sourced_posting_id == "JK-CESAR-123"
+    assert link.external_status["auto_created"] is True
