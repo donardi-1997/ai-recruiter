@@ -149,7 +149,13 @@ def test_gmail_profile_classifies_permission_denied_without_response_body(monkey
     fake = FakeHttpClient()
     fake.get_responses = [
         FakeResponse(
-            {"error": {"message": "sensitive permission detail"}},
+            {
+                "error": {
+                    "message": "sensitive permission detail",
+                    "errors": [{"reason": "insufficientPermissions"}],
+                    "status": "PERMISSION_DENIED",
+                }
+            },
             status_code=403,
         )
     ]
@@ -159,7 +165,9 @@ def test_gmail_profile_classifies_permission_denied_without_response_body(monkey
     with pytest.raises(gmail.GmailApiPermissionDenied) as exc:
         client.get_profile()
 
-    assert str(exc.value) == "GMAIL_API_PERMISSION_DENIED"
+    assert str(exc.value) == (
+        "GMAIL_API_PERMISSION_DENIED:get_profile:insufficientPermissions"
+    )
     assert "sensitive permission detail" not in str(exc.value)
 
 
@@ -173,4 +181,30 @@ def test_gmail_list_classifies_unauthorized(monkeypatch):
     with pytest.raises(gmail.GmailApiUnauthorized) as exc:
         client.list_messages()
 
-    assert str(exc.value) == "GMAIL_API_UNAUTHORIZED"
+    assert str(exc.value) == "GMAIL_API_UNAUTHORIZED:list_messages:UNKNOWN"
+
+
+def test_gmail_permission_denied_identifies_list_messages_operation(monkeypatch):
+    gmail = _module()
+    fake = FakeHttpClient()
+    fake.get_responses = [
+        FakeResponse(
+            {
+                "error": {
+                    "message": "do not expose this message",
+                    "errors": [{"reason": "accessNotConfigured"}],
+                }
+            },
+            status_code=403,
+        )
+    ]
+    client = gmail.GmailClient(_settings(monkeypatch), http_client=fake)
+    monkeypatch.setattr(client, "get_access_token", lambda: "access-1")
+
+    with pytest.raises(gmail.GmailApiPermissionDenied) as exc:
+        client.list_messages()
+
+    assert str(exc.value) == (
+        "GMAIL_API_PERMISSION_DENIED:list_messages:accessNotConfigured"
+    )
+    assert "do not expose this message" not in str(exc.value)
