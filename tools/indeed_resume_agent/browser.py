@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import os
 import re
+import shutil
+import subprocess
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
@@ -47,6 +50,24 @@ def _default_playwright_factory():
     return sync_playwright()
 
 
+def _resolve_edge_executable() -> str:
+    candidates: list[Path] = []
+    discovered = shutil.which("msedge")
+    if discovered:
+        return discovered
+
+    for key in ("PROGRAMFILES(X86)", "PROGRAMFILES", "LOCALAPPDATA"):
+        root = str(os.environ.get(key, "")).strip()
+        if not root:
+            continue
+        candidates.append(Path(root) / "Microsoft" / "Edge" / "Application" / "msedge.exe")
+
+    for candidate in candidates:
+        if candidate.is_file():
+            return str(candidate)
+    raise RuntimeError("Microsoft Edge no está instalado o no pudo localizarse.")
+
+
 _DOWNLOAD_NAME = re.compile(
     r"^(download|descargar)(\s+(cv|resume|curr[ií]culum))?$",
     re.IGNORECASE,
@@ -69,9 +90,18 @@ _URL_CHALLENGE_MARKERS = ("/login", "/signin", "challenge", "captcha", "verify")
 
 
 class IndeedBrowser:
-    def __init__(self, config: AgentConfig, *, playwright_factory=None):
+    def __init__(
+        self,
+        config: AgentConfig,
+        *,
+        playwright_factory=None,
+        edge_executable_resolver=None,
+        process_runner=None,
+    ):
         self._config = config
         self._playwright_factory = playwright_factory or _default_playwright_factory
+        self._edge_executable_resolver = edge_executable_resolver or _resolve_edge_executable
+        self._process_runner = process_runner or subprocess.run
         self._playwright = None
         self._context = None
 
@@ -85,6 +115,7 @@ class IndeedBrowser:
             channel="msedge",
             headless=False,
             accept_downloads=True,
+            chromium_sandbox=True,
         )
 
     def close(self) -> None:
@@ -103,11 +134,23 @@ class IndeedBrowser:
         return self._context.new_page()
 
     def open_indeed(self) -> None:
-        page = self._page()
-        page.goto("https://www.indeed.com/", wait_until="domcontentloaded")
-        bring_to_front = getattr(page, "bring_to_front", None)
-        if callable(bring_to_front):
-            bring_to_front()
+        """Open Indeed in a normal, non-automated Edge session for manual login.
+
+        The same dedicated user-data directory is reused later by Playwright, so
+        cookies/session state survive without automating login, MFA, or CAPTCHA.
+        """
+        self.close()
+        self._config.browser_profile_dir.mkdir(parents=True, exist_ok=True)
+        edge = self._edge_executable_resolver()
+        command = [
+            edge,
+            f"--user-data-dir={self._config.browser_profile_dir}",
+            "--new-window",
+            "--no-first-run",
+            "--no-default-browser-check",
+            "https://www.indeed.com/",
+        ]
+        self._process_runner(command, check=False)
 
     @staticmethod
     def _response_pdf(response) -> bytes | None:
