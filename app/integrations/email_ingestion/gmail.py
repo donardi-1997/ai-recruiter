@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import random
 import time
 from dataclasses import dataclass
 from typing import Any
@@ -107,18 +108,70 @@ class GmailHistoryResult:
 class GmailClient:
     """Small Gmail REST client using OAuth refresh tokens, never mailbox passwords."""
 
+    _RATE_LIMIT_REASONS = {"rateLimitExceeded", "userRateLimitExceeded"}
+    _MAX_RATE_LIMIT_RETRIES = 3
+    _MAX_BACKOFF_SECONDS = 8.0
+
     def __init__(
         self,
         settings: GmailSettings,
         *,
         http_client: Any | None = None,
+        sleep_fn=time.sleep,
+        jitter_fn=random.random,
     ) -> None:
         self.settings = settings
         self._http = http_client or httpx.Client(
             timeout=settings.request_timeout_seconds
         )
+        self._sleep = sleep_fn
+        self._jitter = jitter_fn
         self._access_token: str | None = None
         self._access_token_expires_at = 0.0
+
+    @classmethod
+    def _is_rate_limited(cls, response) -> bool:
+        status = int(getattr(response, "status_code", 0) or 0)
+        if status == 429:
+            return True
+        if status != 403:
+            return False
+        return _safe_google_reason(response) in cls._RATE_LIMIT_REASONS
+
+    @staticmethod
+    def _retry_after_seconds(response) -> float | None:
+        headers = getattr(response, "headers", None) or {}
+        raw = str(headers.get("Retry-After") or "").strip()
+        if not raw:
+            return None
+        try:
+            value = float(raw)
+        except (TypeError, ValueError):
+            return None
+        if value < 0:
+            return None
+        return value
+
+    def _gmail_get(self, url: str, **kwargs):
+        """GET Gmail resources with bounded exponential backoff for rate limits."""
+        for attempt in range(self._MAX_RATE_LIMIT_RETRIES + 1):
+            response = self._http.get(url, **kwargs)
+            if not self._is_rate_limited(response):
+                return response
+            if attempt >= self._MAX_RATE_LIMIT_RETRIES:
+                return response
+
+            retry_after = self._retry_after_seconds(response)
+            if retry_after is not None:
+                delay = min(retry_after, self._MAX_BACKOFF_SECONDS)
+            else:
+                delay = min(
+                    (2**attempt) + float(self._jitter()),
+                    self._MAX_BACKOFF_SECONDS,
+                )
+            self._sleep(max(0.0, delay))
+
+        raise RuntimeError("GMAIL_RATE_LIMIT_RETRY_LOOP_INVALID")
 
     def refresh_access_token(self) -> str:
         """Exchange the configured refresh token for a short-lived access token."""
@@ -162,7 +215,7 @@ class GmailClient:
 
     def get_profile(self) -> GmailProfile:
         """Discover the identity and current history cursor of the authorized mailbox."""
-        response = self._http.get(
+        response = self._gmail_get(
             f"{self._user_base_url()}/profile",
             headers=self._headers(),
         )
@@ -189,7 +242,7 @@ class GmailClient:
         if page_token:
             params["pageToken"] = page_token
 
-        response = self._http.get(
+        response = self._gmail_get(
             f"{self._user_base_url()}/messages",
             headers=self._headers(),
             params=params,
@@ -219,7 +272,7 @@ class GmailClient:
         if page_token:
             params["pageToken"] = page_token
 
-        response = self._http.get(
+        response = self._gmail_get(
             f"{self._user_base_url()}/history",
             headers=self._headers(),
             params=params,
@@ -248,7 +301,7 @@ class GmailClient:
     def get_message(self, message_id: str) -> dict[str, Any]:
         """Return one complete Gmail message payload."""
         safe_message_id = quote(str(message_id), safe="")
-        response = self._http.get(
+        response = self._gmail_get(
             f"{self._user_base_url()}/messages/{safe_message_id}",
             headers=self._headers(),
             params={"format": "full"},
@@ -260,7 +313,7 @@ class GmailClient:
         """Download and base64url-decode one Gmail attachment."""
         safe_message_id = quote(str(message_id), safe="")
         safe_attachment_id = quote(str(attachment_id), safe="")
-        response = self._http.get(
+        response = self._gmail_get(
             (
                 f"{self._user_base_url()}/messages/{safe_message_id}"
                 f"/attachments/{safe_attachment_id}"
