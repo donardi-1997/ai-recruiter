@@ -13,7 +13,10 @@ from sqlalchemy.orm import Session
 from app.domains.candidate_ingestion import repository
 from app.domains.candidate_ingestion.indeed_email_service import discover_indeed_email
 from app.domains.candidate_ingestion.models import CandidateIngestionEvent
-from app.integrations.email_ingestion.parser import parse_gmail_message
+from app.integrations.email_ingestion.parser import (
+    EmailSenderNotAllowed,
+    parse_gmail_message,
+)
 from app.infrastructure.ingestion.storage import EmailIngestionStorage
 
 MAX_DOCUMENT_BYTES = 15 * 1024 * 1024
