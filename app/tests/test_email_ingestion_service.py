@@ -330,3 +330,60 @@ def test_existing_indeed_event_without_task_is_backfilled_idempotently():
     finally:
         db.close()
         engine.dispose()
+
+
+def test_sender_domain_filter_blocks_unrelated_incremental_mail_before_persisting():
+    service = _service_module()
+    from app.domains.candidate_ingestion.models import CandidateIngestionEvent
+    from app.integrations.email_ingestion.parser import EmailSenderNotAllowed
+
+    engine, db = _db()
+    message = _message()
+    message["payload"]["headers"][0] = {
+        "name": "From",
+        "value": "Personal <person@example.com>",
+    }
+    mailbox = FakeMailboxClient(message, {"attachment-1": b"pdfdata"})
+    try:
+        with pytest.raises(EmailSenderNotAllowed):
+            service.ingest_gmail_message(
+                db,
+                owner_sub="owner-1",
+                message_id="gmail-1",
+                mailbox_client=mailbox,
+                provider="INDEED",
+                allowed_sender_domains=("indeedemail.com",),
+            )
+
+        assert db.query(CandidateIngestionEvent).count() == 0
+        assert mailbox.attachment_calls == []
+    finally:
+        db.close()
+        engine.dispose()
+
+
+def test_sender_domain_filter_allows_subdomains_of_configured_domain():
+    service = _service_module()
+    engine, db = _db()
+    message = _indeed_link_message()
+    message["payload"]["headers"][0] = {
+        "name": "From",
+        "value": "Indeed <conversation@notify.indeedemail.com>",
+    }
+    mailbox = FakeMailboxClient(message, {})
+    try:
+        result = service.ingest_gmail_message(
+            db,
+            owner_sub="owner-1",
+            message_id="gmail-indeed-link",
+            mailbox_client=mailbox,
+            provider="INDEED",
+            source_account="katherine@example.com",
+            allowed_sender_domains=("indeedemail.com",),
+        )
+
+        assert result.event.indeed_email_resume_task is not None
+        assert result.event.indeed_email_resume_task.status == "WAITING_DOWNLOAD"
+    finally:
+        db.close()
+        engine.dispose()
