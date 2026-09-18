@@ -159,3 +159,27 @@ def test_claim_serializes_ephemeral_resume_url_and_lease(api, monkeypatch):
         "lease_token": "opaque-lease",
         "lease_expires_at": "2026-09-17T23:10:00Z",
     }
+
+
+def test_claim_preserves_specific_parser_failure_code(api, monkeypatch):
+    from app.domains.candidate_ingestion import indeed_email_agent_service as service
+    from app.integrations.email_ingestion.indeed_email_parser import InvalidIndeedMessage
+
+    client, db = api
+    task = _task(db, owner_sub="owner-a")
+
+    class Mailbox:
+        def get_message(self, message_id):
+            return {"id": message_id, "payload": {"headers": []}}
+
+    def fail_parser(*args, **kwargs):
+        raise InvalidIndeedMessage("INDEED_APPLICATION_FIELDS_MISSING")
+
+    monkeypatch.setattr(service, "parse_indeed_application_email", fail_parser)
+
+    response = client.post("/api/agents/indeed-resume/claim")
+
+    assert response.status_code == 502
+    db.refresh(task)
+    assert task.status == "NEEDS_HUMAN"
+    assert task.last_error_code == "INDEED_APPLICATION_FIELDS_MISSING"
