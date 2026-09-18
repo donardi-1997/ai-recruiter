@@ -26,11 +26,18 @@ def _message(
     job_title: str = "Country Manager Chile",
     resume_url: str = "https://employers.indeed.com/resume/ana-perez",
     include_link: bool = True,
+    external_job_id: str | None = None,
 ):
     link = f'<a href="{resume_url}">Ver CV</a>' if include_link else ""
+    job_link = (
+        f'<a href="https://www.indeed.com/viewjob?jk={external_job_id}">Ver vacante</a>'
+        if external_job_id
+        else ""
+    )
     html = (
         "<html><body>"
         f"<p>{candidate_name} se postulo para {job_title}</p>"
+        f"{job_link}"
         f"{link}"
         "</body></html>"
     )
@@ -95,17 +102,15 @@ def test_valid_indeed_email_creates_download_task_without_persisting_resume_url(
         engine.dispose()
 
 
-def test_ambiguous_job_still_creates_download_task_without_job_assignment():
+def test_ambiguous_manual_jobs_create_one_dedicated_indeed_job():
     from app.domains.candidate_ingestion.indeed_email_service import discover_indeed_email
+    from app.models import IndeedJobLink
 
     engine, db = _db()
     try:
-        db.add_all(
-            [
-                Job(title="Sales Manager", owner_sub="owner-1"),
-                Job(title="Sales Manager", owner_sub="owner-1"),
-            ]
-        )
+        manual_a = Job(title="Sales Manager", owner_sub="owner-1")
+        manual_b = Job(title="Sales Manager", owner_sub="owner-1")
+        db.add_all([manual_a, manual_b])
         db.commit()
 
         result = discover_indeed_email(
@@ -117,9 +122,19 @@ def test_ambiguous_job_still_creates_download_task_without_job_assignment():
 
         assert result is not None
         assert result.task is not None
-        assert result.event.job_id is None
-        assert result.task.job_id is None
+        assert result.event.job_id is not None
+        assert result.task.job_id == result.event.job_id
+        assert result.event.job_id not in {manual_a.id, manual_b.id}
         assert result.task.status == "WAITING_DOWNLOAD"
+        assert db.query(Job).filter(Job.owner_sub == "owner-1").count() == 3
+
+        link = (
+            db.query(IndeedJobLink)
+            .filter(IndeedJobLink.job_id == result.event.job_id)
+            .one()
+        )
+        assert link.discovery_key == "title:sales manager"
+        assert link.external_status["auto_created"] is True
     finally:
         db.close()
         engine.dispose()
@@ -217,6 +232,79 @@ def test_non_indeed_sender_falls_through_without_creating_event():
 
         assert result is None
         assert db.query(CandidateIngestionEvent).count() == 0
+    finally:
+        db.close()
+        engine.dispose()
+
+
+def test_new_indeed_title_auto_creates_job_and_other_messages_reuse_it():
+    from app.domains.candidate_ingestion.indeed_email_service import discover_indeed_email
+
+    engine, db = _db()
+    try:
+        first = discover_indeed_email(
+            db,
+            owner_sub="owner-1",
+            source_account="katherine@example.com",
+            raw_message=_message(
+                message_id="gmail-auto-1",
+                candidate_name="Ana Perez",
+                job_title="Líder de Contact Center Comercial",
+            ),
+        )
+        second = discover_indeed_email(
+            db,
+            owner_sub="owner-1",
+            source_account="katherine@example.com",
+            raw_message=_message(
+                message_id="gmail-auto-2",
+                candidate_name="Luis Gomez",
+                job_title="lider de contact center comercial",
+            ),
+        )
+
+        assert first.event.job_id is not None
+        assert second.event.job_id == first.event.job_id
+        assert first.task.job_id == first.event.job_id
+        assert second.task.job_id == first.event.job_id
+        assert db.query(Job).filter(Job.owner_sub == "owner-1").count() == 1
+    finally:
+        db.close()
+        engine.dispose()
+
+
+def test_distinct_external_posting_ids_create_distinct_jobs_even_with_same_title():
+    from app.domains.candidate_ingestion.indeed_email_service import discover_indeed_email
+
+    engine, db = _db()
+    try:
+        first = discover_indeed_email(
+            db,
+            owner_sub="owner-1",
+            source_account="katherine@example.com",
+            raw_message=_message(
+                message_id="gmail-posting-a",
+                candidate_name="Ana Perez",
+                job_title="Sales Manager",
+                external_job_id="POSTING_A_123",
+            ),
+        )
+        second = discover_indeed_email(
+            db,
+            owner_sub="owner-1",
+            source_account="katherine@example.com",
+            raw_message=_message(
+                message_id="gmail-posting-b",
+                candidate_name="Luis Gomez",
+                job_title="Sales Manager",
+                external_job_id="POSTING_B_456",
+            ),
+        )
+
+        assert first.event.job_id != second.event.job_id
+        assert db.query(Job).filter(Job.owner_sub == "owner-1").count() == 2
+        assert first.event.raw_metadata["external_job_id"] == "POSTING_A_123"
+        assert second.event.raw_metadata["external_job_id"] == "POSTING_B_456"
     finally:
         db.close()
         engine.dispose()

@@ -231,3 +231,47 @@ def test_real_indeed_boilerplate_is_removed_from_job_title():
 
     assert parsed.candidate_name == "CESAR ARCILA"
     assert parsed.job_title == "Líder de Contact Center Comercial"
+
+
+def test_extracts_external_indeed_job_id_from_job_link():
+    from app.integrations.email_ingestion.indeed_email_parser import (
+        parse_indeed_application_email,
+    )
+
+    candidate_name = "Ana Perez"
+    job_title = "Country Manager Chile"
+    html = (
+        "<html><body>"
+        f"<p>{candidate_name} se postulo para {job_title}</p>"
+        '<a href="https://www.indeed.com/viewjob?jk=abc123XYZ987">Ver vacante</a>'
+        '<a href="https://profile.indeed.com/resume/candidate-123">Ver CV</a>'
+        "</body></html>"
+    )
+    message = {
+        "id": "gmail-job-id",
+        "payload": {
+            "mimeType": "text/html",
+            "headers": [
+                {
+                    "name": "From",
+                    "value": "Indeed <conversation-job@indeedemail.com>",
+                },
+                {"name": "Subject", "value": "Nueva postulacion"},
+            ],
+            "body": {"data": _b64url(html)},
+        },
+    }
+
+    parsed = parse_indeed_application_email(message)
+
+    assert parsed.external_job_id == "abc123XYZ987"
+
+
+def test_resume_link_without_job_identifier_keeps_external_job_id_none():
+    from app.integrations.email_ingestion.indeed_email_parser import (
+        parse_indeed_application_email,
+    )
+
+    parsed = parse_indeed_application_email(_message())
+
+    assert parsed.external_job_id is None

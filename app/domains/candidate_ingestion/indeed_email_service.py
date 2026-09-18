@@ -77,6 +77,7 @@ def _safe_raw_metadata(
         metadata["subject"] = parsed.subject
         metadata["candidate_name"] = parsed.candidate_name
         metadata["job_title"] = parsed.job_title
+        metadata["external_job_id"] = parsed.external_job_id
     return metadata
 
 
@@ -169,10 +170,9 @@ def _backfill_existing_event(
         source_account=source_account,
         parsed=parsed,
     )
-    job = job_resolution.resolve_job(
+    job = job_resolution.resolve_or_create_indeed_job(
         db,
         owner_sub=owner_sub,
-        explicit_job_id=None,
         metadata=metadata,
     )
 
@@ -314,10 +314,9 @@ def discover_indeed_email(
         source_account=normalized_source_account,
         parsed=parsed,
     )
-    job = job_resolution.resolve_job(
+    job = job_resolution.resolve_or_create_indeed_job(
         db,
         owner_sub=owner_sub,
-        explicit_job_id=None,
         metadata=metadata,
     )
 
