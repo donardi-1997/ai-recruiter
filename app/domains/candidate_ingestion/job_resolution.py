@@ -237,25 +237,29 @@ def resolve_or_create_indeed_job(
             title_link = (
                 db.query(IndeedJobLink)
                 .filter(IndeedJobLink.job_id == title_linked.id)
+                .with_for_update()
                 .one_or_none()
             )
-            if title_link is not None and not title_link.sourced_posting_id:
-                savepoint = db.begin_nested()
-                try:
-                    title_link.sourced_posting_id = external_job_id
-                    db.flush()
-                    savepoint.commit()
+            if title_link is not None:
+                if title_link.sourced_posting_id == external_job_id:
                     return title_linked
-                except IntegrityError:
-                    savepoint.rollback()
-                    linked = _job_by_sourced_posting_id(
-                        db,
-                        owner_sub=owner_sub,
-                        sourced_posting_id=external_job_id,
-                    )
-                    if linked is not None:
-                        return linked
-                    raise
+                if not title_link.sourced_posting_id:
+                    savepoint = db.begin_nested()
+                    try:
+                        title_link.sourced_posting_id = external_job_id
+                        db.flush()
+                        savepoint.commit()
+                        return title_linked
+                    except IntegrityError:
+                        savepoint.rollback()
+                        linked = _job_by_sourced_posting_id(
+                            db,
+                            owner_sub=owner_sub,
+                            sourced_posting_id=external_job_id,
+                        )
+                        if linked is not None:
+                            return linked
+                        raise
 
         # A stable posting id represents a distinct Indeed vacancy. Do not merge
         # it with another posting merely because the visible titles are equal.
