@@ -33,6 +33,39 @@ class GmailApiHttpError(RuntimeError):
     """Gmail API returned an unexpected non-success HTTP status."""
 
 
+_SAFE_GOOGLE_REASONS = {
+    "insufficientPermissions",
+    "accessNotConfigured",
+    "forbidden",
+    "userRateLimitExceeded",
+    "rateLimitExceeded",
+    "dailyLimitExceeded",
+    "domainPolicy",
+    "authError",
+}
+
+
+def _safe_google_reason(response) -> str:
+    """Return a machine-safe Google reason code without exposing response messages."""
+    try:
+        payload = response.json()
+    except Exception:
+        return "UNKNOWN"
+    error = payload.get("error") if isinstance(payload, dict) else None
+    if isinstance(error, dict):
+        errors = error.get("errors")
+        if isinstance(errors, list):
+            for item in errors:
+                if isinstance(item, dict):
+                    reason = str(item.get("reason") or "").strip()
+                    if reason in _SAFE_GOOGLE_REASONS:
+                        return reason
+        status = str(error.get("status") or "").strip()
+        if status in {"PERMISSION_DENIED", "UNAUTHENTICATED", "RESOURCE_EXHAUSTED"}:
+            return status
+    return "UNKNOWN"
+
+
 def _ensure_google_success(response, *, operation: str) -> None:
     """Classify Google HTTP failures without exposing response bodies or tokens."""
     status = int(getattr(response, "status_code", 0) or 0)
@@ -40,11 +73,16 @@ def _ensure_google_success(response, *, operation: str) -> None:
         return
     if operation == "token_refresh":
         raise GmailTokenRefreshRejected("GMAIL_TOKEN_REFRESH_REJECTED")
+    reason = _safe_google_reason(response)
     if status == 401:
-        raise GmailApiUnauthorized("GMAIL_API_UNAUTHORIZED")
+        raise GmailApiUnauthorized(f"GMAIL_API_UNAUTHORIZED:{operation}:{reason}")
     if status == 403:
-        raise GmailApiPermissionDenied("GMAIL_API_PERMISSION_DENIED")
-    raise GmailApiHttpError(f"GMAIL_API_HTTP_{status or 'UNKNOWN'}")
+        raise GmailApiPermissionDenied(
+            f"GMAIL_API_PERMISSION_DENIED:{operation}:{reason}"
+        )
+    raise GmailApiHttpError(
+        f"GMAIL_API_HTTP_{status or 'UNKNOWN'}:{operation}:{reason}"
+    )
 
 
 @dataclass(frozen=True)
@@ -128,7 +166,7 @@ class GmailClient:
             f"{self._user_base_url()}/profile",
             headers=self._headers(),
         )
-        _ensure_google_success(response, operation="gmail_api")
+        _ensure_google_success(response, operation="get_profile")
         payload = response.json()
         email_address = str(payload.get("emailAddress") or "").strip().casefold()
         history_id = str(payload.get("historyId") or "").strip()
@@ -156,7 +194,7 @@ class GmailClient:
             headers=self._headers(),
             params=params,
         )
-        _ensure_google_success(response, operation="gmail_api")
+        _ensure_google_success(response, operation="list_messages")
         payload = response.json()
         return GmailListResult(
             messages=list(payload.get("messages") or []),
@@ -188,7 +226,7 @@ class GmailClient:
         )
         if response.status_code == 404:
             raise GmailHistoryExpired("GMAIL_HISTORY_EXPIRED")
-        _ensure_google_success(response, operation="gmail_api")
+        _ensure_google_success(response, operation="list_history")
         payload = response.json()
 
         ordered_ids: list[str] = []
@@ -215,7 +253,7 @@ class GmailClient:
             headers=self._headers(),
             params={"format": "full"},
         )
-        _ensure_google_success(response, operation="gmail_api")
+        _ensure_google_success(response, operation="get_message")
         return dict(response.json())
 
     def get_attachment(self, message_id: str, attachment_id: str) -> bytes:
@@ -229,7 +267,7 @@ class GmailClient:
             ),
             headers=self._headers(),
         )
-        _ensure_google_success(response, operation="gmail_api")
+        _ensure_google_success(response, operation="get_attachment")
         encoded = str(response.json().get("data") or "")
         if not encoded:
             raise RuntimeError("GMAIL_ATTACHMENT_DATA_MISSING")
