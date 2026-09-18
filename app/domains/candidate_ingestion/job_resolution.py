@@ -96,18 +96,17 @@ def _ensure_discovery_link(
         if winner is not None and winner.id != job.id:
             return winner
 
-        changed = False
-        if existing.discovery_key is None:
-            existing.discovery_key = discovery_key
-            changed = True
-        if external_job_id and not existing.sourced_posting_id:
-            existing.sourced_posting_id = external_job_id
-            changed = True
-        if not changed:
+        set_discovery_key = existing.discovery_key is None
+        set_external_id = bool(external_job_id and not existing.sourced_posting_id)
+        if not set_discovery_key and not set_external_id:
             return job
 
         savepoint = db.begin_nested()
         try:
+            if set_discovery_key:
+                existing.discovery_key = discovery_key
+            if set_external_id:
+                existing.sourced_posting_id = external_job_id
             db.flush()
             savepoint.commit()
             return job
