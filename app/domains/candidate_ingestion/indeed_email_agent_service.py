@@ -15,7 +15,12 @@ from app.config import (
     get_gmail_settings,
     get_indeed_resume_agent_settings,
 )
-from app.domains.candidate_ingestion import gmail_integration, indeed_email_repository, repository
+from app.domains.candidate_ingestion import (
+    gmail_integration,
+    indeed_email_repository,
+    job_resolution,
+    repository,
+)
 from app.domains.candidate_ingestion.models import (
     CandidateIngestionDocument,
     IndeedEmailResumeTask,
@@ -270,10 +275,43 @@ def claim_next_task_with_resume_url(
         )
         raise ResumeClaimResolutionError("Gmail message is unavailable.") from exc
 
+    metadata.update(
+        {
+            "candidate_name": parsed.candidate_name,
+            "job_title": parsed.job_title,
+            "external_job_id": parsed.external_job_id,
+            "sender": parsed.sender,
+            "subject": parsed.subject,
+        }
+    )
+    try:
+        job = job_resolution.resolve_or_create_indeed_job(
+            db,
+            owner_sub=owner_sub,
+            metadata=metadata,
+        )
+        event.raw_metadata = metadata
+        event.job_id = job.id if job is not None else None
+        task.job_id = job.id if job is not None else None
+        task.candidate_name = parsed.candidate_name
+        task.job_title = parsed.job_title
+        db.commit()
+    except Exception as exc:
+        db.rollback()
+        _safe_resolution_failure(
+            db,
+            owner_sub=owner_sub,
+            task_id=claimed.task_id,
+            lease_token=claimed.lease_token,
+            code="INDEED_JOB_RESOLUTION_FAILED",
+            human_required=False,
+        )
+        raise ResumeClaimResolutionError("Indeed job resolution failed.") from exc
+
     return ClaimedResumeTaskWithUrl(
         task_id=claimed.task_id,
-        candidate_name=claimed.candidate_name,
-        job_title=claimed.job_title,
+        candidate_name=parsed.candidate_name,
+        job_title=parsed.job_title,
         resume_url=parsed.resume_url,
         lease_token=claimed.lease_token,
         lease_expires_at=claimed.lease_expires_at,
