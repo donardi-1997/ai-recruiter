@@ -58,6 +58,7 @@ class ResumeWorker:
         self._paused = False
         self._stopped = False
         self._human_task_id: str | None = None
+        self._human_resume_url: str | None = None
         self._processed_session = 0
         self._last_snapshot = WorkerSnapshot("IDLE", None, 0, None)
 
@@ -68,6 +69,10 @@ class ResumeWorker:
     @property
     def human_task_id(self) -> str | None:
         return self._human_task_id
+
+    @property
+    def human_resume_url(self) -> str | None:
+        return self._human_resume_url
 
     def _set(self, state: str, *, candidate: str | None = None, error: str | None = None) -> WorkerSnapshot:
         self._last_snapshot = WorkerSnapshot(
@@ -88,6 +93,7 @@ class ResumeWorker:
             task_id = self._human_task_id
             self._api.resume_after_human(task_id)
             self._human_task_id = None
+            self._human_resume_url = None
         self._paused = False
         if not self._stopped:
             self._set("IDLE")
@@ -129,6 +135,7 @@ class ResumeWorker:
                 code = result.human_code or "INDEED_HUMAN_REQUIRED"
                 self._api.needs_human(task, code=code)
                 self._human_task_id = task.task_id
+                self._human_resume_url = task.resume_url
                 return self._set(
                     "WAITING_FOR_HUMAN",
                     candidate=task.candidate_name,
