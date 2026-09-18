@@ -114,7 +114,6 @@ def run_ui(*, worker, api, browser) -> None:
     def agent_loop() -> None:
         last_stats = QueueStats(0, 0, 0, 0, 0, 0)
         try:
-            browser.start()
             while not stop_event.is_set():
                 while True:
                     try:
@@ -129,6 +128,8 @@ def run_ui(*, worker, api, browser) -> None:
                         except Exception:
                             pass
                     elif command == "open":
+                        worker.pause()
+                        publish(worker.snapshot, last_stats)
                         try:
                             browser.open_indeed()
                         except Exception:
