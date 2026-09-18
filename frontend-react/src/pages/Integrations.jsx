@@ -111,10 +111,13 @@ function Integrations() {
       if (data?.task_id) {
         const candidate = data?.candidate_name || "Candidato";
         const role = data?.job_title ? ` · ${data.job_title}` : "";
+        const errorCode = data?.last_error_code ? ` · ${data.last_error_code}` : "";
         setMessage(
           data?.reactivated
             ? `Prueba preparada: ${candidate}${role}. Abre el Resume Agent para procesar solo esta tarea.`
-            : `Ya existe una tarea activa: ${candidate}${role}.`,
+            : data?.status === "NEEDS_HUMAN"
+              ? `La tarea activa necesita revisión: ${candidate}${role}${errorCode}.`
+              : `Ya existe una tarea activa: ${candidate}${role}${errorCode}.`,
         );
       } else {
         setMessage("No hay tareas históricas archivadas disponibles para prueba.");
