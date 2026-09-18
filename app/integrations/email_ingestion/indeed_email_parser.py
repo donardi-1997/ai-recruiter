@@ -82,6 +82,29 @@ def _normalize_space(value: str) -> str:
     return " ".join(str(value or "").split())
 
 
+def _clean_job_title(value: str) -> str:
+    title = _normalize_space(value)
+    title = re.sub(
+        r"^(?:el\s+puesto\s+de|puesto\s+de|la\s+vacante\s+de|vacante\s+de)\s+",
+        "",
+        title,
+        flags=re.IGNORECASE,
+    )
+    title = re.sub(
+        r"\s+publicad[oa]\s+en\s+Indeed\b.*$",
+        "",
+        title,
+        flags=re.IGNORECASE,
+    )
+    title = re.sub(
+        r"\.\s+Encontrar[aá]\s+su\s+informaci[oó]n\b.*$",
+        "",
+        title,
+        flags=re.IGNORECASE,
+    )
+    return _normalize_space(title).strip(" .-")
+
+
 def _host_allowed(host: str, suffixes: tuple[str, ...]) -> bool:
     normalized = host.strip().casefold().rstrip(".")
     for raw_suffix in suffixes:
@@ -190,7 +213,7 @@ def _extract_application_fields(texts: Iterable[str]) -> tuple[str, str]:
                 if not match:
                     continue
                 candidate_name = _normalize_space(match.group("candidate"))
-                job_title = _normalize_space(match.group("job"))
+                job_title = _clean_job_title(match.group("job"))
                 if candidate_name and job_title:
                     return candidate_name, job_title
     raise InvalidIndeedMessage("INDEED_APPLICATION_FIELDS_MISSING")
