@@ -124,6 +124,48 @@ describe("Gmail corporate integration", () => {
     expect(await screen.findByText(/2 candidatos nuevos/)).toBeInTheDocument();
   });
 
+
+
+  it("reactivates exactly one archived candidate for smoke testing", async () => {
+    api.get.mockResolvedValueOnce({
+      data: {
+        enabled: true,
+        configured: true,
+        oauth_configured: true,
+        connected: true,
+        connected_email: "recruiting@asiaticorp.com",
+        provider: "INDEED",
+        safe_filter: true,
+        redirect_uri: "https://abc.execute-api.us-east-2.amazonaws.com/prod/api/integrations/gmail/oauth/callback",
+      },
+    });
+    api.post.mockResolvedValueOnce({
+      data: {
+        reactivated: true,
+        task_id: "task-1",
+        status: "WAITING_DOWNLOAD",
+        candidate_name: "Ana Perez",
+        job_title: "Country Manager Chile",
+      },
+    });
+
+    renderPage();
+    await screen.findByText("recruiting@asiaticorp.com");
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "Probar 1 candidato archivado" }),
+    );
+
+    await waitFor(() => {
+      expect(api.post).toHaveBeenCalledWith(
+        "/integrations/gmail/reactivate-one-archived",
+      );
+    });
+    expect(
+      await screen.findByText(/Prueba preparada: Ana Perez · Country Manager Chile/),
+    ).toBeInTheDocument();
+  });
+
   it("disconnects the corporate mailbox and refreshes status", async () => {
     api.get
       .mockResolvedValueOnce({
