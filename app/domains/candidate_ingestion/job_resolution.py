@@ -21,8 +21,7 @@ def _normalize(value: str | None) -> str:
 def _canonical_title_key(value: str | None) -> str:
     text = unicodedata.normalize("NFKD", str(value or "").casefold())
     text = "".join(ch for ch in text if not unicodedata.combining(ch))
-    text = re.sub(r"[^a-z0-9]+", " ", text)
-    return " ".join(text.split())
+    return " ".join(text.split()).strip(" .,-:;")
 
 
 def indeed_discovery_key(metadata: dict | None) -> str | None:
