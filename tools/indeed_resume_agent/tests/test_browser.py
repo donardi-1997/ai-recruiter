@@ -225,3 +225,43 @@ def test_validate_pdf_rejects_oversize():
 def test_normalize_pdf_filename_removes_paths_and_forces_pdf_extension():
     assert normalize_pdf_filename(r"C:\temp\Ada Resume.exe") == "Ada Resume.pdf"
     assert normalize_pdf_filename("../../evil.pdf") == "evil.pdf"
+
+
+def test_open_indeed_can_open_specific_safe_resume_url(tmp_path):
+    calls=[]
+
+    def run(command, **kwargs):
+        calls.append((command, kwargs))
+
+    browser=IndeedBrowser(
+        cfg(tmp_path),
+        edge_executable_resolver=lambda: r"C:\Program Files\Microsoft\Edge\Application\msedge.exe",
+        process_runner=run,
+    )
+    browser.open_indeed("https://employers.indeed.com/resume/ada")
+
+    assert calls[0][0][-1] == "https://employers.indeed.com/resume/ada"
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "http://employers.indeed.com/resume/ada",
+        "https://indeed.com.evil.example/resume/ada",
+        "javascript:alert(1)",
+    ],
+)
+def test_open_indeed_rejects_unsafe_manual_url(tmp_path, url):
+    calls=[]
+
+    def run(command, **kwargs):
+        calls.append((command, kwargs))
+
+    browser=IndeedBrowser(
+        cfg(tmp_path),
+        edge_executable_resolver=lambda: r"C:\Program Files\Microsoft\Edge\Application\msedge.exe",
+        process_runner=run,
+    )
+    browser.open_indeed(url)
+
+    assert calls[0][0][-1] == "https://www.indeed.com/"
