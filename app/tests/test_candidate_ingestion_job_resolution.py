@@ -1,5 +1,7 @@
 """Contracts for conservative candidate-ingestion job resolution."""
 
+import pytest
+
 from sqlalchemy import create_engine
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
