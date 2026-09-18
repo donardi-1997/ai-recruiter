@@ -76,7 +76,7 @@ def is_safe_mailbox_filter(settings: GmailSettings) -> bool:
 def _sender_domains_from_query(query: str) -> tuple[str, ...]:
     """Extract conservative sender-domain restrictions from simple Gmail from: terms."""
     domains: list[str] = []
-    for match in re.finditer(r"\bfrom:([^\s]+)", str(query or ""), flags=re.IGNORECASE):
+    for match in re.finditer(r"(?:^|\s)from:([^\s]+)", str(query or ""), flags=re.IGNORECASE):
         token = match.group(1).strip().strip("()[]{}<>\"'")
         if not token:
             continue
