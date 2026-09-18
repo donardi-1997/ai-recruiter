@@ -89,6 +89,14 @@ def _ensure_discovery_link(
         .one_or_none()
     )
     if existing is not None:
+        winner = _job_by_discovery_key(
+            db,
+            owner_sub=owner_sub,
+            discovery_key=discovery_key,
+        )
+        if winner is not None and winner.id != job.id:
+            return winner
+
         changed = False
         if existing.discovery_key is None:
             existing.discovery_key = discovery_key
@@ -96,20 +104,24 @@ def _ensure_discovery_link(
         if external_job_id and not existing.sourced_posting_id:
             existing.sourced_posting_id = external_job_id
             changed = True
-        if changed:
-            try:
-                db.flush()
-            except IntegrityError:
-                db.rollback()
-                winner = _job_by_discovery_key(
-                    db,
-                    owner_sub=owner_sub,
-                    discovery_key=discovery_key,
-                )
-                if winner is not None:
-                    return winner
-                raise
-        return job
+        if not changed:
+            return job
+
+        savepoint = db.begin_nested()
+        try:
+            db.flush()
+            savepoint.commit()
+            return job
+        except IntegrityError:
+            savepoint.rollback()
+            winner = _job_by_discovery_key(
+                db,
+                owner_sub=owner_sub,
+                discovery_key=discovery_key,
+            )
+            if winner is not None:
+                return winner
+            raise
 
     link = IndeedJobLink(
         job_id=job.id,
