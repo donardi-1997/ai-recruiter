@@ -6,6 +6,7 @@ import base64
 import hashlib
 import hmac
 import json
+import re
 import secrets
 import time
 from dataclasses import asdict, replace
@@ -68,6 +69,23 @@ def is_safe_mailbox_filter(settings: GmailSettings) -> bool:
         return True
     query = str(settings.query or "").casefold()
     return "from:" in query
+
+
+
+
+def _sender_domains_from_query(query: str) -> tuple[str, ...]:
+    """Extract conservative sender-domain restrictions from simple Gmail from: terms."""
+    domains: list[str] = []
+    for match in re.finditer(r"\bfrom:([^\s]+)", str(query or ""), flags=re.IGNORECASE):
+        token = match.group(1).strip().strip("()[]{}<>\"'")
+        if not token:
+            continue
+        candidate = token.rsplit("@", 1)[-1].strip().casefold().lstrip(".")
+        if not re.fullmatch(r"[a-z0-9.-]+\.[a-z0-9-]+", candidate):
+            continue
+        if candidate not in domains:
+            domains.append(candidate)
+    return tuple(domains)
 
 
 def _b64encode(raw: bytes) -> str:
@@ -418,6 +436,7 @@ def sync_mailbox(
             provider=resolved.ingestion_provider,
             mailbox_client=client,
             allowed_senders=resolved.allowed_senders,
+            allowed_sender_domains=_sender_domains_from_query(resolved.query),
             storage=storage,
         )
         return asdict(result)
