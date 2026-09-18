@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 from dataclasses import dataclass
+from email.utils import parseaddr
 from typing import Any
 
 from sqlalchemy.exc import IntegrityError
@@ -38,6 +39,42 @@ def _metadata(parsed, *, source_account: str) -> dict[str, Any]:
     }
 
 
+
+
+def _assert_sender_domain_allowed(
+    raw_message: dict[str, Any],
+    allowed_sender_domains: tuple[str, ...],
+) -> None:
+    normalized_domains = tuple(
+        str(value or "").strip().casefold().lstrip(".")
+        for value in allowed_sender_domains
+        if str(value or "").strip()
+    )
+    if not normalized_domains:
+        return
+
+    payload = raw_message.get("payload") or {}
+    from_value = ""
+    for item in payload.get("headers") or []:
+        if not isinstance(item, dict):
+            continue
+        if str(item.get("name") or "").strip().casefold() == "from":
+            from_value = str(item.get("value") or "").strip()
+            break
+
+    _display_name, sender_address = parseaddr(from_value)
+    sender = sender_address.strip().casefold()
+    sender_domain = sender.rsplit("@", 1)[-1] if "@" in sender else ""
+    if not sender_domain:
+        raise EmailSenderNotAllowed("EMAIL_SENDER_NOT_ALLOWED")
+
+    if not any(
+        sender_domain == domain or sender_domain.endswith("." + domain)
+        for domain in normalized_domains
+    ):
+        raise EmailSenderNotAllowed("EMAIL_SENDER_NOT_ALLOWED")
+
+
 def _refresh_event(db: Session, event: CandidateIngestionEvent) -> CandidateIngestionEvent:
     db.refresh(event)
     _ = event.documents
@@ -53,6 +90,7 @@ def ingest_gmail_message(
     provider: str,
     source_account: str = "",
     allowed_senders: tuple[str, ...] = (),
+    allowed_sender_domains: tuple[str, ...] = (),
     storage=None,
 ) -> EmailIngestionResult:
     """Persist one Gmail message and supported resume attachments idempotently."""
@@ -75,6 +113,10 @@ def ingest_gmail_message(
             has_documents = bool(repository.list_documents(db, event_id=existing.id))
             if not has_task and not has_documents:
                 raw_message = mailbox_client.get_message(message_id)
+                _assert_sender_domain_allowed(
+                    raw_message,
+                    allowed_sender_domains,
+                )
                 discovered = discover_indeed_email(
                     db,
                     owner_sub=owner_sub,
@@ -89,6 +131,10 @@ def ingest_gmail_message(
         return EmailIngestionResult(event=_refresh_event(db, existing), created=False)
 
     raw_message = mailbox_client.get_message(message_id)
+    _assert_sender_domain_allowed(
+        raw_message,
+        allowed_sender_domains,
+    )
 
     if normalized_provider == "INDEED":
         discovered = discover_indeed_email(
