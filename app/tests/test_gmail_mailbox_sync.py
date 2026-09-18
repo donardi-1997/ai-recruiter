@@ -281,3 +281,139 @@ def test_authorizing_corporate_mailbox_gets_independent_full_sync_and_cursor():
     finally:
         db.close()
         engine.dispose()
+
+
+class PagedMailboxClient(FakeMailboxClient):
+    def __init__(self, *, email_address, profile_history_id, pages):
+        super().__init__(
+            email_address=email_address,
+            profile_history_id=profile_history_id,
+        )
+        self.pages = dict(pages)
+        self.page_tokens = []
+
+    def list_messages(self, *, page_token=None, max_results=100):
+        self.list_messages_calls += 1
+        self.page_tokens.append(page_token)
+        messages, next_page_token = self.pages[page_token]
+        return SimpleNamespace(
+            messages=[{"id": message_id} for message_id in messages],
+            next_page_token=next_page_token,
+        )
+
+
+def test_full_sync_bootstrap_is_batched_and_resumes_from_saved_page_token():
+    engine, db = _db()
+    storage = FakeStorage()
+    client = PagedMailboxClient(
+        email_address="personal@example.com",
+        profile_history_id="100",
+        pages={
+            None: (("gmail-1", "gmail-2"), "page-2"),
+            "page-2": (("gmail-3",), None),
+        },
+    )
+    try:
+        first = sync_gmail_mailbox(
+            db,
+            owner_sub="owner-1",
+            provider="INDEED",
+            mailbox_client=client,
+            allowed_senders=("alerts@indeed.com",),
+            storage=storage,
+            max_results=2,
+        )
+
+        assert first.mode == "FULL"
+        assert first.discovered == 2
+        assert first.created == 2
+        assert first.cursor_value.startswith("GMAIL_BOOTSTRAP_V1:")
+        assert client.page_tokens == [None]
+
+        second = sync_gmail_mailbox(
+            db,
+            owner_sub="owner-1",
+            provider="INDEED",
+            mailbox_client=client,
+            allowed_senders=("alerts@indeed.com",),
+            storage=storage,
+            max_results=2,
+        )
+
+        assert second.mode == "FULL_CONTINUE"
+        assert second.discovered == 1
+        assert second.created == 1
+        assert second.cursor_value == "100"
+        assert client.page_tokens == [None, "page-2"]
+
+        cursor = repository.get_cursor(
+            db,
+            owner_sub="owner-1",
+            source="EMAIL",
+            provider="INDEED",
+            source_account="personal@example.com",
+        )
+        assert cursor.cursor_value == "100"
+    finally:
+        db.close()
+        engine.dispose()
+
+
+def test_bootstrap_finishes_on_original_history_baseline_then_incremental_catches_new_mail():
+    engine, db = _db()
+    storage = FakeStorage()
+    paged = PagedMailboxClient(
+        email_address="personal@example.com",
+        profile_history_id="100",
+        pages={
+            None: (("gmail-1",), "page-2"),
+            "page-2": (("gmail-2",), None),
+        },
+    )
+    try:
+        sync_gmail_mailbox(
+            db,
+            owner_sub="owner-1",
+            provider="INDEED",
+            mailbox_client=paged,
+            allowed_senders=("alerts@indeed.com",),
+            storage=storage,
+            max_results=1,
+        )
+
+        # Simulate mail arriving while historical bootstrap is still running.
+        paged.profile_history_id = "120"
+        second = sync_gmail_mailbox(
+            db,
+            owner_sub="owner-1",
+            provider="INDEED",
+            mailbox_client=paged,
+            allowed_senders=("alerts@indeed.com",),
+            storage=storage,
+            max_results=1,
+        )
+        assert second.cursor_value == "100"
+
+        incremental = FakeMailboxClient(
+            email_address="personal@example.com",
+            profile_history_id="120",
+            history_message_ids=("gmail-new",),
+            next_history_id="120",
+        )
+        third = sync_gmail_mailbox(
+            db,
+            owner_sub="owner-1",
+            provider="INDEED",
+            mailbox_client=incremental,
+            allowed_senders=("alerts@indeed.com",),
+            storage=storage,
+            max_results=20,
+        )
+
+        assert third.mode == "INCREMENTAL"
+        assert incremental.list_history_calls == ["100"]
+        assert third.created == 1
+        assert third.cursor_value == "120"
+    finally:
+        db.close()
+        engine.dispose()
