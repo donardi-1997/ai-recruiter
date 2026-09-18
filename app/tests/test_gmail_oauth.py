@@ -3,7 +3,7 @@ from urllib.parse import parse_qs, urlparse
 
 import pytest
 
-from app.config import GmailOAuthSettings, GmailSettings
+from app.config import GmailOAuthSettings, GmailSettings, get_gmail_oauth_settings
 from app.domains.candidate_ingestion import gmail_integration
 
 
@@ -248,3 +248,13 @@ def test_disconnect_clears_mailbox_tokens_but_preserves_oauth_client():
     assert store.payload["state_secret"] == "state-signing-secret"
     assert store.payload["refresh_token"] == ""
     assert store.payload["connected_email"] == ""
+
+
+def test_oauth_frontend_return_defaults_to_cloudfront(monkeypatch):
+    monkeypatch.delenv("GMAIL_OAUTH_FRONTEND_RETURN_URL", raising=False)
+
+    settings = get_gmail_oauth_settings()
+
+    assert settings.frontend_return_url == (
+        "https://dzcwl3yhv133t.cloudfront.net/integrations"
+    )
