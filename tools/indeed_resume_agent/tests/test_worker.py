@@ -65,9 +65,11 @@ def test_needs_human_blocks_new_claims_until_resume(tmp_path):
     assert snap.state == "WAITING_FOR_HUMAN"
     assert api.human == [("t1","INDEED_AUTH_REQUIRED")]
     assert worker.run_once().state == "WAITING_FOR_HUMAN"
+    assert worker.human_resume_url == "https://indeed.test/resume"
     assert len(api.claims) == 1
     worker.resume()
     assert api.resumed == ["t1"]
+    assert worker.human_resume_url is None
     assert len(api.claims) == 1
 
 
