@@ -102,6 +102,31 @@ function Integrations() {
     }
   }
 
+  async function reactivateOneArchived() {
+    setBusy("reactivate");
+    setError("");
+    setMessage("");
+    try {
+      const { data } = await api.post("/integrations/gmail/reactivate-one-archived");
+      if (data?.task_id) {
+        const candidate = data?.candidate_name || "Candidato";
+        const role = data?.job_title ? ` · ${data.job_title}` : "";
+        setMessage(
+          data?.reactivated
+            ? `Prueba preparada: ${candidate}${role}. Abre el Resume Agent para procesar solo esta tarea.`
+            : `Ya existe una tarea activa: ${candidate}${role}.`,
+        );
+      } else {
+        setMessage("No hay tareas históricas archivadas disponibles para prueba.");
+      }
+    } catch (requestError) {
+      const detail = requestError?.response?.data?.detail;
+      setError(detail || "No fue posible preparar una tarea de prueba.");
+    } finally {
+      setBusy("");
+    }
+  }
+
   async function disconnectGmail() {
     setBusy("disconnect");
     setError("");
@@ -226,6 +251,14 @@ function Integrations() {
                     disabled={Boolean(busy) || !status.enabled || !status.safe_filter}
                   >
                     {busy === "sync" ? "Sincronizando…" : "Sincronizar ahora"}
+                  </button>
+                  <button
+                    type="button"
+                    className="integration-secondary"
+                    onClick={reactivateOneArchived}
+                    disabled={Boolean(busy)}
+                  >
+                    {busy === "reactivate" ? "Preparando prueba…" : "Probar 1 candidato archivado"}
                   </button>
                   <button
                     type="button"
