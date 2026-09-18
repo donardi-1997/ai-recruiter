@@ -176,6 +176,7 @@ def test_claim_preserves_specific_parser_failure_code(api, monkeypatch):
         raise InvalidIndeedMessage("INDEED_APPLICATION_FIELDS_MISSING")
 
     monkeypatch.setattr(service, "parse_indeed_application_email", fail_parser)
+    monkeypatch.setattr(service, "_gmail_client_from_oauth", lambda: Mailbox())
 
     response = client.post("/api/agents/indeed-resume/claim")
 
