@@ -265,3 +265,68 @@ def test_same_gmail_message_id_is_tenant_scoped():
     finally:
         db.close()
         engine.dispose()
+
+
+def test_existing_indeed_event_without_task_is_backfilled_idempotently():
+    service = _service_module()
+    from app.domains.candidate_ingestion import repository
+    from app.domains.candidate_ingestion.models import IndeedEmailResumeTask
+
+    engine, db = _db()
+    mailbox = FakeMailboxClient(_indeed_link_message(), {})
+    try:
+        event = repository.create_event(
+            db,
+            owner_sub="owner-1",
+            source="EMAIL",
+            provider="INDEED",
+            source_account="katherine@example.com",
+            external_id="gmail-indeed-link",
+            status="NEEDS_REVIEW",
+            raw_metadata={
+                "gmail_message_id": "gmail-indeed-link",
+                "source_account": "katherine@example.com",
+            },
+        )
+        event.last_error_code = "RESUME_ATTACHMENT_MISSING"
+        event.last_error_message = "legacy event"
+        db.commit()
+        event_id = event.id
+
+        first = service.ingest_gmail_message(
+            db,
+            owner_sub="owner-1",
+            message_id="gmail-indeed-link",
+            mailbox_client=mailbox,
+            provider="INDEED",
+            source_account="katherine@example.com",
+        )
+
+        assert first.created is False
+        assert first.event.id == event_id
+        assert first.event.status == "RECEIVED"
+        assert first.event.last_error_code == "RESUME_DOWNLOAD_PENDING"
+        assert first.event.raw_metadata["candidate_name"] == "Ana Perez"
+        assert first.event.raw_metadata["job_title"] == "Country Manager Chile"
+        assert db.query(IndeedEmailResumeTask).count() == 1
+        task = db.query(IndeedEmailResumeTask).one()
+        assert task.status == "WAITING_DOWNLOAD"
+        assert task.ingestion_event_id == event_id
+        assert mailbox.message_calls == 1
+
+        second = service.ingest_gmail_message(
+            db,
+            owner_sub="owner-1",
+            message_id="gmail-indeed-link",
+            mailbox_client=mailbox,
+            provider="INDEED",
+            source_account="katherine@example.com",
+        )
+
+        assert second.created is False
+        assert second.event.id == event_id
+        assert db.query(IndeedEmailResumeTask).count() == 1
+        assert mailbox.message_calls == 1
+    finally:
+        db.close()
+        engine.dispose()

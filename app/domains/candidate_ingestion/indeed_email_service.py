@@ -126,6 +126,87 @@ def _existing_result(
     return _refresh_result(db, event, created=False)
 
 
+def _backfill_existing_event(
+    db: Session,
+    *,
+    owner_sub: str,
+    source_account: str,
+    raw_message: dict[str, Any],
+    event: CandidateIngestionEvent,
+) -> IndeedEmailDiscoveryResult:
+    """Repair an existing Gmail event that predates the Indeed download-task bridge."""
+    existing_task = _get_task(db, event_id=event.id)
+    if existing_task is not None or repository.list_documents(db, event_id=event.id):
+        return _refresh_result(db, event, created=False)
+
+    try:
+        parsed = parse_indeed_application_email(raw_message)
+    except NotIndeedMessage:
+        return _refresh_result(db, event, created=False)
+    except InvalidIndeedResumeLink:
+        event.status = "NEEDS_REVIEW"
+        event.raw_metadata = _safe_raw_metadata(
+            raw_message,
+            source_account=source_account,
+        )
+        event.last_error_code = "INDEED_RESUME_LINK_INVALID"
+        event.last_error_message = "El enlace del CV de Indeed no es valido."
+        db.commit()
+        return _refresh_result(db, event, created=False)
+    except InvalidIndeedMessage:
+        event.status = "NEEDS_REVIEW"
+        event.raw_metadata = _safe_raw_metadata(
+            raw_message,
+            source_account=source_account,
+        )
+        event.last_error_code = "INDEED_EMAIL_INVALID"
+        event.last_error_message = "El correo de Indeed no contiene una postulacion utilizable."
+        db.commit()
+        return _refresh_result(db, event, created=False)
+
+    metadata = _safe_raw_metadata(
+        raw_message,
+        source_account=source_account,
+        parsed=parsed,
+    )
+    job = job_resolution.resolve_job(
+        db,
+        owner_sub=owner_sub,
+        explicit_job_id=None,
+        metadata=metadata,
+    )
+
+    try:
+        event.status = "RECEIVED"
+        event.raw_metadata = metadata
+        event.job_id = job.id if job is not None else None
+        event.last_error_code = "RESUME_DOWNLOAD_PENDING"
+        event.last_error_message = "El CV de Indeed esta pendiente de descarga."
+        db.add(
+            IndeedEmailResumeTask(
+                owner_sub=owner_sub,
+                ingestion_event_id=event.id,
+                job_id=job.id if job is not None else None,
+                candidate_name=parsed.candidate_name,
+                job_title=parsed.job_title,
+                status="WAITING_DOWNLOAD",
+            )
+        )
+        db.commit()
+        return _refresh_result(db, event, created=False)
+    except IntegrityError:
+        db.rollback()
+        winner = _existing_result(
+            db,
+            owner_sub=owner_sub,
+            source_account=source_account,
+            message_id=parsed.message_id,
+        )
+        if winner is None:
+            raise
+        return winner
+
+
 def _persist_review_event(
     db: Session,
     *,
@@ -197,7 +278,13 @@ def discover_indeed_email(
             message_id=message_id,
         )
         if existing is not None:
-            return existing
+            return _backfill_existing_event(
+                db,
+                owner_sub=owner_sub,
+                source_account=normalized_source_account,
+                raw_message=raw_message,
+                event=existing.event,
+            )
 
     try:
         parsed = parse_indeed_application_email(raw_message)

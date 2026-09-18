@@ -70,6 +70,22 @@ def ingest_gmail_message(
         external_id=message_id,
     )
     if existing is not None:
+        if normalized_provider == "INDEED":
+            has_task = existing.indeed_email_resume_task is not None
+            has_documents = bool(repository.list_documents(db, event_id=existing.id))
+            if not has_task and not has_documents:
+                raw_message = mailbox_client.get_message(message_id)
+                discovered = discover_indeed_email(
+                    db,
+                    owner_sub=owner_sub,
+                    source_account=normalized_source_account,
+                    raw_message=raw_message,
+                )
+                if discovered is not None:
+                    return EmailIngestionResult(
+                        event=_refresh_event(db, discovered.event),
+                        created=False,
+                    )
         return EmailIngestionResult(event=_refresh_event(db, existing), created=False)
 
     raw_message = mailbox_client.get_message(message_id)
