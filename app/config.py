@@ -161,7 +161,7 @@ def get_gmail_oauth_settings() -> GmailOAuthSettings:
         redirect_uri=os.getenv("GMAIL_OAUTH_REDIRECT_URI", "").strip(),
         frontend_return_url=os.getenv(
             "GMAIL_OAUTH_FRONTEND_RETURN_URL",
-            "http://3.23.27.223/integrations",
+            "https://dzcwl3yhv133t.cloudfront.net/integrations",
         ).strip(),
         authorization_url=os.getenv(
             "GMAIL_AUTHORIZATION_URL",
