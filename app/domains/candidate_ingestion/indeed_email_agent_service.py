@@ -550,6 +550,49 @@ def reactivate_one_archived_task(
     }
 
 
+def retry_active_needs_human_task(
+    db: Session,
+    *,
+    owner_sub: str,
+) -> dict:
+    """Retry the current owner-scoped NEEDS_HUMAN smoke-test task in place."""
+    task = (
+        db.query(IndeedEmailResumeTask)
+        .filter(
+            IndeedEmailResumeTask.owner_sub == owner_sub,
+            IndeedEmailResumeTask.status == "NEEDS_HUMAN",
+        )
+        .order_by(
+            IndeedEmailResumeTask.created_at.asc(),
+            IndeedEmailResumeTask.id.asc(),
+        )
+        .first()
+    )
+    if task is None:
+        return {
+            "retried": False,
+            "task_id": None,
+            "status": None,
+            "candidate_name": None,
+            "job_title": None,
+        }
+
+    task.status = "WAITING_DOWNLOAD"
+    task.available_at = None
+    task.last_error_code = None
+    task.last_error_message = None
+    _clear_lease(task)
+    db.commit()
+    db.refresh(task)
+    return {
+        "retried": True,
+        "task_id": str(task.id),
+        "status": str(task.status),
+        "candidate_name": task.candidate_name,
+        "job_title": task.job_title,
+    }
+
+
 def stats(db: Session, *, owner_sub: str) -> dict[str, int]:
     counts = indeed_email_repository.count_by_status(db, owner_sub=owner_sub)
     return {
