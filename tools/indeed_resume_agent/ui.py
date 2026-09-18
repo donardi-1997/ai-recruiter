@@ -131,7 +131,7 @@ def run_ui(*, worker, api, browser) -> None:
                         worker.pause()
                         publish(worker.snapshot, last_stats)
                         try:
-                            browser.open_indeed()
+                            browser.open_indeed(worker.human_resume_url)
                         except Exception:
                             pass
 
