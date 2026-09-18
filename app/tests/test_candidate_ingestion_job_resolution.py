@@ -1,6 +1,7 @@
 """Contracts for conservative candidate-ingestion job resolution."""
 
 from sqlalchemy import create_engine
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 import app.models  # noqa: F401
@@ -294,3 +295,63 @@ def test_title_discovery_key_preserves_meaningful_symbols():
     ) != job_resolution.indeed_discovery_key(
         {"job_title": "C Developer"}
     )
+
+
+def test_indeed_discovery_key_is_unique_per_owner_at_database_level():
+    engine, db = _db()
+    try:
+        first = Job(title="Role A", owner_sub="owner-1")
+        second = Job(title="Role B", owner_sub="owner-1")
+        db.add_all([first, second])
+        db.flush()
+        db.add(
+            IndeedJobLink(
+                job_id=first.id,
+                owner_sub="owner-1",
+                discovery_key="title:same",
+            )
+        )
+        db.commit()
+
+        db.add(
+            IndeedJobLink(
+                job_id=second.id,
+                owner_sub="owner-1",
+                discovery_key="title:same",
+            )
+        )
+        with pytest.raises(IntegrityError):
+            db.commit()
+    finally:
+        db.rollback()
+        db.close()
+        engine.dispose()
+
+
+def test_same_indeed_discovery_key_is_allowed_for_different_owners():
+    engine, db = _db()
+    try:
+        first = Job(title="Role", owner_sub="owner-1")
+        second = Job(title="Role", owner_sub="owner-2")
+        db.add_all([first, second])
+        db.flush()
+        db.add_all(
+            [
+                IndeedJobLink(
+                    job_id=first.id,
+                    owner_sub="owner-1",
+                    discovery_key="title:role",
+                ),
+                IndeedJobLink(
+                    job_id=second.id,
+                    owner_sub="owner-2",
+                    discovery_key="title:role",
+                ),
+            ]
+        )
+        db.commit()
+
+        assert db.query(IndeedJobLink).count() == 2
+    finally:
+        db.close()
+        engine.dispose()
