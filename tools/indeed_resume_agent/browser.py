@@ -70,7 +70,10 @@ def _resolve_edge_executable() -> str:
 
 
 _DOWNLOAD_NAME = re.compile(
-    r"^(download|descargar)(\s+(cv|resume|curr[ií]culum))?$",
+    r"^(?:"
+    r"(?:download|descargar)(?:\s+(?:cv|resume|curr[ií]culum|curriculum|hoja\s+de\s+vida))?"
+    r"|(?:view|ver)\s+(?:cv|resume|curr[ií]culum|curriculum|hoja\s+de\s+vida)"
+    r")$",
     re.IGNORECASE,
 )
 _CHALLENGE_MARKERS = (
@@ -200,6 +203,27 @@ class IndeedBrowser:
         for role in ("button", "link"):
             try:
                 locator = page.get_by_role(role, name=_DOWNLOAD_NAME)
+                if locator.count() > 0:
+                    return locator.first
+            except Exception:
+                continue
+
+        # Indeed occasionally renders the resume action as an icon/link whose
+        # accessible name differs from the visible text. Prefer trusted semantic
+        # hints and direct PDF/download links before requiring human review.
+        selectors = (
+            'a[download]',
+            'a[href*=".pdf"]',
+            'a[href*="resume"]',
+            'a[href*="cv"]',
+            'button[aria-label*="download" i]',
+            'button[aria-label*="descargar" i]',
+            'a[aria-label*="download" i]',
+            'a[aria-label*="descargar" i]',
+        )
+        for selector in selectors:
+            try:
+                locator = page.locator(selector)
                 if locator.count() > 0:
                     return locator.first
             except Exception:
