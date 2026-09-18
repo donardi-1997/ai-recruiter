@@ -41,16 +41,23 @@ def _metadata(parsed, *, source_account: str) -> dict[str, Any]:
 
 
 
-def _assert_sender_domain_allowed(
+def _assert_sender_allowed(
     raw_message: dict[str, Any],
+    *,
+    allowed_senders: tuple[str, ...],
     allowed_sender_domains: tuple[str, ...],
 ) -> None:
+    normalized_senders = {
+        str(value or "").strip().casefold()
+        for value in allowed_senders
+        if str(value or "").strip()
+    }
     normalized_domains = tuple(
         str(value or "").strip().casefold().lstrip(".")
         for value in allowed_sender_domains
         if str(value or "").strip()
     )
-    if not normalized_domains:
+    if not normalized_senders and not normalized_domains:
         return
 
     payload = raw_message.get("payload") or {}
@@ -68,7 +75,10 @@ def _assert_sender_domain_allowed(
     if not sender_domain:
         raise EmailSenderNotAllowed("EMAIL_SENDER_NOT_ALLOWED")
 
-    if not any(
+    if normalized_senders and sender not in normalized_senders:
+        raise EmailSenderNotAllowed("EMAIL_SENDER_NOT_ALLOWED")
+
+    if normalized_domains and not any(
         sender_domain == domain or sender_domain.endswith("." + domain)
         for domain in normalized_domains
     ):
@@ -113,9 +123,10 @@ def ingest_gmail_message(
             has_documents = bool(repository.list_documents(db, event_id=existing.id))
             if not has_task and not has_documents:
                 raw_message = mailbox_client.get_message(message_id)
-                _assert_sender_domain_allowed(
+                _assert_sender_allowed(
                     raw_message,
-                    allowed_sender_domains,
+                    allowed_senders=allowed_senders,
+                    allowed_sender_domains=allowed_sender_domains,
                 )
                 discovered = discover_indeed_email(
                     db,
@@ -131,9 +142,10 @@ def ingest_gmail_message(
         return EmailIngestionResult(event=_refresh_event(db, existing), created=False)
 
     raw_message = mailbox_client.get_message(message_id)
-    _assert_sender_domain_allowed(
+    _assert_sender_allowed(
         raw_message,
-        allowed_sender_domains,
+        allowed_senders=allowed_senders,
+        allowed_sender_domains=allowed_sender_domains,
     )
 
     if normalized_provider == "INDEED":
