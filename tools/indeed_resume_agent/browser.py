@@ -7,6 +7,7 @@ import subprocess
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
+from urllib.parse import urlsplit
 
 from .config import AgentConfig
 
@@ -133,8 +134,28 @@ class IndeedBrowser:
             return self._context.pages[0]
         return self._context.new_page()
 
-    def open_indeed(self) -> None:
-        """Open Indeed in a normal, non-automated Edge session for manual login.
+    @staticmethod
+    def _safe_manual_url(url: str | None) -> str:
+        candidate = str(url or "").strip()
+        if not candidate:
+            return "https://www.indeed.com/"
+        try:
+            parsed = urlsplit(candidate)
+        except Exception:
+            return "https://www.indeed.com/"
+        host = str(parsed.hostname or "").casefold()
+        allowed = (
+            host == "indeed.com"
+            or host.endswith(".indeed.com")
+            or host == "indeedemail.com"
+            or host.endswith(".indeedemail.com")
+        )
+        if parsed.scheme.casefold() != "https" or not allowed:
+            return "https://www.indeed.com/"
+        return candidate
+
+    def open_indeed(self, url: str | None = None) -> None:
+        """Open Indeed in normal Edge, optionally at the blocked resume URL.
 
         The same dedicated user-data directory is reused later by Playwright, so
         cookies/session state survive without automating login, MFA, or CAPTCHA.
@@ -148,7 +169,7 @@ class IndeedBrowser:
             "--new-window",
             "--no-first-run",
             "--no-default-browser-check",
-            "https://www.indeed.com/",
+            self._safe_manual_url(url),
         ]
         self._process_runner(command, check=False)
 
