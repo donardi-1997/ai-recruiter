@@ -206,6 +206,64 @@ describe("Gmail corporate integration", () => {
     ).toBeInTheDocument();
   });
 
+
+
+  it("retries the same smoke-test task after a parser needs-human state", async () => {
+    api.get.mockResolvedValueOnce({
+      data: {
+        enabled: true,
+        configured: true,
+        oauth_configured: true,
+        connected: true,
+        connected_email: "recruiting@asiaticorp.com",
+        provider: "INDEED",
+        safe_filter: true,
+        redirect_uri: "https://abc.execute-api.us-east-2.amazonaws.com/prod/api/integrations/gmail/oauth/callback",
+      },
+    });
+    api.post
+      .mockResolvedValueOnce({
+        data: {
+          reactivated: false,
+          task_id: "task-1",
+          status: "NEEDS_HUMAN",
+          candidate_name: "Ana Perez",
+          job_title: "Country Manager Chile",
+          last_error_code: "INDEED_EMAIL_INVALID",
+        },
+      })
+      .mockResolvedValueOnce({
+        data: {
+          retried: true,
+          task_id: "task-1",
+          status: "WAITING_DOWNLOAD",
+          candidate_name: "Ana Perez",
+          job_title: "Country Manager Chile",
+        },
+      });
+
+    renderPage();
+    await screen.findByText("recruiting@asiaticorp.com");
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "Probar 1 candidato archivado" }),
+    );
+    expect(
+      await screen.findByRole("button", { name: "Reintentar prueba" }),
+    ).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Reintentar prueba" }));
+
+    await waitFor(() => {
+      expect(api.post).toHaveBeenCalledWith(
+        "/integrations/gmail/retry-active-archived-test",
+      );
+    });
+    expect(
+      await screen.findByText(/Prueba reactivada: Ana Perez · Country Manager Chile/),
+    ).toBeInTheDocument();
+  });
+
   it("disconnects the corporate mailbox and refreshes status", async () => {
     api.get
       .mockResolvedValueOnce({

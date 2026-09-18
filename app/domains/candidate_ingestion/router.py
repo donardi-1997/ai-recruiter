@@ -117,6 +117,20 @@ def gmail_reactivate_one_archived(
         raise _translate(exc)
 
 
+@router.post("/api/integrations/gmail/retry-active-archived-test")
+def gmail_retry_active_archived_test(
+    db: Session = Depends(get_db),
+    user: dict = Depends(get_current_user),
+):
+    try:
+        return indeed_email_agent_service.retry_active_needs_human_task(
+            db,
+            owner_sub=user["sub"],
+        )
+    except Exception as exc:
+        raise _translate(exc)
+
+
 @router.delete("/api/integrations/gmail")
 def gmail_disconnect(_user: dict = Depends(get_current_user)):
     try:

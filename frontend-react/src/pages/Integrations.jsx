@@ -11,6 +11,7 @@ function Integrations() {
   const [status, setStatus] = useState(null);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState("");
+  const [activeSmokeNeedsHuman, setActiveSmokeNeedsHuman] = useState(false);
   const [message, setMessage] = useState(() =>
     oauthOutcome === "connected" ? "Gmail corporativo conectado correctamente." : "",
   );
@@ -112,19 +113,47 @@ function Integrations() {
         const candidate = data?.candidate_name || "Candidato";
         const role = data?.job_title ? ` · ${data.job_title}` : "";
         const errorCode = data?.last_error_code ? ` · ${data.last_error_code}` : "";
+        const needsHuman = data?.status === "NEEDS_HUMAN";
+        setActiveSmokeNeedsHuman(needsHuman);
         setMessage(
           data?.reactivated
             ? `Prueba preparada: ${candidate}${role}. Abre el Resume Agent para procesar solo esta tarea.`
-            : data?.status === "NEEDS_HUMAN"
+            : needsHuman
               ? `La tarea activa necesita revisión: ${candidate}${role}${errorCode}.`
               : `Ya existe una tarea activa: ${candidate}${role}${errorCode}.`,
         );
       } else {
+        setActiveSmokeNeedsHuman(false);
         setMessage("No hay tareas históricas archivadas disponibles para prueba.");
       }
     } catch (requestError) {
       const detail = requestError?.response?.data?.detail;
       setError(detail || "No fue posible preparar una tarea de prueba.");
+    } finally {
+      setBusy("");
+    }
+  }
+
+  async function retryActiveArchivedTest() {
+    setBusy("retry-test");
+    setError("");
+    setMessage("");
+    try {
+      const { data } = await api.post("/integrations/gmail/retry-active-archived-test");
+      if (data?.retried) {
+        setActiveSmokeNeedsHuman(false);
+        const candidate = data?.candidate_name || "Candidato";
+        const role = data?.job_title ? ` · ${data.job_title}` : "";
+        setMessage(
+          `Prueba reactivada: ${candidate}${role}. El Resume Agent intentará esta misma tarea otra vez.`,
+        );
+      } else {
+        setActiveSmokeNeedsHuman(false);
+        setMessage("No hay una tarea de prueba esperando intervención.");
+      }
+    } catch (requestError) {
+      const detail = requestError?.response?.data?.detail;
+      setError(detail || "No fue posible reintentar la tarea de prueba.");
     } finally {
       setBusy("");
     }
@@ -263,6 +292,16 @@ function Integrations() {
                   >
                     {busy === "reactivate" ? "Preparando prueba…" : "Probar 1 candidato archivado"}
                   </button>
+                  {activeSmokeNeedsHuman && (
+                    <button
+                      type="button"
+                      className="integration-secondary"
+                      onClick={retryActiveArchivedTest}
+                      disabled={Boolean(busy)}
+                    >
+                      {busy === "retry-test" ? "Reintentando…" : "Reintentar prueba"}
+                    </button>
+                  )}
                   <button
                     type="button"
                     className="integration-secondary"
