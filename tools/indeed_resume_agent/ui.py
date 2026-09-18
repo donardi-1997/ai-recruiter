@@ -106,7 +106,7 @@ def run_ui(*, worker, api, browser) -> None:
     buttons.pack(fill="x", side="bottom")
     ttk.Button(buttons, text="Pause", command=lambda: commands.put("pause")).pack(side="left")
     ttk.Button(buttons, text="Resume", command=lambda: commands.put("resume")).pack(side="left", padx=8)
-    ttk.Button(buttons, text="Open Indeed", command=lambda: commands.put("open")).pack(side="right")
+    ttk.Button(buttons, text="Open Indeed (manual)", command=lambda: commands.put("open")).pack(side="right")
 
     def publish(snapshot: WorkerSnapshot, stats: QueueStats) -> None:
         updates.put(build_ui_state(snapshot, stats))
