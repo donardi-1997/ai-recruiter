@@ -166,6 +166,46 @@ describe("Gmail corporate integration", () => {
     ).toBeInTheDocument();
   });
 
+
+
+  it("shows the exact parser error for an active task needing attention", async () => {
+    api.get.mockResolvedValueOnce({
+      data: {
+        enabled: true,
+        configured: true,
+        oauth_configured: true,
+        connected: true,
+        connected_email: "recruiting@asiaticorp.com",
+        provider: "INDEED",
+        safe_filter: true,
+        redirect_uri: "https://abc.execute-api.us-east-2.amazonaws.com/prod/api/integrations/gmail/oauth/callback",
+      },
+    });
+    api.post.mockResolvedValueOnce({
+      data: {
+        reactivated: false,
+        task_id: "task-1",
+        status: "NEEDS_HUMAN",
+        candidate_name: "Ana Perez",
+        job_title: "Country Manager Chile",
+        last_error_code: "INDEED_APPLICATION_FIELDS_MISSING",
+      },
+    });
+
+    renderPage();
+    await screen.findByText("recruiting@asiaticorp.com");
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "Probar 1 candidato archivado" }),
+    );
+
+    expect(
+      await screen.findByText(
+        /La tarea activa necesita revisión: Ana Perez · Country Manager Chile · INDEED_APPLICATION_FIELDS_MISSING/,
+      ),
+    ).toBeInTheDocument();
+  });
+
   it("disconnects the corporate mailbox and refreshes status", async () => {
     api.get
       .mockResolvedValueOnce({
