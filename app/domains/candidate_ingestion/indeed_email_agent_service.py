@@ -245,7 +245,7 @@ def claim_next_task_with_resume_url(
             resume_host_suffixes=parser_settings.resume_host_suffixes,
         )
     except (InvalidIndeedResumeLink, InvalidIndeedMessage, NotIndeedMessage) as exc:
-        code = (
+        code = str(exc or "").strip() or (
             "INDEED_RESUME_LINK_INVALID"
             if isinstance(exc, InvalidIndeedResumeLink)
             else "INDEED_EMAIL_INVALID"
@@ -504,6 +504,7 @@ def reactivate_one_archived_task(
             "status": str(active.status),
             "candidate_name": active.candidate_name,
             "job_title": active.job_title,
+            "last_error_code": active.last_error_code,
         }
 
     task = (
@@ -526,6 +527,7 @@ def reactivate_one_archived_task(
             "status": None,
             "candidate_name": None,
             "job_title": None,
+            "last_error_code": None,
         }
 
     task.status = "WAITING_DOWNLOAD"
@@ -544,6 +546,7 @@ def reactivate_one_archived_task(
         "status": str(task.status),
         "candidate_name": task.candidate_name,
         "job_title": task.job_title,
+        "last_error_code": None,
     }
 
 
