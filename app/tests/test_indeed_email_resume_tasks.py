@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session
 
 import app.models  # noqa: F401 - register shared FK target tables
 from app.db import Base
+from app.domains.candidate_ingestion import indeed_email_agent_service
 from app.domains.candidate_ingestion.models import CandidateIngestionEvent
 
 
@@ -114,3 +115,44 @@ def test_migration_011_is_additive_and_revises_010():
     assert '"uq_indeed_email_resume_task_event"' in text
     assert '"idx_indeed_email_resume_task_claim"' in text
     assert '"idx_indeed_email_resume_task_owner_status"' in text
+
+
+def test_reactivate_one_archived_task_is_owner_scoped_and_idempotent():
+    task_model = _task_model()
+    engine, db = _db()
+    try:
+        event = _event(db, external_id="gmail-archived")
+        task = task_model(
+            owner_sub="owner-1",
+            ingestion_event_id=event.id,
+            candidate_name="Ana Perez",
+            job_title="Country Manager Chile",
+            status="IGNORED",
+            last_error_code="HISTORICAL_BOOTSTRAP_SKIPPED",
+        )
+        db.add(task)
+        db.commit()
+        db.refresh(task)
+
+        first = indeed_email_agent_service.reactivate_one_archived_task(
+            db,
+            owner_sub="owner-1",
+        )
+        db.refresh(task)
+
+        assert first["reactivated"] is True
+        assert first["task_id"] == task.id
+        assert task.status == "WAITING_DOWNLOAD"
+        assert task.last_error_code is None
+
+        second = indeed_email_agent_service.reactivate_one_archived_task(
+            db,
+            owner_sub="owner-1",
+        )
+
+        assert second["reactivated"] is False
+        assert second["task_id"] == task.id
+        assert second["status"] == "WAITING_DOWNLOAD"
+    finally:
+        db.close()
+        engine.dispose()
