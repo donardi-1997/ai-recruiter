@@ -4,7 +4,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.deps import get_current_user, get_db
-from app.domains.candidate_ingestion import gmail_integration
+from app.domains.candidate_ingestion import gmail_integration, indeed_email_agent_service
 from app.main import app
 
 
@@ -122,4 +122,32 @@ def test_gmail_reset_to_current_uses_authenticated_owner(api, monkeypatch):
 
     assert response.status_code == 200
     assert response.json()["archived"] == 7
+    assert calls["owner_sub"] == principal["sub"]
+
+
+def test_reactivate_one_archived_uses_authenticated_owner(api, monkeypatch):
+    client, principal = api
+    calls = {}
+
+    def fake_reactivate(db, *, owner_sub):
+        calls.update(db=db, owner_sub=owner_sub)
+        return {
+            "reactivated": True,
+            "task_id": "task-1",
+            "status": "WAITING_DOWNLOAD",
+            "candidate_name": "Ana Perez",
+            "job_title": "Country Manager Chile",
+        }
+
+    monkeypatch.setattr(
+        indeed_email_agent_service,
+        "reactivate_one_archived_task",
+        fake_reactivate,
+    )
+
+    response = client.post("/api/integrations/gmail/reactivate-one-archived")
+
+    assert response.status_code == 200
+    assert response.json()["reactivated"] is True
+    assert response.json()["task_id"] == "task-1"
     assert calls["owner_sub"] == principal["sub"]
