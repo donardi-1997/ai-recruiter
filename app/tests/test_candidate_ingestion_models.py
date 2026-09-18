@@ -144,3 +144,14 @@ def test_migration_007_is_additive_and_points_to_006():
     assert 'down_revision = "006"' in text
     assert '"candidate_ingestion_events"' in text
     assert '"candidate_ingestion_documents"' in text
+
+
+def test_migration_012_adds_indeed_job_discovery_key_after_011():
+    migration = Path("app/migrations/versions/012_indeed_job_discovery_key.py")
+
+    assert migration.exists()
+    text = migration.read_text(encoding="utf-8")
+    assert 'revision = "012"' in text
+    assert 'down_revision = "011"' in text
+    assert '"discovery_key"' in text
+    assert '"uq_indeed_job_links_owner_discovery_key"' in text
