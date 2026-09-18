@@ -478,6 +478,75 @@ def store_resume_pdf(
     return document
 
 
+def reactivate_one_archived_task(
+    db: Session,
+    *,
+    owner_sub: str,
+) -> dict:
+    """Prepare exactly one archived historical task for a controlled smoke test."""
+    active_statuses = ("WAITING_DOWNLOAD", "RETRY", "NEEDS_HUMAN", "CLAIMED")
+    active = (
+        db.query(IndeedEmailResumeTask)
+        .filter(
+            IndeedEmailResumeTask.owner_sub == owner_sub,
+            IndeedEmailResumeTask.status.in_(active_statuses),
+        )
+        .order_by(
+            IndeedEmailResumeTask.created_at.asc(),
+            IndeedEmailResumeTask.id.asc(),
+        )
+        .first()
+    )
+    if active is not None:
+        return {
+            "reactivated": False,
+            "task_id": str(active.id),
+            "status": str(active.status),
+            "candidate_name": active.candidate_name,
+            "job_title": active.job_title,
+        }
+
+    task = (
+        db.query(IndeedEmailResumeTask)
+        .filter(
+            IndeedEmailResumeTask.owner_sub == owner_sub,
+            IndeedEmailResumeTask.status == "IGNORED",
+            IndeedEmailResumeTask.last_error_code == "HISTORICAL_BOOTSTRAP_SKIPPED",
+        )
+        .order_by(
+            IndeedEmailResumeTask.created_at.desc(),
+            IndeedEmailResumeTask.id.desc(),
+        )
+        .first()
+    )
+    if task is None:
+        return {
+            "reactivated": False,
+            "task_id": None,
+            "status": None,
+            "candidate_name": None,
+            "job_title": None,
+        }
+
+    task.status = "WAITING_DOWNLOAD"
+    task.available_at = None
+    task.lease_token = None
+    task.lease_expires_at = None
+    task.claimed_at = None
+    task.attempt_count = 0
+    task.last_error_code = None
+    task.last_error_message = None
+    db.commit()
+    db.refresh(task)
+    return {
+        "reactivated": True,
+        "task_id": str(task.id),
+        "status": str(task.status),
+        "candidate_name": task.candidate_name,
+        "job_title": task.job_title,
+    }
+
+
 def stats(db: Session, *, owner_sub: str) -> dict[str, int]:
     counts = indeed_email_repository.count_by_status(db, owner_sub=owner_sub)
     return {
