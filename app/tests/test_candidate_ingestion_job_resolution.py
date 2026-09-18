@@ -357,3 +357,38 @@ def test_same_indeed_discovery_key_is_allowed_for_different_owners():
     finally:
         db.close()
         engine.dispose()
+
+
+def test_title_discovered_job_is_enriched_when_posting_id_appears_later():
+    engine, db = _db()
+    try:
+        first = job_resolution.resolve_or_create_indeed_job(
+            db,
+            owner_sub="owner-1",
+            metadata={"job_title": "Country Manager Chile"},
+        )
+        second = job_resolution.resolve_or_create_indeed_job(
+            db,
+            owner_sub="owner-1",
+            metadata={
+                "job_title": "Country Manager Chile",
+                "external_job_id": "JK123456",
+            },
+        )
+        third = job_resolution.resolve_or_create_indeed_job(
+            db,
+            owner_sub="owner-1",
+            metadata={
+                "job_title": "Country Manager Chile updated",
+                "external_job_id": "JK123456",
+            },
+        )
+
+        assert first.id == second.id == third.id
+        assert db.query(Job).count() == 1
+        link = db.query(IndeedJobLink).filter(IndeedJobLink.job_id == first.id).one()
+        assert link.discovery_key == "title:country manager chile"
+        assert link.sourced_posting_id == "JK123456"
+    finally:
+        db.close()
+        engine.dispose()
