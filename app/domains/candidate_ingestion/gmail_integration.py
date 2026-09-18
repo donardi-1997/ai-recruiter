@@ -421,13 +421,9 @@ def sync_mailbox(
             "GMAIL_TOKEN_REFRESH_REJECTED: vuelve a conectar la cuenta de Gmail."
         ) from exc
     except GmailApiUnauthorized as exc:
-        raise GmailRemoteError(
-            "GMAIL_API_UNAUTHORIZED: vuelve a conectar la cuenta de Gmail."
-        ) from exc
+        raise GmailRemoteError(str(exc)) from exc
     except GmailApiPermissionDenied as exc:
-        raise GmailRemoteError(
-            "GMAIL_API_PERMISSION_DENIED: verifica el permiso gmail.readonly y vuelve a conectar Gmail."
-        ) from exc
+        raise GmailRemoteError(str(exc)) from exc
     except GmailApiHttpError as exc:
         raise GmailRemoteError(str(exc)) from exc
     except httpx.HTTPError as exc:
