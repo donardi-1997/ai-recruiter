@@ -17,6 +17,36 @@ class GmailHistoryExpired(RuntimeError):
     """Raised when Gmail can no longer serve an incremental history cursor."""
 
 
+class GmailTokenRefreshRejected(RuntimeError):
+    """Google rejected the configured OAuth refresh token/client pair."""
+
+
+class GmailApiUnauthorized(RuntimeError):
+    """Gmail API rejected the access token."""
+
+
+class GmailApiPermissionDenied(RuntimeError):
+    """Gmail API denied the requested operation."""
+
+
+class GmailApiHttpError(RuntimeError):
+    """Gmail API returned an unexpected non-success HTTP status."""
+
+
+def _ensure_google_success(response, *, operation: str) -> None:
+    """Classify Google HTTP failures without exposing response bodies or tokens."""
+    status = int(getattr(response, "status_code", 0) or 0)
+    if 200 <= status < 300:
+        return
+    if operation == "token_refresh":
+        raise GmailTokenRefreshRejected("GMAIL_TOKEN_REFRESH_REJECTED")
+    if status == 401:
+        raise GmailApiUnauthorized("GMAIL_API_UNAUTHORIZED")
+    if status == 403:
+        raise GmailApiPermissionDenied("GMAIL_API_PERMISSION_DENIED")
+    raise GmailApiHttpError(f"GMAIL_API_HTTP_{status or 'UNKNOWN'}")
+
+
 @dataclass(frozen=True)
 class GmailListResult:
     messages: list[dict[str, Any]]
@@ -66,7 +96,7 @@ class GmailClient:
                 "grant_type": "refresh_token",
             },
         )
-        response.raise_for_status()
+        _ensure_google_success(response, operation="token_refresh")
         payload = response.json()
         token = str(payload.get("access_token") or "").strip()
         if not token:
@@ -98,7 +128,7 @@ class GmailClient:
             f"{self._user_base_url()}/profile",
             headers=self._headers(),
         )
-        response.raise_for_status()
+        _ensure_google_success(response, operation="gmail_api")
         payload = response.json()
         email_address = str(payload.get("emailAddress") or "").strip().casefold()
         history_id = str(payload.get("historyId") or "").strip()
@@ -126,7 +156,7 @@ class GmailClient:
             headers=self._headers(),
             params=params,
         )
-        response.raise_for_status()
+        _ensure_google_success(response, operation="gmail_api")
         payload = response.json()
         return GmailListResult(
             messages=list(payload.get("messages") or []),
@@ -158,7 +188,7 @@ class GmailClient:
         )
         if response.status_code == 404:
             raise GmailHistoryExpired("GMAIL_HISTORY_EXPIRED")
-        response.raise_for_status()
+        _ensure_google_success(response, operation="gmail_api")
         payload = response.json()
 
         ordered_ids: list[str] = []
@@ -185,7 +215,7 @@ class GmailClient:
             headers=self._headers(),
             params={"format": "full"},
         )
-        response.raise_for_status()
+        _ensure_google_success(response, operation="gmail_api")
         return dict(response.json())
 
     def get_attachment(self, message_id: str, attachment_id: str) -> bytes:
@@ -199,7 +229,7 @@ class GmailClient:
             ),
             headers=self._headers(),
         )
-        response.raise_for_status()
+        _ensure_google_success(response, operation="gmail_api")
         encoded = str(response.json().get("data") or "")
         if not encoded:
             raise RuntimeError("GMAIL_ATTACHMENT_DATA_MISSING")

@@ -24,7 +24,13 @@ from app.config import (
 )
 from app.domains.candidate_ingestion.mailbox_sync import sync_gmail_mailbox
 from app.infrastructure.gmail_oauth_store import GmailOAuthSecretStore
-from app.integrations.email_ingestion.gmail import GmailClient
+from app.integrations.email_ingestion.gmail import (
+    GmailApiHttpError,
+    GmailApiPermissionDenied,
+    GmailApiUnauthorized,
+    GmailClient,
+    GmailTokenRefreshRejected,
+)
 
 
 class GmailDisabled(RuntimeError):
@@ -410,8 +416,22 @@ def sync_mailbox(
             storage=storage,
         )
         return asdict(result)
+    except GmailTokenRefreshRejected as exc:
+        raise GmailRemoteError(
+            "GMAIL_TOKEN_REFRESH_REJECTED: vuelve a conectar la cuenta de Gmail."
+        ) from exc
+    except GmailApiUnauthorized as exc:
+        raise GmailRemoteError(
+            "GMAIL_API_UNAUTHORIZED: vuelve a conectar la cuenta de Gmail."
+        ) from exc
+    except GmailApiPermissionDenied as exc:
+        raise GmailRemoteError(
+            "GMAIL_API_PERMISSION_DENIED: verifica el permiso gmail.readonly y vuelve a conectar Gmail."
+        ) from exc
+    except GmailApiHttpError as exc:
+        raise GmailRemoteError(str(exc)) from exc
     except httpx.HTTPError as exc:
-        raise GmailRemoteError("Gmail API is unavailable.") from exc
+        raise GmailRemoteError("GMAIL_NETWORK_ERROR: no fue posible contactar Google.") from exc
     except RuntimeError as exc:
         code = str(exc)
         if code == "GMAIL_NOT_CONFIGURED":
