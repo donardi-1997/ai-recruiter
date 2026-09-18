@@ -87,6 +87,20 @@ def gmail_sync(
         raise _translate(exc)
 
 
+@router.post("/api/integrations/gmail/reset-to-current")
+def gmail_reset_to_current(
+    db: Session = Depends(get_db),
+    user: dict = Depends(get_current_user),
+):
+    try:
+        return gmail_integration.reset_mailbox_to_current(
+            db,
+            owner_sub=user["sub"],
+        )
+    except Exception as exc:
+        raise _translate(exc)
+
+
 @router.delete("/api/integrations/gmail")
 def gmail_disconnect(_user: dict = Depends(get_current_user)):
     try:
