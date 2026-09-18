@@ -131,6 +131,7 @@ def sync_gmail_mailbox(
     provider: str,
     mailbox_client,
     allowed_senders: tuple[str, ...] = (),
+    allowed_sender_domains: tuple[str, ...] = (),
     storage=None,
     max_results: int = 20,
 ) -> GmailMailboxSyncResult:
@@ -225,6 +226,7 @@ def sync_gmail_mailbox(
                 provider=normalized_provider,
                 source_account=source_account,
                 allowed_senders=allowed_senders,
+                allowed_sender_domains=allowed_sender_domains,
                 storage=storage,
             )
         except (EmailSenderNotAllowed, InvalidEmailMessage):
