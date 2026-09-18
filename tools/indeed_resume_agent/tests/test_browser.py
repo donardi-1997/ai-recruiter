@@ -6,6 +6,7 @@ from tools.indeed_resume_agent.browser import (
     InvalidResumePdf,
     normalize_pdf_filename,
     validate_pdf,
+    _DOWNLOAD_NAME,
 )
 from tools.indeed_resume_agent.config import AgentConfig
 
@@ -265,3 +266,18 @@ def test_open_indeed_rejects_unsafe_manual_url(tmp_path, url):
     browser.open_indeed(url)
 
     assert calls[0][0][-1] == "https://www.indeed.com/"
+
+
+@pytest.mark.parametrize(
+    "label",
+    [
+        "Download resume",
+        "Download CV",
+        "Descargar currículum",
+        "Descargar hoja de vida",
+        "Ver CV",
+        "View resume",
+    ],
+)
+def test_download_control_name_accepts_common_indeed_labels(label):
+    assert _DOWNLOAD_NAME.fullmatch(label)
