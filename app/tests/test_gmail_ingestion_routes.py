@@ -100,3 +100,26 @@ def test_gmail_sync_translates_operational_failures(
 
     assert response.status_code == expected_status
     assert "detail" in response.json()
+
+
+def test_gmail_reset_to_current_uses_authenticated_owner(api, monkeypatch):
+    client, principal = api
+    calls = {}
+
+    def fake_reset(db, *, owner_sub):
+        calls.update(db=db, owner_sub=owner_sub)
+        return {
+            "source_account": "recruiting@example.com",
+            "cursor_value": "999",
+            "archived": 7,
+            "archived_by_status": {"WAITING_DOWNLOAD": 6, "NEEDS_HUMAN": 1},
+            "mode": "INCREMENTAL_FROM_NOW",
+        }
+
+    monkeypatch.setattr(gmail_integration, "reset_mailbox_to_current", fake_reset)
+
+    response = client.post("/api/integrations/gmail/reset-to-current")
+
+    assert response.status_code == 200
+    assert response.json()["archived"] == 7
+    assert calls["owner_sub"] == principal["sub"]
