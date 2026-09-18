@@ -6,7 +6,7 @@ from sqlalchemy.orm import Session
 import app.models  # noqa: F401
 from app.db import Base
 from app.domains.candidate_ingestion import job_resolution
-from app.models import Job
+from app.models import IndeedJobLink, Job
 
 
 def _db():
@@ -178,3 +178,119 @@ def test_subject_never_resolves_other_tenants_job():
     finally:
         db.close()
         engine.dispose()
+
+
+def test_indeed_auto_creates_job_once_by_normalized_title():
+    engine, db = _db()
+    try:
+        first = job_resolution.resolve_or_create_indeed_job(
+            db,
+            owner_sub="owner-1",
+            metadata={"job_title": "Líder de Contact Center Comercial"},
+        )
+        second = job_resolution.resolve_or_create_indeed_job(
+            db,
+            owner_sub="owner-1",
+            metadata={"job_title": "  lider de contact center comercial  "},
+        )
+
+        assert first is not None
+        assert second is not None
+        assert first.id == second.id
+        assert db.query(Job).filter(Job.owner_sub == "owner-1").count() == 1
+
+        link = db.query(IndeedJobLink).filter(IndeedJobLink.job_id == first.id).one()
+        assert link.discovery_key == "title:lider de contact center comercial"
+        assert link.external_status["auto_created"] is True
+        assert link.external_status["origin"] == "EMAIL_AUTO_DISCOVERY"
+    finally:
+        db.close()
+        engine.dispose()
+
+
+def test_indeed_auto_creation_is_tenant_scoped():
+    engine, db = _db()
+    try:
+        owner_a = job_resolution.resolve_or_create_indeed_job(
+            db,
+            owner_sub="owner-a",
+            metadata={"job_title": "Country Manager Chile"},
+        )
+        owner_b = job_resolution.resolve_or_create_indeed_job(
+            db,
+            owner_sub="owner-b",
+            metadata={"job_title": "Country Manager Chile"},
+        )
+
+        assert owner_a.id != owner_b.id
+        assert db.query(Job).count() == 2
+    finally:
+        db.close()
+        engine.dispose()
+
+
+def test_external_indeed_posting_id_wins_over_equal_visible_titles():
+    engine, db = _db()
+    try:
+        first = job_resolution.resolve_or_create_indeed_job(
+            db,
+            owner_sub="owner-1",
+            metadata={
+                "job_title": "Sales Manager",
+                "external_job_id": "posting-A",
+            },
+        )
+        second = job_resolution.resolve_or_create_indeed_job(
+            db,
+            owner_sub="owner-1",
+            metadata={
+                "job_title": "Sales Manager",
+                "external_job_id": "posting-B",
+            },
+        )
+        first_again = job_resolution.resolve_or_create_indeed_job(
+            db,
+            owner_sub="owner-1",
+            metadata={
+                "job_title": "Sales Manager renamed in email",
+                "external_job_id": "posting-A",
+            },
+        )
+
+        assert first.id != second.id
+        assert first_again.id == first.id
+        assert db.query(Job).filter(Job.owner_sub == "owner-1").count() == 2
+    finally:
+        db.close()
+        engine.dispose()
+
+
+def test_title_fallback_reuses_one_existing_manual_job():
+    engine, db = _db()
+    try:
+        manual = Job(title="Analista de Automatización e IA", owner_sub="owner-1")
+        db.add(manual)
+        db.commit()
+        db.refresh(manual)
+
+        resolved = job_resolution.resolve_or_create_indeed_job(
+            db,
+            owner_sub="owner-1",
+            metadata={"job_title": "Analista de Automatización e IA"},
+        )
+
+        assert resolved.id == manual.id
+        assert db.query(Job).count() == 1
+        link = db.query(IndeedJobLink).filter(IndeedJobLink.job_id == manual.id).one()
+        assert link.external_status["auto_created"] is False
+    finally:
+        db.close()
+        engine.dispose()
+
+
+def test_title_discovery_key_preserves_meaningful_symbols():
+    assert job_resolution.indeed_discovery_key(
+        {"job_title": "C++ Developer"}
+    ) != job_resolution.indeed_discovery_key(
+        {"job_title": "C Developer"}
+    )
