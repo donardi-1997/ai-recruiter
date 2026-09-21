@@ -1,14 +1,21 @@
+import io
 import json
 from pathlib import Path
+import zipfile
 import pytest
 
 from tools.indeed_resume_agent.browser import (
     BrowserFetchStageError,
     BrowserOutcome,
     IndeedBrowser,
+    DOCX_CONTENT_TYPE,
+    PDF_CONTENT_TYPE,
+    InvalidResumeDocument,
     InvalidResumePdf,
     normalize_pdf_filename,
+    normalize_resume_filename,
     validate_pdf,
+    validate_resume_document,
     _DOWNLOAD_NAME,
     _safe_diagnostic_url,
     _safe_diagnostic_text,
@@ -17,9 +24,20 @@ from tools.indeed_resume_agent.config import AgentConfig
 
 
 class FakeResponse:
-    def __init__(self, status=200, content_type="text/html", body=b""):
+    def __init__(
+        self,
+        status=200,
+        content_type="text/html",
+        body=b"",
+        *,
+        content_disposition=None,
+        url="",
+    ):
         self.status = status
         self.headers = {"content-type": content_type}
+        if content_disposition is not None:
+            self.headers["content-disposition"] = content_disposition
+        self.url = url
         self._body = body
     def body(self):
         return self._body
@@ -49,9 +67,24 @@ class FakeLocator:
 
 
 class FakeDownload:
-    suggested_filename = "candidate-cv.pdf"
-    def __init__(self, path): self._path = path
+    def __init__(self, path, suggested_filename="candidate-cv.pdf"):
+        self._path = path
+        self.suggested_filename = suggested_filename
     def path(self): return str(self._path)
+
+
+def _docx_bytes(text="Alejandra Camacho Saenz"):
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+        archive.writestr(
+            "[Content_Types].xml",
+            '<?xml version="1.0"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"></Types>',
+        )
+        archive.writestr(
+            "word/document.xml",
+            f'<?xml version="1.0"?><w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body><w:p><w:r><w:t>{text}</w:t></w:r></w:p></w:body></w:document>',
+        )
+    return buffer.getvalue()
 
 
 class FakeDownloadInfo:
@@ -1299,6 +1332,79 @@ def test_unknown_ui_fails_closed(tmp_path):
 
 
 @pytest.mark.parametrize("data,code", [(b"", "RESUME_NOT_PDF"), (b"hello", "RESUME_NOT_PDF")])
+def test_validate_resume_document_accepts_docx_and_preserves_extension():
+    data = _docx_bytes()
+    content_type = validate_resume_document(
+        data,
+        filename="CVAlejandracamachosaenz.docx",
+        content_type=DOCX_CONTENT_TYPE,
+        max_bytes=15 * 1024 * 1024,
+    )
+    assert content_type == DOCX_CONTENT_TYPE
+    assert normalize_resume_filename(
+        r"C:\temp\CVAlejandracamachosaenz.docx",
+        content_type=content_type,
+    ) == "CVAlejandracamachosaenz.docx"
+
+
+def test_validate_resume_document_rejects_fake_docx():
+    with pytest.raises(InvalidResumeDocument) as caught:
+        validate_resume_document(
+            b"PK-not-a-real-docx",
+            filename="candidate.docx",
+            content_type=DOCX_CONTENT_TYPE,
+            max_bytes=15 * 1024 * 1024,
+        )
+    assert caught.value.code == "RESUME_NOT_DOCX"
+
+
+def test_resume_response_preserves_docx_filename_and_mime(tmp_path):
+    browser = IndeedBrowser(cfg(tmp_path))
+    response = FakeResponse(
+        200,
+        DOCX_CONTENT_TYPE,
+        _docx_bytes(),
+        content_disposition='attachment; filename="CVAlejandracamachosaenz.docx"',
+        url="https://employers.indeed.com/api/catws/resume/v2/download",
+    )
+
+    document = browser._response_document(response)
+
+    assert document is not None
+    data, content_type, filename = document
+    assert data.startswith(b"PK")
+    assert content_type == DOCX_CONTENT_TYPE
+    assert filename == "CVAlejandracamachosaenz.docx"
+
+
+def test_download_object_accepts_docx_resume(tmp_path):
+    docx = tmp_path / "download.docx"
+    docx.write_bytes(_docx_bytes())
+    page = FakePage(
+        download=FakeDownload(
+            docx,
+            suggested_filename="CVAlejandracamachosaenz.docx",
+        )
+    )
+    context = FakeContext(FakeResponse(200, "text/html", b""), page)
+    chromium = FakeChromium(context)
+    browser = IndeedBrowser(
+        cfg(tmp_path),
+        playwright_factory=lambda: FakeManager(FakePlaywright(chromium)),
+    )
+    browser.start()
+
+    result = browser.fetch_resume(
+        "https://indeed.test/resume",
+        candidate_name=None,
+    )
+
+    assert result.outcome is BrowserOutcome.DOWNLOADED
+    assert result.filename == "CVAlejandracamachosaenz.docx"
+    assert result.content_type == DOCX_CONTENT_TYPE
+    assert result.data == docx.read_bytes()
+
+
 def test_validate_pdf_rejects_non_pdf(data, code):
     with pytest.raises(InvalidResumePdf) as exc:
         validate_pdf(data, max_bytes=100)
