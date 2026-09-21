@@ -314,7 +314,11 @@ def test_owner_isolation_and_stats():
         claimed = service.claim_next_task(db, owner_sub="owner-a", now=NOW)
         assert claimed is not None
         assert claimed.candidate_name == "Candidate a-wait"
-        assert service.stats(db, owner_sub="owner-a") == {
+        stats = service.stats(db, owner_sub="owner-a")
+        assert {
+            key: stats[key]
+            for key in ("pending", "claimed", "completed", "needs_human", "retry", "failed")
+        } == {
             "pending": 0,
             "claimed": 1,
             "completed": 1,
@@ -322,6 +326,9 @@ def test_owner_isolation_and_stats():
             "retry": 0,
             "failed": 0,
         }
+        assert stats["last_error_code"] is None
+        assert stats["last_error_candidate"] is None
+        assert stats["last_error_status"] is None
         assert service.stats(db, owner_sub="owner-b")["pending"] == 1
     finally:
         db.close()
