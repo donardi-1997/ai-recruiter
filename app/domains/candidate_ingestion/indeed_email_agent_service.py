@@ -752,8 +752,20 @@ def requeue_needs_human_tasks(
     return len(tasks)
 
 
-def stats(db: Session, *, owner_sub: str) -> dict[str, int]:
+def stats(db: Session, *, owner_sub: str) -> dict[str, object]:
     counts = indeed_email_repository.count_by_status(db, owner_sub=owner_sub)
+    latest_error = (
+        db.query(IndeedEmailResumeTask)
+        .filter(
+            IndeedEmailResumeTask.owner_sub == owner_sub,
+            IndeedEmailResumeTask.last_error_code.is_not(None),
+        )
+        .order_by(
+            IndeedEmailResumeTask.updated_at.desc(),
+            IndeedEmailResumeTask.id.desc(),
+        )
+        .first()
+    )
     return {
         "pending": counts.get("WAITING_DOWNLOAD", 0),
         "claimed": counts.get("CLAIMED", 0),
@@ -761,4 +773,19 @@ def stats(db: Session, *, owner_sub: str) -> dict[str, int]:
         "needs_human": counts.get("NEEDS_HUMAN", 0),
         "retry": counts.get("RETRY", 0),
         "failed": counts.get("FAILED", 0),
+        "last_error_code": (
+            str(latest_error.last_error_code)
+            if latest_error is not None and latest_error.last_error_code
+            else None
+        ),
+        "last_error_candidate": (
+            str(latest_error.candidate_name)
+            if latest_error is not None and latest_error.candidate_name
+            else None
+        ),
+        "last_error_status": (
+            str(latest_error.status)
+            if latest_error is not None and latest_error.status
+            else None
+        ),
     }

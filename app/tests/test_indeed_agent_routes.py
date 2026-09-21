@@ -94,8 +94,35 @@ def test_stats_are_owner_scoped(api):
     response = client.get("/api/agents/indeed-resume/stats")
 
     assert response.status_code == 200
-    assert response.json()["pending"] == 1
-    assert sum(response.json().values()) == 1
+    payload = response.json()
+    assert payload["pending"] == 1
+    assert sum(
+        payload[key]
+        for key in ("pending", "claimed", "completed", "needs_human", "retry", "failed")
+    ) == 1
+    assert payload["last_error_code"] is None
+    assert payload["last_error_candidate"] is None
+    assert payload["last_error_status"] is None
+
+
+def test_stats_surface_latest_owner_scoped_error_without_secret_fields(api):
+    client, db = api
+    owned = _task(db, owner_sub="owner-a", status="FAILED")
+    owned.candidate_name = "Alejandra"
+    owned.last_error_code = "RESUME_UPLOAD_FAILED"
+    other = _task(db, owner_sub="owner-b", status="FAILED")
+    other.candidate_name = "Other Owner"
+    other.last_error_code = "SHOULD_NOT_LEAK"
+    db.commit()
+
+    response = client.get("/api/agents/indeed-resume/stats")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["last_error_code"] == "RESUME_UPLOAD_FAILED"
+    assert payload["last_error_candidate"] == "Alejandra"
+    assert payload["last_error_status"] == "FAILED"
+    assert "SHOULD_NOT_LEAK" not in str(payload)
 
 
 def test_mutating_other_owner_task_returns_404(api):

@@ -3,7 +3,7 @@ from __future__ import annotations
 import threading
 from dataclasses import dataclass
 
-from .api_client import LeaseLost
+from .api_client import AgentApiError, LeaseLost
 from .browser import BrowserOutcome, InvalidResumePdf, validate_pdf
 from .config import AgentConfig
 
@@ -118,7 +118,18 @@ class ResumeWorker:
         if self._paused:
             return self._set("PAUSED")
 
-        task = self._api.claim()
+        try:
+            task = self._api.claim()
+        except AgentApiError as exc:
+            return self._set(
+                "ERROR",
+                error=f"CLAIM_{exc.code}"[:120],
+            )
+        except Exception:
+            return self._set(
+                "ERROR",
+                error="CLAIM_REQUEST_FAILED",
+            )
         if task is None:
             return self._set("IDLE")
 
@@ -129,6 +140,7 @@ class ResumeWorker:
         )
         self._set("DOWNLOADING", candidate=task.candidate_name)
         heartbeat.start()
+        stage = "BROWSER_FETCH"
         try:
             result = self._browser.fetch_resume(task.resume_url)
 
@@ -156,6 +168,7 @@ class ResumeWorker:
                     error=detail,
                 )
 
+            stage = "PDF_VALIDATE"
             data = result.data or b""
             validate_pdf(data, max_bytes=self._config.max_pdf_bytes)
 
@@ -166,6 +179,7 @@ class ResumeWorker:
                     error="No se pudo confirmar la vigencia de la tarea.",
                 )
 
+            stage = "UPLOAD"
             self._api.upload_resume(
                 task,
                 filename=result.filename or "indeed-resume.pdf",
@@ -184,21 +198,41 @@ class ResumeWorker:
             return self._set(
                 status,
                 candidate=task.candidate_name,
-                error="El archivo descargado no pasó la validación PDF.",
+                error=exc.code,
             )
-        except Exception:
+        except AgentApiError as exc:
+            safe_code = f"RESUME_{stage}_{exc.code}"[:120]
             try:
-                status = self._api.fail(task, code="RESUME_DOWNLOAD_FAILED")
+                status = self._api.fail(task, code=safe_code)
             except LeaseLost:
                 return self._set(
                     "LEASE_LOST",
                     candidate=task.candidate_name,
-                    error="La tarea perdió su lease y será reclamada de forma segura.",
+                    error="RESUME_TASK_LEASE_LOST",
                 )
             return self._set(
                 status,
                 candidate=task.candidate_name,
-                error="No fue posible completar la descarga del CV.",
+                error=safe_code,
+            )
+        except Exception:
+            safe_code = {
+                "BROWSER_FETCH": "RESUME_BROWSER_FETCH_FAILED",
+                "PDF_VALIDATE": "RESUME_PDF_VALIDATE_FAILED",
+                "UPLOAD": "RESUME_UPLOAD_FAILED",
+            }.get(stage, "RESUME_DOWNLOAD_FAILED")
+            try:
+                status = self._api.fail(task, code=safe_code)
+            except LeaseLost:
+                return self._set(
+                    "LEASE_LOST",
+                    candidate=task.candidate_name,
+                    error="RESUME_TASK_LEASE_LOST",
+                )
+            return self._set(
+                status,
+                candidate=task.candidate_name,
+                error=safe_code,
             )
         finally:
             heartbeat.stop()
