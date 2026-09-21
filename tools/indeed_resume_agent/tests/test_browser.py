@@ -190,6 +190,39 @@ def test_start_refuses_profile_while_manual_edge_is_open(tmp_path):
     assert browser.manual_session_open is False
 
 
+def test_manual_session_detects_edge_child_after_launcher_exits(tmp_path):
+    process = FakeProcess(returncode=0)
+    checks = []
+
+    def probe(profile_dir):
+        checks.append(profile_dir)
+        return True
+
+    browser=IndeedBrowser(
+        cfg(tmp_path),
+        edge_executable_resolver=lambda: r"C:\\Program Files\\Microsoft\\Edge\\Application\\msedge.exe",
+        process_runner=lambda command: process,
+        manual_process_probe=probe,
+    )
+    browser.open_indeed()
+
+    assert browser.manual_session_open is True
+    assert checks == [tmp_path / "profile"]
+
+
+def test_manual_session_clears_when_launcher_and_profile_process_are_gone(tmp_path):
+    process = FakeProcess(returncode=0)
+    browser=IndeedBrowser(
+        cfg(tmp_path),
+        edge_executable_resolver=lambda: r"C:\\Program Files\\Microsoft\\Edge\\Application\\msedge.exe",
+        process_runner=lambda command: process,
+        manual_process_probe=lambda profile_dir: False,
+    )
+    browser.open_indeed()
+
+    assert browser.manual_session_open is False
+
+
 def test_direct_authenticated_request_returns_pdf_without_page_navigation(tmp_path):
     page=FakePage()
     context=FakeContext(FakeResponse(200, "application/pdf", b"%PDF-direct"), page)
