@@ -469,6 +469,35 @@ def test_resume_download_response_requires_exact_indeed_endpoint(tmp_path):
     assert browser._is_resume_download_response(Response()) is False
 
 
+def test_interrupted_navigation_can_still_download_from_landed_candidate_page(tmp_path):
+    pdf=tmp_path / "download.pdf"
+    pdf.write_bytes(b"%PDF-downloaded")
+
+    class InterruptedPage(FakePage):
+        def goto(self, url, **kwargs):
+            self.goto_urls.append(url)
+            self.url = "https://employers.indeed.com/candidates/view?id=abc"
+            raise RuntimeError("Navigation interrupted by client redirect")
+
+        def is_closed(self):
+            return False
+
+    page=InterruptedPage(download=FakeDownload(pdf))
+    context=FakeContext(FakeResponse(200, "text/html", b""), page)
+    chromium=FakeChromium(context)
+    browser=IndeedBrowser(
+        cfg(tmp_path),
+        playwright_factory=lambda: FakeManager(FakePlaywright(chromium)),
+    )
+    browser.start()
+
+    result=browser.fetch_resume("https://employers.indeed.com/candidates/resume?ref=temporary")
+
+    assert result.outcome is BrowserOutcome.DOWNLOADED
+    assert result.data == b"%PDF-downloaded"
+    assert page.url == "https://employers.indeed.com/candidates/view?id=abc"
+
+
 def test_known_download_control_reads_pdf(tmp_path):
     pdf=tmp_path / "download.pdf"
     pdf.write_bytes(b"%PDF-downloaded")
