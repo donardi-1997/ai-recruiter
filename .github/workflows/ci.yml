@@ -50,6 +50,9 @@ jobs:
         run: |
           python -m pytest app/tests/ -n 2 --dist=loadfile -v --tb=short
 
+      - name: Install Chromium for Resume Agent browser fixtures
+        run: python -m playwright install --with-deps chromium
+
       - name: Run ASIATI Resume Agent tests
         run: |
           python -m pytest -q tools/indeed_resume_agent/tests
