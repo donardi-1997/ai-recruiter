@@ -103,6 +103,20 @@ def gmail_reset_to_current(
 
 
 
+@router.get("/api/integrations/gmail/active-archived-test")
+def gmail_active_archived_test(
+    db: Session = Depends(get_db),
+    user: dict = Depends(get_current_user),
+):
+    try:
+        return indeed_email_agent_service.get_active_smoke_task(
+            db,
+            owner_sub=user["sub"],
+        )
+    except Exception as exc:
+        raise _translate(exc)
+
+
 @router.post("/api/integrations/gmail/reactivate-one-archived")
 def gmail_reactivate_one_archived(
     db: Session = Depends(get_db),
