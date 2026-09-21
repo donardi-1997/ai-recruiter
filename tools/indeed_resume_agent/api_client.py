@@ -115,12 +115,19 @@ class AgentApiClient:
         )
         return _parse_datetime(response.json()["lease_expires_at"])
 
-    def upload_resume(self, task: ClaimedTask, *, filename: str, data: bytes) -> dict:
+    def upload_resume(
+        self,
+        task: ClaimedTask,
+        *,
+        filename: str,
+        data: bytes,
+        content_type: str = "application/pdf",
+    ) -> dict:
         response = self._request(
             "POST",
             f"{BASE_PATH}/{task.task_id}/resume",
             lease_token=task.lease_token,
-            files={"file": (filename, data, "application/pdf")},
+            files={"file": (filename, data, str(content_type))},
         )
         return dict(response.json())
 
