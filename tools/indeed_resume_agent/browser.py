@@ -6,6 +6,7 @@ import re
 import shutil
 import subprocess
 import time
+import unicodedata
 from datetime import datetime, timezone
 from email.header import decode_header, make_header
 
@@ -582,6 +583,8 @@ class IndeedBrowser:
                 continue
 
         for selector in (
+            '[data-testid="menu-link-CandidatesMenu"]',
+            'a[href="/candidates"]',
             '[aria-label="Candidatos" i]',
             '[aria-label="Candidates" i]',
             '[title="Candidatos" i]',
@@ -683,17 +686,12 @@ class IndeedBrowser:
 
     @staticmethod
     def _candidate_search_box(page):
-        try:
-            by_role = page.get_by_role(
-                "textbox",
-                name=re.compile(r"(?:buscar|search).*candidat", re.IGNORECASE),
-            )
-            if by_role.count() > 0:
-                return by_role.first
-        except Exception:
-            pass
-
+        # These placeholders come from the live Indeed Candidates DOM. Keep
+        # exact selectors first, then broader fallbacks for locale/experiment
+        # variations.
         for selector in (
+            'input[placeholder="Buscar candidatos" i]',
+            'input[placeholder="Search candidates" i]',
             'input[placeholder*="candidat" i]',
             'input[placeholder*="buscar" i]',
             'input[placeholder*="search" i]',
@@ -704,6 +702,16 @@ class IndeedBrowser:
                     return located.first
             except Exception:
                 continue
+
+        try:
+            by_role = page.get_by_role(
+                "textbox",
+                name=re.compile(r"(?:buscar|search).*candidat", re.IGNORECASE),
+            )
+            if by_role.count() > 0:
+                return by_role.first
+        except Exception:
+            pass
         return None
 
     @staticmethod
@@ -735,69 +743,262 @@ class IndeedBrowser:
                 continue
         return None
 
-    def _open_candidate_from_list(self, page, candidate_name: str):
-        name = " ".join(str(candidate_name or "").split()).strip()
-        if not name:
-            return None
+    @staticmethod
+    def _normalize_lookup_text(value: object) -> str:
+        text = unicodedata.normalize("NFKD", str(value or ""))
+        text = "".join(ch for ch in text if not unicodedata.combining(ch))
+        text = text.casefold()
+        text = re.sub(r"[^a-z0-9]+", " ", text)
+        return " ".join(text.split())
 
-        if not self._open_candidates_workspace(page):
-            return None
-
-        if self._requires_human(page):
-            return None
-
-        exact_name = re.compile(rf"^\s*{re.escape(name)}\s*$", re.IGNORECASE)
-        interval_ms = 500
-        attempts = max(
-            1,
-            min(
-                30,
-                int(max(1.0, float(self._config.request_timeout_seconds)) * 1000)
-                // interval_ms,
-            ),
-        )
-        search_filled = False
-        search_triggered = False
-
-        for _ in range(attempts):
+    def _candidate_name_links(self, page):
+        # Observed live DOM:
+        # <a data-testid="NameCell" href="/candidates/view?id=...">NAME</a>
+        for selector in (
+            'a[data-testid="NameCell"][href*="/candidates/view"]',
+            'a[data-testid="NameCell"]',
+            'a[href*="/candidates/view"]',
+        ):
             try:
-                candidate = page.get_by_text(exact_name)
-                if candidate.count() > 0:
-                    candidate.first.click()
-                    return self._wait_for_download_control(page)
+                locator = page.locator(selector)
+                if locator.count() > 0:
+                    return locator
+            except Exception:
+                continue
+        return None
+
+    def _find_exact_candidate_link(
+        self,
+        page,
+        candidate_name: str,
+        *,
+        job_title: str | None = None,
+    ):
+        target_name = self._normalize_lookup_text(candidate_name)
+        target_job = self._normalize_lookup_text(job_title)
+        if not target_name:
+            return None, False
+
+        links = self._candidate_name_links(page)
+        if links is None:
+            # Semantic fallback for older/alternate Indeed layouts.
+            try:
+                exact = page.get_by_text(
+                    re.compile(rf"^\s*{re.escape(candidate_name)}\s*$", re.IGNORECASE)
+                )
+                if exact.count() == 1:
+                    return exact.first, False
+                if exact.count() > 1:
+                    return None, True
             except Exception:
                 pass
+            return None, False
 
-            if not search_filled:
-                search_box = self._candidate_search_box(page)
-                if search_box is None and not search_triggered:
-                    trigger = self._candidate_search_trigger(page)
-                    if trigger is not None:
-                        try:
-                            trigger.click()
-                            search_triggered = True
-                            page.wait_for_timeout(500)
-                        except Exception:
-                            pass
-                    search_box = self._candidate_search_box(page)
+        matches: list[tuple[object, bool]] = []
+        try:
+            count = min(int(links.count()), 100)
+        except Exception:
+            count = 0
 
-                if search_box is not None:
+        for index in range(count):
+            try:
+                link = links.nth(index)
+                label = self._normalize_lookup_text(link.inner_text(timeout=500))
+                if label != target_name:
+                    continue
+
+                job_matches = False
+                if target_job:
                     try:
-                        search_box.fill(name)
-                        try:
-                            search_box.press("Enter")
-                        except Exception:
-                            pass
-                        search_filled = True
+                        row = link.locator(
+                            "xpath=ancestor::tbody[@data-testid='table-row'][1]"
+                        )
+                        row_text = self._normalize_lookup_text(
+                            row.inner_text(timeout=750)
+                        )
+                        job_matches = target_job in row_text
+                    except Exception:
+                        job_matches = False
+                matches.append((link, job_matches))
+            except Exception:
+                continue
+
+        if not matches:
+            return None, False
+
+        if target_job:
+            job_matches = [link for link, matched in matches if matched]
+            if len(job_matches) == 1:
+                return job_matches[0], False
+            if len(job_matches) > 1:
+                return None, True
+
+        if len(matches) == 1:
+            return matches[0][0], False
+
+        # Multiple candidates with the same normalized name are unsafe to guess.
+        return None, True
+
+    @classmethod
+    def _candidate_search_queries(cls, candidate_name: str) -> list[str]:
+        original = " ".join(str(candidate_name or "").split()).strip()
+        if not original:
+            return []
+
+        normalized = cls._normalize_lookup_text(original)
+        queries = [original]
+        if normalized and normalized.casefold() != original.casefold():
+            queries.append(normalized)
+
+        tokens = normalized.split()
+        if len(tokens) >= 3:
+            short = f"{tokens[0]} {tokens[-1]}"
+            if short not in queries:
+                queries.append(short)
+
+        # Preserve order and avoid repeated searches.
+        unique: list[str] = []
+        seen: set[str] = set()
+        for query in queries:
+            key = query.casefold()
+            if key in seen:
+                continue
+            seen.add(key)
+            unique.append(query)
+        return unique
+
+    def _open_candidate_from_list(
+        self,
+        page,
+        candidate_name: str,
+        *,
+        job_title: str | None = None,
+    ):
+        name = " ".join(str(candidate_name or "").split()).strip()
+        if not name:
+            return None, "INDEED_CANDIDATE_NAME_MISSING"
+
+        if not self._open_candidates_workspace(page):
+            if self._requires_human(page):
+                return None, "INDEED_AUTH_REQUIRED"
+            return None, "INDEED_CANDIDATES_WORKSPACE_UNAVAILABLE"
+
+        if self._requires_human(page):
+            return None, "INDEED_AUTH_REQUIRED"
+
+        # First inspect the currently rendered rows. This is cheap and avoids
+        # touching the search field when the candidate is already visible.
+        candidate, ambiguous = self._find_exact_candidate_link(
+            page,
+            name,
+            job_title=job_title,
+        )
+        if ambiguous:
+            return None, "INDEED_CANDIDATE_AMBIGUOUS"
+        if candidate is not None:
+            try:
+                candidate.click()
+                control = self._wait_for_download_control(page)
+                return (
+                    (control, None)
+                    if control is not None
+                    else (None, "INDEED_CANDIDATE_DETAIL_NO_DOWNLOAD")
+                )
+            except Exception:
+                return None, "INDEED_CANDIDATE_OPEN_FAILED"
+
+        deadline = time.monotonic() + max(
+            3.0, float(self._config.request_timeout_seconds)
+        )
+
+        # Wait for the SPA search input. The live page uses the placeholder
+        # "Buscar candidatos" / "Search candidates" and renders it after the
+        # shell document.
+        search_box = None
+        while time.monotonic() < deadline:
+            if self._requires_human(page):
+                return None, "INDEED_AUTH_REQUIRED"
+            search_box = self._candidate_search_box(page)
+            if search_box is not None:
+                break
+            try:
+                page.wait_for_timeout(250)
+            except Exception:
+                time.sleep(0.25)
+
+        if search_box is None:
+            trigger = self._candidate_search_trigger(page)
+            if trigger is not None:
+                try:
+                    trigger.click()
+                    page.wait_for_timeout(500)
+                except Exception:
+                    pass
+                search_box = self._candidate_search_box(page)
+
+        if search_box is None:
+            return None, "INDEED_CANDIDATE_SEARCH_UNAVAILABLE"
+
+        queries = self._candidate_search_queries(name)
+        for query_index, query in enumerate(queries):
+            if time.monotonic() >= deadline:
+                break
+            try:
+                search_box.fill("")
+                search_box.fill(query)
+            except Exception:
+                return None, "INDEED_CANDIDATE_SEARCH_FAILED"
+
+            # Indeed normally filters after a debounce. Give that behavior the
+            # first chance; Enter is only a compatibility nudge, not the primary
+            # trigger.
+            pressed_enter = False
+            polls = 0
+            while time.monotonic() < deadline:
+                if self._requires_human(page):
+                    return None, "INDEED_AUTH_REQUIRED"
+
+                candidate, ambiguous = self._find_exact_candidate_link(
+                    page,
+                    name,
+                    job_title=job_title,
+                )
+                if ambiguous:
+                    return None, "INDEED_CANDIDATE_AMBIGUOUS"
+                if candidate is not None:
+                    try:
+                        candidate.click()
+                    except Exception:
+                        return None, "INDEED_CANDIDATE_OPEN_FAILED"
+                    control = self._wait_for_download_control(page)
+                    return (
+                        (control, None)
+                        if control is not None
+                        else (None, "INDEED_CANDIDATE_DETAIL_NO_DOWNLOAD")
+                    )
+
+                polls += 1
+                # Some Indeed experiments only submit on Enter. Do this once
+                # after allowing the normal debounced search to run.
+                if not pressed_enter and polls >= 4:
+                    try:
+                        search_box.press("Enter")
                     except Exception:
                         pass
+                    pressed_enter = True
 
-            try:
-                page.wait_for_timeout(interval_ms)
-            except Exception:
-                time.sleep(interval_ms / 1000.0)
+                # Move to the next safe query after ~4 seconds. We still only
+                # click an exact normalized candidate name, so broader query
+                # terms cannot select the wrong person.
+                if polls >= 8 and query_index < len(queries) - 1:
+                    break
 
-        return None
+                try:
+                    page.wait_for_timeout(500)
+                except Exception:
+                    time.sleep(0.5)
+
+        return None, "INDEED_CANDIDATE_NOT_FOUND"
 
     @staticmethod
     def _known_download_control(page):
@@ -1114,10 +1315,15 @@ class IndeedBrowser:
                     continue
                 if hasattr(page, "is_closed") and page.is_closed():
                     continue
-                if self._requires_human(page):
-                    self._diagnostic_active = False
-                    self.close()
-                    raise RuntimeError("INDEED_MANUAL_LOGIN_REQUIRED")
+            except Exception:
+                continue
+
+            if self._requires_human(page):
+                self._diagnostic_active = False
+                self.close()
+                raise RuntimeError("INDEED_MANUAL_LOGIN_REQUIRED")
+
+            try:
                 page.wait_for_timeout(100)
                 return
             except Exception:
@@ -1328,6 +1534,7 @@ class IndeedBrowser:
         url: str,
         *,
         candidate_name: str | None = None,
+        job_title: str | None = None,
     ) -> BrowserResult:
         try:
             self.start()
@@ -1389,9 +1596,14 @@ class IndeedBrowser:
             return BrowserResult(BrowserOutcome.NEEDS_HUMAN, human_code="INDEED_AUTH_REQUIRED")
 
         fallback_attempted = False
+        lookup_error: str | None = None
         if (generic_landing or control is None) and str(candidate_name or "").strip():
             fallback_attempted = True
-            control = self._open_candidate_from_list(page, str(candidate_name))
+            control, lookup_error = self._open_candidate_from_list(
+                page,
+                str(candidate_name),
+                job_title=job_title,
+            )
 
         if self._requires_human(page):
             return BrowserResult(BrowserOutcome.NEEDS_HUMAN, human_code="INDEED_AUTH_REQUIRED")
@@ -1401,9 +1613,12 @@ class IndeedBrowser:
             return BrowserResult(
                 BrowserOutcome.NEEDS_HUMAN,
                 human_code=(
-                    "INDEED_CANDIDATE_NOT_FOUND"
-                    if fallback_attempted
-                    else "INDEED_UI_REQUIRES_REVIEW"
+                    lookup_error
+                    or (
+                        "INDEED_CANDIDATE_NOT_FOUND"
+                        if fallback_attempted
+                        else "INDEED_UI_REQUIRES_REVIEW"
+                    )
                 ),
                 diagnostic_path=diagnostic_path,
             )
