@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import queue
+import re
 import threading
 from dataclasses import dataclass
 
@@ -19,6 +20,9 @@ class UiState:
     retry: int
     failed: int
     current_candidate: str
+
+
+_SAFE_HUMAN_CODE = re.compile(r"^(?:INDEED|RESUME)_[A-Z0-9_]{2,100}$")
 
 
 def build_ui_state(snapshot: WorkerSnapshot, stats: QueueStats) -> UiState:
@@ -43,12 +47,11 @@ def build_ui_state(snapshot: WorkerSnapshot, stats: QueueStats) -> UiState:
     }
     status_label = labels.get(state, "Procesando")
     diagnostic_prefix = "Indeed mostró una interfaz no reconocida. Diagnóstico local:"
-    if (
-        state == "WAITING_FOR_HUMAN"
-        and snapshot.last_error
-        and snapshot.last_error.startswith(diagnostic_prefix)
-    ):
-        status_label = snapshot.last_error
+    if state == "WAITING_FOR_HUMAN" and snapshot.last_error:
+        if snapshot.last_error.startswith(diagnostic_prefix):
+            status_label = snapshot.last_error
+        elif _SAFE_HUMAN_CODE.fullmatch(snapshot.last_error):
+            status_label = snapshot.last_error
     if state == "DIAGNOSTIC_SAVED" and snapshot.last_error:
         status_label = snapshot.last_error
 
