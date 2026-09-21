@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import json
 import os
 import re
 import shutil
 import subprocess
+from datetime import datetime, timezone
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
@@ -23,6 +25,7 @@ class BrowserResult:
     filename: str | None = None
     data: bytes | None = None
     human_code: str | None = None
+    diagnostic_path: str | None = None
 
 
 class InvalidResumePdf(ValueError):
@@ -91,6 +94,22 @@ _CHALLENGE_MARKERS = (
     "two factor",
 )
 _URL_CHALLENGE_MARKERS = ("/login", "/signin", "challenge", "captcha", "verify")
+
+
+
+
+def _safe_diagnostic_url(raw_url: str | None) -> str:
+    """Keep only scheme/host/path so signed query parameters are never persisted."""
+    value = str(raw_url or "").strip()
+    if not value:
+        return ""
+    try:
+        parsed = urlsplit(value)
+    except Exception:
+        return ""
+    if parsed.scheme.casefold() not in {"http", "https"}:
+        return ""
+    return f"{parsed.scheme.lower()}://{parsed.netloc}{parsed.path}"
 
 
 class IndeedBrowser:
@@ -230,6 +249,77 @@ class IndeedBrowser:
                 continue
         return None
 
+
+    def _write_ui_diagnostic(self, page) -> str | None:
+        """Persist a local-only, redacted snapshot of the unexpected Indeed UI."""
+        diagnostics_dir = self._config.browser_profile_dir.parent / "diagnostics"
+        diagnostics_dir.mkdir(parents=True, exist_ok=True)
+        stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+        base = diagnostics_dir / f"indeed-ui-review-{stamp}"
+        json_path = base.with_suffix(".json")
+        png_path = base.with_suffix(".png")
+
+        try:
+            title = str(page.title() or "")[:300]
+        except Exception:
+            title = ""
+
+        controls: list[dict[str, str]] = []
+        for selector, kind in (("button", "button"), ("a", "link")):
+            try:
+                items = page.locator(selector)
+                count = min(int(items.count()), 80)
+            except Exception:
+                count = 0
+                items = None
+            for index in range(count):
+                try:
+                    node = items.nth(index)
+                    if not node.is_visible():
+                        continue
+                    text = " ".join(str(node.inner_text(timeout=500) or "").split())[:200]
+                    aria = str(node.get_attribute("aria-label") or "").strip()[:200]
+                    href = (
+                        _safe_diagnostic_url(node.get_attribute("href"))
+                        if kind == "link"
+                        else ""
+                    )
+                    controls.append(
+                        {
+                            "kind": kind,
+                            "text": text,
+                            "aria_label": aria,
+                            "href": href,
+                        }
+                    )
+                except Exception:
+                    continue
+
+        payload = {
+            "captured_at_utc": datetime.now(timezone.utc).isoformat(),
+            "url": _safe_diagnostic_url(getattr(page, "url", "")),
+            "title": title,
+            "controls": controls,
+            "screenshot": str(png_path),
+        }
+
+        try:
+            json_path.write_text(
+                json.dumps(payload, ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
+            try:
+                page.screenshot(path=str(png_path), full_page=True)
+            except Exception:
+                payload["screenshot"] = ""
+                json_path.write_text(
+                    json.dumps(payload, ensure_ascii=False, indent=2),
+                    encoding="utf-8",
+                )
+            return str(json_path)
+        except Exception:
+            return None
+
     def fetch_resume(self, url: str) -> BrowserResult:
         self.start()
         resume_url = str(url or "").strip()
@@ -271,9 +361,11 @@ class IndeedBrowser:
 
         control = self._known_download_control(page)
         if control is None:
+            diagnostic_path = self._write_ui_diagnostic(page)
             return BrowserResult(
                 BrowserOutcome.NEEDS_HUMAN,
                 human_code="INDEED_UI_REQUIRES_REVIEW",
+                diagnostic_path=diagnostic_path,
             )
 
         with page.expect_download(timeout=int(self._config.request_timeout_seconds * 1000)) as download_info:
