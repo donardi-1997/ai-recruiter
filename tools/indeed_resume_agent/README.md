@@ -41,7 +41,7 @@ Para iniciar:
 3. Pulse **Open Indeed**.
 4. Inicie sesión manualmente en Indeed dentro de esa ventana si hace falta.
 5. Complete MFA/CAPTCHA manualmente cuando Indeed lo solicite.
-6. Mantenga el perfil dedicado en `%LOCALAPPDATA%\ASIATI\ResumeAgent\browser-profile`.
+6. Mantenga el perfil dedicado en `%LOCALAPPDATA%\ASIATI\ResumeAgent\browser-profile-chrome`.
 7. Active y pruebe **una sola aplicación real** antes de procesar un lote.
 
 El agente trabaja con una sola tarea a la vez. Si se cierra el PC o el proceso, el backend recupera una tarea cuando vence su lease; no borre tareas completadas.
