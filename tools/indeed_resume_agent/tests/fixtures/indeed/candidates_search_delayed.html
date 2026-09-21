@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="es">
+<head><meta charset="utf-8"><title>Candidatos - Indeed para empresas</title></head>
+<body>
+  <nav>
+    <button data-testid="manage-candidates-tab" role="tab" aria-selected="true">Gestionar candidatos</button>
+    <button data-testid="stage-tab-All" role="tab" aria-selected="true">Todas las solicitudes · 27653</button>
+  </nav>
+  <main>
+    <input type="search" placeholder="Search candidates" aria-label="Search candidates" value="Alejandra camacho saenz">
+    <div data-testid="candidate-list-table-container" id="candidate-list"></div>
+  </main>
+  <script>
+    setTimeout(() => {
+      document.getElementById('candidate-list').innerHTML = `
+        <div data-testid="table-row">
+          <a data-testid="NameCell" href="/candidates/view?id=alejandra">Alejandra camacho saenz</a>
+          <div>Empleo que solicitó: Líder de Marketing y Crecimiento</div>
+          <div>Bogotá, Cundinamarca</div>
+        </div>`;
+    }, 700);
+  </script>
+</body>
+</html>
