@@ -1,57 +1,27 @@
-name: Verify & Build — ASIATI Resume Agent
+name: Build — ASIATI Resume Agent
 
 on:
   push:
-    branches:
-      - feat/indeed-resume-windows-agent
-    paths:
-      - "tools/indeed_resume_agent/**"
-      - ".github/workflows/indeed-resume-agent.yml"
-  pull_request:
     branches: [main]
     paths:
       - "tools/indeed_resume_agent/**"
       - "app/domains/candidate_ingestion/indeed_agent_*.py"
-      - "app/domains/candidate_ingestion/indeed_email_*.py"
+      - "app/domains/candidate_ingestion/indeed_email_agent_service.py"
       - ".github/workflows/indeed-resume-agent.yml"
   workflow_dispatch:
 
 permissions:
   contents: read
 
-jobs:
-  verify:
-    name: Agent + backend contracts
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-          cache: pip
-      - name: Install dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install -r requirements.txt
-          pip install -r tools/indeed_resume_agent/requirements.txt
-          pip install pytest
-      - name: Agent unit tests
-        run: python -m pytest -q tools/indeed_resume_agent/tests
-      - name: Backend agent contracts
-        env:
-          DATABASE_URL: "sqlite:///:memory:"
-        run: |
-          python -m pytest -q \
-            app/tests/test_indeed_agent_auth.py \
-            app/tests/test_indeed_agent_routes.py \
-            app/tests/test_indeed_agent_upload.py \
-            app/tests/test_indeed_email_resume_leases.py
+concurrency:
+  group: resume-agent-build-${{ github.ref }}
+  cancel-in-progress: true
 
+jobs:
   windows-build:
     name: Windows onedir artifact
     runs-on: windows-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5

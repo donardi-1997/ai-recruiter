@@ -7,8 +7,9 @@ from .api_client import AgentApiError, LeaseLost
 from .browser import (
     BrowserFetchStageError,
     BrowserOutcome,
-    InvalidResumePdf,
-    validate_pdf,
+    InvalidResumeDocument,
+    PDF_CONTENT_TYPE,
+    validate_resume_document,
 )
 from .config import AgentConfig
 
@@ -167,19 +168,21 @@ class ResumeWorker:
                 self._human_resume_url = task.resume_url
                 detail = code
                 if result.diagnostic_path:
-                    detail = (
-                        "Indeed mostró una interfaz no reconocida. "
-                        f"Diagnóstico local: {result.diagnostic_path}"
-                    )
+                    detail = f"{code} — Diagnóstico local: {result.diagnostic_path}"
                 return self._set(
                     "WAITING_FOR_HUMAN",
                     candidate=task.candidate_name,
                     error=detail,
                 )
 
-            stage = "PDF_VALIDATE"
+            stage = "DOCUMENT_VALIDATE"
             data = result.data or b""
-            validate_pdf(data, max_bytes=self._config.max_pdf_bytes)
+            content_type = validate_resume_document(
+                data,
+                filename=result.filename,
+                content_type=result.content_type,
+                max_bytes=self._config.max_pdf_bytes,
+            )
 
             if heartbeat.error is not None:
                 return self._set(
@@ -191,8 +194,13 @@ class ResumeWorker:
             stage = "UPLOAD"
             self._api.upload_resume(
                 task,
-                filename=result.filename or "indeed-resume.pdf",
+                filename=result.filename or (
+                    "indeed-resume.pdf"
+                    if content_type == PDF_CONTENT_TYPE
+                    else "indeed-resume.docx"
+                ),
                 data=data,
+                content_type=content_type,
             )
             self._processed_session += 1
             return self._set("COMPLETED", candidate=task.candidate_name)
@@ -209,7 +217,7 @@ class ResumeWorker:
                 candidate=task.candidate_name,
                 error=exc.code,
             )
-        except InvalidResumePdf as exc:
+        except InvalidResumeDocument as exc:
             status = self._api.fail(task, code=exc.code)
             return self._set(
                 status,
@@ -234,7 +242,7 @@ class ResumeWorker:
         except Exception:
             safe_code = {
                 "BROWSER_FETCH": "RESUME_BROWSER_FETCH_FAILED",
-                "PDF_VALIDATE": "RESUME_PDF_VALIDATE_FAILED",
+                "DOCUMENT_VALIDATE": "RESUME_DOCUMENT_VALIDATE_FAILED",
                 "UPLOAD": "RESUME_UPLOAD_FAILED",
             }.get(stage, "RESUME_DOWNLOAD_FAILED")
             try:

@@ -34,6 +34,7 @@ jobs:
         run: |
           pip install --upgrade pip
           pip install -r requirements.txt
+          pip install -r tools/indeed_resume_agent/requirements.txt
           pip install pytest pytest-xdist alembic psycopg2-binary
 
       - name: Validate Python syntax
@@ -43,11 +44,18 @@ jobs:
           python -m py_compile app/crud.py
           python -m py_compile app/deps.py
 
-      - name: Run pytest in parallel (SQLite)
+      - name: Run backend pytest in parallel (SQLite)
         env:
           DATABASE_URL: "sqlite:///:memory:"
         run: |
           python -m pytest app/tests/ -n 2 --dist=loadfile -v --tb=short
+
+      - name: Install Chromium for Resume Agent browser fixtures
+        run: python -m playwright install --with-deps chromium
+
+      - name: Run ASIATI Resume Agent tests
+        run: |
+          python -m pytest -q tools/indeed_resume_agent/tests
 
   # ─────────────────────────────────────────────────────────
   # POSTGRESQL + ALEMBIC SMOKE TEST

@@ -1,10 +1,13 @@
 from datetime import datetime, timezone
+import io
+import zipfile
 
 from tools.indeed_resume_agent.api_client import ClaimedTask, LeaseLost
 from tools.indeed_resume_agent.browser import (
     BrowserFetchStageError,
     BrowserOutcome,
     BrowserResult,
+    DOCX_CONTENT_TYPE,
 )
 from tools.indeed_resume_agent.config import AgentConfig
 from tools.indeed_resume_agent.worker import ResumeWorker
@@ -22,7 +25,9 @@ class FakeApi:
     def __init__(self, claims):
         self.claims=list(claims); self.uploads=[]; self.human=[]; self.failures=[]; self.resumed=[]; self.heartbeats=[]
     def claim(self): return self.claims.pop(0) if self.claims else None
-    def upload_resume(self, t, *, filename, data): self.uploads.append((t.task_id,filename,data)); return {"document_id":"d1"}
+    def upload_resume(self, t, *, filename, data, content_type="application/pdf"):
+        self.uploads.append((t.task_id,filename,data,content_type))
+        return {"document_id":"d1"}
     def needs_human(self, t, *, code): self.human.append((t.task_id,code))
     def fail(self, t, *, code): self.failures.append((t.task_id,code)); return "RETRY"
     def resume_after_human(self, task_id): self.resumed.append(task_id)
@@ -61,12 +66,42 @@ def test_happy_path_claims_downloads_validates_and_uploads_once(tmp_path):
     snap=worker.run_once()
     assert snap.state == "COMPLETED"
     assert snap.processed_session == 1
-    assert api.uploads == [("t1","ada.pdf",b"%PDF-ok")]
+    assert api.uploads == [("t1","ada.pdf",b"%PDF-ok","application/pdf")]
     assert browser.candidate_names == ["Ada"]
     assert browser.job_titles == ["Engineer"]
     assert api.failures == [] and api.human == []
     assert hb.started and hb.stopped
     assert worker.run_once().state == "IDLE"
+
+
+def test_happy_path_uploads_docx_without_forcing_pdf(tmp_path):
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+        archive.writestr("[Content_Types].xml", "<Types></Types>")
+        archive.writestr("word/document.xml", "<w:document></w:document>")
+    data = buffer.getvalue()
+
+    api=FakeApi([task()])
+    browser=FakeBrowser(
+        BrowserResult(
+            BrowserOutcome.DOWNLOADED,
+            filename="ada.docx",
+            data=data,
+            content_type=DOCX_CONTENT_TYPE,
+        )
+    )
+    worker=ResumeWorker(
+        config=config(tmp_path),
+        api=api,
+        browser=browser,
+        heartbeat_factory=lambda **kw: FakeHeartbeat(),
+    )
+
+    snap=worker.run_once()
+
+    assert snap.state == "COMPLETED"
+    assert api.uploads == [("t1","ada.docx",data,DOCX_CONTENT_TYPE)]
+    assert api.failures == []
 
 
 def test_needs_human_blocks_new_claims_until_resume(tmp_path):
@@ -194,5 +229,5 @@ def test_needs_human_surfaces_only_local_diagnostic_path(tmp_path):
     snap=worker.run_once()
 
     assert snap.state == "WAITING_FOR_HUMAN"
-    assert diagnostic in (snap.last_error or "")
+    assert snap.last_error == f"INDEED_UI_REQUIRES_REVIEW — Diagnóstico local: {diagnostic}"
     assert api.human == [("t1","INDEED_UI_REQUIRES_REVIEW")]

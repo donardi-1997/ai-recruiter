@@ -47,10 +47,12 @@ def build_ui_state(snapshot: WorkerSnapshot, stats: QueueStats) -> UiState:
         "ERROR": "Error de conexión con el servicio",
     }
     status_label = labels.get(state, "Procesando")
-    diagnostic_prefix = "Indeed mostró una interfaz no reconocida. Diagnóstico local:"
+    diagnostic_marker = " — Diagnóstico local: "
     if state == "WAITING_FOR_HUMAN" and snapshot.last_error:
-        if snapshot.last_error.startswith(diagnostic_prefix):
-            status_label = snapshot.last_error
+        if diagnostic_marker in snapshot.last_error:
+            code, diagnostic_path = snapshot.last_error.split(diagnostic_marker, 1)
+            if _SAFE_HUMAN_CODE.fullmatch(code) and diagnostic_path:
+                status_label = snapshot.last_error
         elif _SAFE_HUMAN_CODE.fullmatch(snapshot.last_error):
             status_label = snapshot.last_error
     if state == "DIAGNOSTIC_SAVED" and snapshot.last_error:

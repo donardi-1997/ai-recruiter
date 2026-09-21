@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import io
 import json
 import os
 import re
@@ -7,6 +8,7 @@ import shutil
 import subprocess
 import time
 import unicodedata
+import zipfile
 from datetime import datetime, timezone
 from email.header import decode_header, make_header
 
@@ -14,7 +16,7 @@ import psutil
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
-from urllib.parse import unquote, urlsplit
+from urllib.parse import quote_plus, unquote, urlsplit
 
 from .config import AgentConfig
 
@@ -29,14 +31,20 @@ class BrowserResult:
     outcome: BrowserOutcome
     filename: str | None = None
     data: bytes | None = None
+    content_type: str | None = None
     human_code: str | None = None
     diagnostic_path: str | None = None
 
 
-class InvalidResumePdf(ValueError):
+class InvalidResumeDocument(ValueError):
     def __init__(self, code: str):
         self.code = str(code)
         super().__init__(self.code)
+
+
+# Backwards-compatible name for callers/tests that imported the former PDF-only
+# exception. The agent now accepts PDF and DOCX.
+InvalidResumePdf = InvalidResumeDocument
 
 
 class BrowserFetchStageError(RuntimeError):
@@ -45,19 +53,79 @@ class BrowserFetchStageError(RuntimeError):
         super().__init__(self.code)
 
 
-def validate_pdf(data: bytes, *, max_bytes: int) -> None:
+PDF_CONTENT_TYPE = "application/pdf"
+DOCX_CONTENT_TYPE = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+_GENERIC_BINARY_CONTENT_TYPES = {
+    "",
+    "application/octet-stream",
+    "binary/octet-stream",
+}
+
+
+def _is_docx(payload: bytes) -> bool:
+    if not payload.startswith(b"PK"):
+        return False
+    try:
+        with zipfile.ZipFile(io.BytesIO(payload), "r") as archive:
+            names = set(archive.namelist())
+    except (zipfile.BadZipFile, zipfile.LargeZipFile, OSError):
+        return False
+    return "[Content_Types].xml" in names and "word/document.xml" in names
+
+
+def validate_resume_document(
+    data: bytes,
+    *,
+    filename: str | None = None,
+    content_type: str | None = None,
+    max_bytes: int,
+) -> str:
+    """Validate a supported resume and return its canonical MIME type."""
     payload = bytes(data or b"")
-    if not payload.startswith(b"%PDF-"):
-        raise InvalidResumePdf("RESUME_NOT_PDF")
     if len(payload) > int(max_bytes):
-        raise InvalidResumePdf("RESUME_TOO_LARGE")
+        raise InvalidResumeDocument("RESUME_TOO_LARGE")
+
+    declared = str(content_type or "").split(";", 1)[0].strip().casefold()
+    suffix = Path(str(filename or "")).suffix.casefold()
+
+    if payload.startswith(b"%PDF-"):
+        return PDF_CONTENT_TYPE
+    if _is_docx(payload):
+        return DOCX_CONTENT_TYPE
+
+    if declared == PDF_CONTENT_TYPE or suffix == ".pdf":
+        raise InvalidResumeDocument("RESUME_NOT_PDF")
+    if declared == DOCX_CONTENT_TYPE or suffix == ".docx":
+        raise InvalidResumeDocument("RESUME_NOT_DOCX")
+    raise InvalidResumeDocument("RESUME_UNSUPPORTED_FORMAT")
 
 
-def normalize_pdf_filename(filename: str | None) -> str:
+def validate_pdf(data: bytes, *, max_bytes: int) -> None:
+    """Compatibility wrapper for legacy PDF-only callers."""
+    detected = validate_resume_document(
+        data,
+        filename="resume.pdf",
+        content_type=PDF_CONTENT_TYPE,
+        max_bytes=max_bytes,
+    )
+    if detected != PDF_CONTENT_TYPE:
+        raise InvalidResumeDocument("RESUME_NOT_PDF")
+
+
+def normalize_resume_filename(
+    filename: str | None,
+    *,
+    content_type: str,
+) -> str:
     raw = str(filename or "").replace("\\", "/").rsplit("/", 1)[-1].strip()
     stem = Path(raw).stem.strip() if raw else "indeed-resume"
     safe = "".join(ch if ch.isalnum() or ch in " ._-" else "_" for ch in stem).strip()
-    return f"{safe or 'indeed-resume'}.pdf"
+    extension = ".docx" if content_type == DOCX_CONTENT_TYPE else ".pdf"
+    return f"{safe or 'indeed-resume'}{extension}"
+
+
+def normalize_pdf_filename(filename: str | None) -> str:
+    return normalize_resume_filename(filename, content_type=PDF_CONTENT_TYPE)
 
 
 def _default_playwright_factory():
@@ -411,46 +479,67 @@ class IndeedBrowser:
         self._manual_process = self._process_runner(command)
 
     @staticmethod
-    def _response_pdf(response, *, probe_body: bool = True) -> bytes | None:
+    def _response_document(response, *, probe_body: bool = True):
         if response is None or int(getattr(response, "status", 0) or 0) != 200:
             return None
 
         headers = getattr(response, "headers", {}) or {}
         content_type = str(
             headers.get("content-type") or headers.get("Content-Type") or ""
-        ).lower()
+        ).split(";", 1)[0].strip().casefold()
         content_disposition = str(
             headers.get("content-disposition")
             or headers.get("Content-Disposition")
             or ""
-        ).lower()
-        response_url = str(getattr(response, "url", "") or "")
-
-        # Do not ask Playwright for the body of ordinary HTML/page responses.
-        # Chromium can discard navigation bodies once the document is committed,
-        # which makes response.body() raise even though navigation succeeded.
-        # Only probe the body when response metadata plausibly represents a file.
-        plausible_pdf = (
-            "application/pdf" in content_type
-            or "application/octet-stream" in content_type
-            or "binary/octet-stream" in content_type
-            or "attachment" in content_disposition
-            or response_url.casefold().endswith(".pdf")
         )
-        if not plausible_pdf and not probe_body:
+        response_url = str(getattr(response, "url", "") or "")
+        disposition_lower = content_disposition.casefold()
+
+        plausible_document = (
+            content_type in {PDF_CONTENT_TYPE, DOCX_CONTENT_TYPE}
+            or content_type in _GENERIC_BINARY_CONTENT_TYPES
+            or "attachment" in disposition_lower
+            or response_url.casefold().endswith((".pdf", ".docx"))
+        )
+        if not plausible_document and not probe_body:
             return None
 
         body = bytes(response.body() or b"")
+        filename = IndeedBrowser._response_filename_raw(response)
+        try:
+            canonical_type = validate_resume_document(
+                body,
+                filename=filename,
+                content_type=content_type,
+                max_bytes=15 * 1024 * 1024,
+            )
+        except InvalidResumeDocument:
+            # A declared supported resume must fail explicitly rather than being
+            # mistaken for an ordinary HTML response.
+            if (
+                content_type in {PDF_CONTENT_TYPE, DOCX_CONTENT_TYPE}
+                or response_url.casefold().endswith((".pdf", ".docx"))
+                or "attachment" in disposition_lower
+            ):
+                raise
+            return None
 
-        # Indeed's resume endpoint can deliver the file with a generic binary
-        # content type. Trust the PDF signature first and keep the declared PDF
-        # MIME type as a secondary signal so malformed PDFs still fail
-        # validation explicitly.
-        if body.startswith(b"%PDF-"):
-            return body
-        if "application/pdf" in content_type:
-            return body
-        return None
+        return (
+            body,
+            canonical_type,
+            normalize_resume_filename(filename, content_type=canonical_type),
+        )
+
+    @staticmethod
+    def _response_pdf(response, *, probe_body: bool = True) -> bytes | None:
+        """Compatibility helper retained for the existing test surface."""
+        document = IndeedBrowser._response_document(response, probe_body=probe_body)
+        if document is None:
+            return None
+        data, content_type, _filename = document
+        if content_type != PDF_CONTENT_TYPE:
+            return None
+        return data
 
     @staticmethod
     def _is_resume_download_response(response) -> bool:
@@ -466,7 +555,7 @@ class IndeedBrowser:
         )
 
     @staticmethod
-    def _response_filename(response) -> str:
+    def _response_filename_raw(response) -> str:
         headers = getattr(response, "headers", {}) or {}
         disposition = str(
             headers.get("content-disposition")
@@ -485,7 +574,14 @@ class IndeedBrowser:
                     candidate = str(make_header(decode_header(candidate)))
                 except Exception:
                     pass
-        return normalize_pdf_filename(candidate or "indeed-resume.pdf")
+        return candidate or "indeed-resume"
+
+    @staticmethod
+    def _response_filename(response, *, content_type: str = PDF_CONTENT_TYPE) -> str:
+        return normalize_resume_filename(
+            IndeedBrowser._response_filename_raw(response),
+            content_type=content_type,
+        )
 
     @staticmethod
     def _requires_human(page) -> bool:
@@ -768,6 +864,9 @@ class IndeedBrowser:
             'input[placeholder*="candidat" i]',
             'input[placeholder*="buscar" i]',
             'input[placeholder*="search" i]',
+            'input[type="search"]',
+            'input[name*="search" i]',
+            '[role="searchbox"]',
         ):
             try:
                 located = page.locator(selector)
@@ -825,11 +924,13 @@ class IndeedBrowser:
         return " ".join(text.split())
 
     def _candidate_name_links(self, page):
-        # Observed live DOM:
-        # <a data-testid="NameCell" href="/candidates/view?id=...">NAME</a>
+        # Indeed has rendered candidate names in several shapes across releases:
+        # an anchor carrying NameCell, a wrapper carrying NameCell with a child
+        # anchor, or a row whose name cell is not itself a link. Prefer the most
+        # specific live selectors first.
         for selector in (
             'a[data-testid="NameCell"][href*="/candidates/view"]',
-            'a[data-testid="NameCell"]',
+            '[data-testid="NameCell"]',
             'a[href*="/candidates/view"]',
         ):
             try:
@@ -839,6 +940,121 @@ class IndeedBrowser:
             except Exception:
                 continue
         return None
+
+    @staticmethod
+    def _candidate_click_target(node):
+        # If NameCell is only a wrapper, descend to the actual clickable target.
+        for selector in (
+            'a[href*="/candidates/view"]',
+            'a[href*="/candidates/"]',
+            'a',
+            'button',
+        ):
+            try:
+                child = node.locator(selector)
+                if child.count() > 0:
+                    return child.first
+            except Exception:
+                continue
+        return node
+
+    @staticmethod
+    def _candidate_row_for_node(node):
+        for selector in (
+            "xpath=ancestor::*[@data-testid='table-row'][1]",
+            "xpath=ancestor::tbody[@data-testid='table-row'][1]",
+            "xpath=ancestor::tr[1]",
+        ):
+            try:
+                row = node.locator(selector)
+                if row.count() > 0:
+                    return row.first
+            except Exception:
+                continue
+        return None
+
+    @staticmethod
+    def _candidate_rows(page):
+        for selector in (
+            '[data-testid="table-row"]',
+            'tbody[data-testid="table-row"]',
+            'tr',
+        ):
+            try:
+                rows = page.locator(selector)
+                if rows.count() > 0:
+                    return rows
+            except Exception:
+                continue
+        return None
+
+    def _candidate_match_from_rows(
+        self,
+        page,
+        target_name: str,
+        target_job: str,
+    ):
+        rows = self._candidate_rows(page)
+        if rows is None:
+            return None, False
+
+        matches: list[tuple[object, bool]] = []
+        try:
+            count = min(int(rows.count()), 100)
+        except Exception:
+            count = 0
+
+        for index in range(count):
+            try:
+                row = rows.nth(index)
+                row_text = self._normalize_lookup_text(row.inner_text(timeout=750))
+                if not row_text:
+                    continue
+
+                # In the live table the candidate name is the first meaningful
+                # text in the row. Accept a boundary match as a fallback when
+                # the NameCell test id is absent, but never fuzzy-match names.
+                boundary_match = (
+                    row_text == target_name
+                    or row_text.startswith(target_name + " ")
+                    or f" {target_name} " in f" {row_text} "
+                )
+                if not boundary_match:
+                    continue
+
+                click_target = None
+                for selector in (
+                    '[data-testid="NameCell"]',
+                    'a[href*="/candidates/view"]',
+                    'a[href*="/candidates/"]',
+                    'a',
+                ):
+                    try:
+                        located = row.locator(selector)
+                        if located.count() > 0:
+                            click_target = located.first
+                            break
+                    except Exception:
+                        continue
+                if click_target is None:
+                    click_target = row
+
+                job_matches = bool(target_job and target_job in row_text)
+                matches.append((click_target, job_matches))
+            except Exception:
+                continue
+
+        if not matches:
+            return None, False
+        if target_job:
+            job_matches = [node for node, matched in matches if matched]
+            if len(job_matches) == 1:
+                return job_matches[0], False
+            if len(job_matches) > 1:
+                return None, True
+        if len(matches) == 1:
+            return matches[0][0], False
+        return None, True
 
     def _find_exact_candidate_link(
         self,
@@ -853,8 +1069,48 @@ class IndeedBrowser:
             return None, False
 
         links = self._candidate_name_links(page)
-        if links is None:
-            # Semantic fallback for older/alternate Indeed layouts.
+        matches: list[tuple[object, bool]] = []
+
+        if links is not None:
+            try:
+                count = min(int(links.count()), 100)
+            except Exception:
+                count = 0
+
+            for index in range(count):
+                try:
+                    node = links.nth(index)
+                    label = self._normalize_lookup_text(node.inner_text(timeout=500))
+                    if label != target_name:
+                        continue
+
+                    row = self._candidate_row_for_node(node)
+                    row_text = ""
+                    if row is not None:
+                        try:
+                            row_text = self._normalize_lookup_text(
+                                row.inner_text(timeout=750)
+                            )
+                        except Exception:
+                            row_text = ""
+
+                    job_matches = bool(target_job and target_job in row_text)
+                    matches.append((self._candidate_click_target(node), job_matches))
+                except Exception:
+                    continue
+
+        if not matches:
+            # Row-level fallback handles alternate Indeed layouts where the name
+            # is rendered in a non-anchor NameCell or the test id is absent.
+            row_match, row_ambiguous = self._candidate_match_from_rows(
+                page, target_name, target_job
+            )
+            if row_match is not None or row_ambiguous:
+                return row_match, row_ambiguous
+
+            # Last semantic fallback for experiments that expose the candidate
+            # name to the accessibility tree but do not use the observed table
+            # markup. Keep it exact and normalized; never fuzzy-click.
             try:
                 exact = page.get_by_text(
                     re.compile(rf"^\s*{re.escape(candidate_name)}\s*$", re.IGNORECASE)
@@ -867,40 +1123,8 @@ class IndeedBrowser:
                 pass
             return None, False
 
-        matches: list[tuple[object, bool]] = []
-        try:
-            count = min(int(links.count()), 100)
-        except Exception:
-            count = 0
-
-        for index in range(count):
-            try:
-                link = links.nth(index)
-                label = self._normalize_lookup_text(link.inner_text(timeout=500))
-                if label != target_name:
-                    continue
-
-                job_matches = False
-                if target_job:
-                    try:
-                        row = link.locator(
-                            "xpath=ancestor::tbody[@data-testid='table-row'][1]"
-                        )
-                        row_text = self._normalize_lookup_text(
-                            row.inner_text(timeout=750)
-                        )
-                        job_matches = target_job in row_text
-                    except Exception:
-                        job_matches = False
-                matches.append((link, job_matches))
-            except Exception:
-                continue
-
-        if not matches:
-            return None, False
-
         if target_job:
-            job_matches = [link for link, matched in matches if matched]
+            job_matches = [node for node, matched in matches if matched]
             if len(job_matches) == 1:
                 return job_matches[0], False
             if len(job_matches) > 1:
@@ -911,6 +1135,18 @@ class IndeedBrowser:
 
         # Multiple candidates with the same normalized name are unsafe to guess.
         return None, True
+
+    @staticmethod
+    def _candidate_search_url(query: str) -> str:
+        # Captured from the live Indeed Candidates UI: searching from
+        # "Gestionar candidatos" serializes the search as
+        # /candidates?statusName=All&tab=manage&q=<candidate>.
+        # Navigating to the same first-party URL is substantially more stable
+        # than depending only on a React textbox selector.
+        return (
+            f"{_INDEED_CANDIDATES_HOME}"
+            f"?statusName=All&tab=manage&q={quote_plus(str(query or '').strip())}"
+        )
 
     @classmethod
     def _candidate_search_queries(cls, candidate_name: str) -> list[str]:
@@ -980,54 +1216,31 @@ class IndeedBrowser:
             except Exception:
                 return None, "INDEED_CANDIDATE_OPEN_FAILED"
 
-        lookup_budget = max(6.0, float(self._config.request_timeout_seconds))
+        lookup_budget = max(8.0, float(self._config.request_timeout_seconds))
         deadline = time.monotonic() + lookup_budget
-
-        # Wait for the SPA search input. The live page uses the placeholder
-        # "Buscar candidatos" / "Search candidates" and renders it after the
-        # shell document.
-        search_box = None
-        while time.monotonic() < deadline:
-            if self._requires_human(page):
-                return None, "INDEED_AUTH_REQUIRED"
-            search_box = self._candidate_search_box(page)
-            if search_box is not None:
-                break
-            try:
-                page.wait_for_timeout(250)
-            except Exception:
-                time.sleep(0.25)
-
-        if search_box is None:
-            trigger = self._candidate_search_trigger(page)
-            if trigger is not None:
-                try:
-                    trigger.click()
-                    page.wait_for_timeout(500)
-                except Exception:
-                    pass
-                search_box = self._candidate_search_box(page)
-
-        if search_box is None:
-            return None, "INDEED_CANDIDATE_SEARCH_UNAVAILABLE"
-
         queries = self._candidate_search_queries(name)
+        search_box = None
+        search_route_worked = False
+
         for query_index, query in enumerate(queries):
             if time.monotonic() >= deadline:
                 break
-            try:
-                search_box.fill("")
-                search_box.fill(query)
-            except Exception:
-                return None, "INDEED_CANDIDATE_SEARCH_FAILED"
 
-            # Indeed normally filters after a debounce. Give that behavior the
-            # first chance; Enter is only a compatibility nudge. Each query gets
-            # a small independent window so a slow full-name search cannot starve
-            # the normalized/short-name fallbacks.
-            query_deadline = min(deadline, time.monotonic() + 4.5)
-            pressed_enter = False
-            polls = 0
+            # Primary path: use the first-party URL generated by Indeed itself
+            # when a recruiter searches in Manage candidates. The diagnostic
+            # trace showed this exact shape with statusName=All, tab=manage and
+            # q=<candidate name>.
+            try:
+                page.goto(
+                    self._candidate_search_url(query),
+                    wait_until="domcontentloaded",
+                    timeout=int(self._config.request_timeout_seconds * 1000),
+                )
+                search_route_worked = self._is_candidates_workspace(page)
+            except Exception:
+                search_route_worked = False
+
+            query_deadline = min(deadline, time.monotonic() + 5.0)
             while time.monotonic() < query_deadline:
                 if self._requires_human(page):
                     return None, "INDEED_AUTH_REQUIRED"
@@ -1051,27 +1264,73 @@ class IndeedBrowser:
                         else (None, "INDEED_CANDIDATE_DETAIL_NO_DOWNLOAD")
                     )
 
-                polls += 1
-                # Some Indeed experiments only submit on Enter. Do this once
-                # after allowing the normal debounced search to run.
-                if not pressed_enter and polls >= 4:
-                    try:
-                        search_box.press("Enter")
-                    except Exception:
-                        pass
-                    pressed_enter = True
-
-                # Move to the next safe query after ~4 seconds. We still only
-                # click an exact normalized candidate name, so broader query
-                # terms cannot select the wrong person.
-                if polls >= 8 and query_index < len(queries) - 1:
-                    break
+                if search_box is None:
+                    search_box = self._candidate_search_box(page)
 
                 try:
-                    page.wait_for_timeout(500)
+                    page.wait_for_timeout(400)
                 except Exception:
-                    time.sleep(0.5)
+                    time.sleep(0.4)
 
+                if self._candidate_list_ready(page):
+                    break
+
+            # Secondary path: exercise the visible search control when present.
+            # This keeps compatibility with Indeed experiments that ignore q.
+            if search_box is None:
+                search_box = self._candidate_search_box(page)
+
+            if search_box is not None:
+                try:
+                    search_box.fill("")
+                    search_box.fill(query)
+                except Exception:
+                    search_box = None
+                else:
+                    input_deadline = min(deadline, time.monotonic() + 4.5)
+                    pressed_enter = False
+                    polls = 0
+                    while time.monotonic() < input_deadline:
+                        if self._requires_human(page):
+                            return None, "INDEED_AUTH_REQUIRED"
+
+                        candidate, ambiguous = self._find_exact_candidate_link(
+                            page,
+                            name,
+                            job_title=job_title,
+                        )
+                        if ambiguous:
+                            return None, "INDEED_CANDIDATE_AMBIGUOUS"
+                        if candidate is not None:
+                            try:
+                                candidate.click()
+                            except Exception:
+                                return None, "INDEED_CANDIDATE_OPEN_FAILED"
+                            control = self._wait_for_download_control(page)
+                            return (
+                                (control, None)
+                                if control is not None
+                                else (None, "INDEED_CANDIDATE_DETAIL_NO_DOWNLOAD")
+                            )
+
+                        polls += 1
+                        if not pressed_enter and polls >= 3:
+                            try:
+                                search_box.press("Enter")
+                            except Exception:
+                                pass
+                            pressed_enter = True
+                        if polls >= 8:
+                            break
+                        try:
+                            page.wait_for_timeout(500)
+                        except Exception:
+                            time.sleep(0.5)
+
+            search_box = None
+
+        if not search_route_worked and self._candidate_search_box(page) is None:
+            return None, "INDEED_CANDIDATE_SEARCH_UNAVAILABLE"
         return None, "INDEED_CANDIDATE_NOT_FOUND"
 
     @staticmethod
@@ -1533,7 +1792,12 @@ class IndeedBrowser:
         except Exception:
             return None
 
-    def _write_ui_diagnostic(self, page) -> str | None:
+    def _write_ui_diagnostic(
+        self,
+        page,
+        *,
+        reason: str | None = None,
+    ) -> str | None:
         """Persist a local-only, redacted snapshot of the unexpected Indeed UI."""
         diagnostics_dir = self._config.browser_profile_dir.parent / "diagnostics"
         diagnostics_dir.mkdir(parents=True, exist_ok=True)
@@ -1578,11 +1842,36 @@ class IndeedBrowser:
                 except Exception:
                     continue
 
+        inputs: list[dict[str, str]] = []
+        try:
+            items = page.locator("input")
+            count = min(int(items.count()), 40)
+        except Exception:
+            count = 0
+            items = None
+        for index in range(count):
+            try:
+                node = items.nth(index)
+                if not node.is_visible():
+                    continue
+                inputs.append(
+                    {
+                        "type": str(node.get_attribute("type") or "")[:80],
+                        "name": str(node.get_attribute("name") or "")[:120],
+                        "placeholder": str(node.get_attribute("placeholder") or "")[:200],
+                        "aria_label": str(node.get_attribute("aria-label") or "")[:200],
+                    }
+                )
+            except Exception:
+                continue
+
         payload = {
             "captured_at_utc": datetime.now(timezone.utc).isoformat(),
             "url": _safe_diagnostic_url(getattr(page, "url", "")),
             "title": title,
+            "reason": str(reason or "")[:120],
             "controls": controls,
+            "inputs": inputs,
             "screenshot": str(png_path),
         }
 
@@ -1614,21 +1903,37 @@ class IndeedBrowser:
             self.start()
         except Exception as exc:
             raise BrowserFetchStageError("RESUME_BROWSER_START_FAILED") from exc
+
         resume_url = str(url or "").strip()
         if not resume_url.lower().startswith("https://"):
-            return BrowserResult(BrowserOutcome.NEEDS_HUMAN, human_code="INDEED_UI_REQUIRES_REVIEW")
+            return BrowserResult(
+                BrowserOutcome.NEEDS_HUMAN,
+                human_code="INDEED_UI_REQUIRES_REVIEW",
+            )
 
+        # Fast path: the ephemeral Indeed link can occasionally resolve directly
+        # to a supported document without rendering the employer SPA.
         try:
-            response = self._context.request.get(resume_url, timeout=int(self._config.request_timeout_seconds * 1000))
-            direct = self._response_pdf(response)
+            response = self._context.request.get(
+                resume_url,
+                timeout=int(self._config.request_timeout_seconds * 1000),
+            )
+            direct = self._response_document(response)
             if direct is not None:
-                validate_pdf(direct, max_bytes=self._config.max_pdf_bytes)
+                data, content_type, filename = direct
+                validate_resume_document(
+                    data,
+                    filename=filename,
+                    content_type=content_type,
+                    max_bytes=self._config.max_pdf_bytes,
+                )
                 return BrowserResult(
                     BrowserOutcome.DOWNLOADED,
-                    filename="indeed-resume.pdf",
-                    data=direct,
+                    filename=filename,
+                    data=data,
+                    content_type=content_type,
                 )
-        except InvalidResumePdf:
+        except InvalidResumeDocument:
             raise
         except Exception:
             pass
@@ -1648,26 +1953,40 @@ class IndeedBrowser:
             raise BrowserFetchStageError("RESUME_BROWSER_NAVIGATION_FAILED") from exc
 
         try:
-            navigated_pdf = self._response_pdf(navigation, probe_body=False)
-        except InvalidResumePdf:
+            navigated_document = self._response_document(
+                navigation,
+                probe_body=False,
+            )
+        except InvalidResumeDocument:
             raise
         except Exception as exc:
             raise BrowserFetchStageError(
                 "RESUME_BROWSER_NAVIGATION_RESPONSE_FAILED"
             ) from exc
-        if navigated_pdf is not None:
-            validate_pdf(navigated_pdf, max_bytes=self._config.max_pdf_bytes)
+
+        if navigated_document is not None:
+            data, content_type, filename = navigated_document
+            validate_resume_document(
+                data,
+                filename=filename,
+                content_type=content_type,
+                max_bytes=self._config.max_pdf_bytes,
+            )
             return BrowserResult(
                 BrowserOutcome.DOWNLOADED,
-                filename="indeed-resume.pdf",
-                data=navigated_pdf,
+                filename=filename,
+                data=data,
+                content_type=content_type,
             )
 
         generic_landing = self._is_generic_recruiting_landing(page)
         control = None if generic_landing else self._wait_for_download_control(page)
 
         if self._requires_human(page):
-            return BrowserResult(BrowserOutcome.NEEDS_HUMAN, human_code="INDEED_AUTH_REQUIRED")
+            return BrowserResult(
+                BrowserOutcome.NEEDS_HUMAN,
+                human_code="INDEED_AUTH_REQUIRED",
+            )
 
         fallback_attempted = False
         lookup_error: str | None = None
@@ -1680,37 +1999,45 @@ class IndeedBrowser:
             )
 
         if self._requires_human(page):
-            return BrowserResult(BrowserOutcome.NEEDS_HUMAN, human_code="INDEED_AUTH_REQUIRED")
-
-        if control is None:
-            diagnostic_path = self._write_ui_diagnostic(page)
             return BrowserResult(
                 BrowserOutcome.NEEDS_HUMAN,
-                human_code=(
-                    lookup_error
-                    or (
-                        "INDEED_CANDIDATE_NOT_FOUND"
-                        if fallback_attempted
-                        else "INDEED_UI_REQUIRES_REVIEW"
-                    )
-                ),
+                human_code="INDEED_AUTH_REQUIRED",
+            )
+
+        if control is None:
+            reason = lookup_error or (
+                "INDEED_CANDIDATE_NOT_FOUND"
+                if fallback_attempted
+                else "INDEED_UI_REQUIRES_REVIEW"
+            )
+            diagnostic_path = self._write_ui_diagnostic(page, reason=reason)
+            return BrowserResult(
+                BrowserOutcome.NEEDS_HUMAN,
+                human_code=reason,
                 diagnostic_path=diagnostic_path,
             )
 
-        captured_pdf: dict[str, object] = {}
+        captured_document: dict[str, object] = {}
 
         def capture_resume_response(response) -> None:
             if not self._is_resume_download_response(response):
                 return
             try:
-                data = self._response_pdf(response)
-                if data is None:
+                document = self._response_document(response)
+                if document is None:
                     return
-                validate_pdf(data, max_bytes=self._config.max_pdf_bytes)
-                captured_pdf["data"] = data
-                captured_pdf["filename"] = self._response_filename(response)
-            except InvalidResumePdf:
-                captured_pdf["invalid_pdf"] = True
+                data, content_type, filename = document
+                validate_resume_document(
+                    data,
+                    filename=filename,
+                    content_type=content_type,
+                    max_bytes=self._config.max_pdf_bytes,
+                )
+                captured_document["data"] = data
+                captured_document["filename"] = filename
+                captured_document["content_type"] = content_type
+            except InvalidResumeDocument as exc:
+                captured_document["invalid_code"] = exc.code
             except Exception:
                 pass
 
@@ -1725,44 +2052,68 @@ class IndeedBrowser:
             ) as download_info:
                 control.click()
 
-            if captured_pdf.get("invalid_pdf"):
-                raise InvalidResumePdf("RESUME_NOT_PDF")
+            invalid_code = captured_document.get("invalid_code")
+            if invalid_code:
+                raise InvalidResumeDocument(str(invalid_code))
 
-            if isinstance(captured_pdf.get("data"), (bytes, bytearray)):
+            if isinstance(captured_document.get("data"), (bytes, bytearray)):
                 return BrowserResult(
                     BrowserOutcome.DOWNLOADED,
-                    filename=str(captured_pdf.get("filename") or "indeed-resume.pdf"),
-                    data=bytes(captured_pdf["data"]),
+                    filename=str(
+                        captured_document.get("filename") or "indeed-resume.pdf"
+                    ),
+                    data=bytes(captured_document["data"]),
+                    content_type=str(
+                        captured_document.get("content_type") or PDF_CONTENT_TYPE
+                    ),
                 )
 
             download = download_info.value
+            suggested = str(
+                getattr(download, "suggested_filename", None) or "indeed-resume"
+            )
             path = download.path()
             data = Path(path).read_bytes()
-            validate_pdf(data, max_bytes=self._config.max_pdf_bytes)
+            content_type = validate_resume_document(
+                data,
+                filename=suggested,
+                content_type=None,
+                max_bytes=self._config.max_pdf_bytes,
+            )
             return BrowserResult(
                 BrowserOutcome.DOWNLOADED,
-                filename=normalize_pdf_filename(
-                    getattr(download, "suggested_filename", None)
+                filename=normalize_resume_filename(
+                    suggested,
+                    content_type=content_type,
                 ),
                 data=data,
+                content_type=content_type,
             )
-        except InvalidResumePdf:
+        except InvalidResumeDocument:
             raise
         except Exception:
-            # Indeed currently returns the PDF response before closing the
-            # candidate tab/browser context. If the browser vanishes before
-            # Playwright can finish the Download object, prefer the already
-            # captured authenticated PDF response.
-            if captured_pdf.get("invalid_pdf"):
-                raise InvalidResumePdf("RESUME_NOT_PDF")
-            if isinstance(captured_pdf.get("data"), (bytes, bytearray)):
+            # Indeed can finish the authenticated response even if the Download
+            # object becomes unavailable because the SPA/tab closes. Prefer the
+            # already captured response in that case.
+            invalid_code = captured_document.get("invalid_code")
+            if invalid_code:
+                raise InvalidResumeDocument(str(invalid_code))
+            if isinstance(captured_document.get("data"), (bytes, bytearray)):
                 return BrowserResult(
                     BrowserOutcome.DOWNLOADED,
-                    filename=str(captured_pdf.get("filename") or "indeed-resume.pdf"),
-                    data=bytes(captured_pdf["data"]),
+                    filename=str(
+                        captured_document.get("filename") or "indeed-resume.pdf"
+                    ),
+                    data=bytes(captured_document["data"]),
+                    content_type=str(
+                        captured_document.get("content_type") or PDF_CONTENT_TYPE
+                    ),
                 )
 
-            diagnostic_path = self._write_ui_diagnostic(page)
+            diagnostic_path = self._write_ui_diagnostic(
+                page,
+                reason="INDEED_DOWNLOAD_ACTION_REQUIRES_REVIEW",
+            )
             return BrowserResult(
                 BrowserOutcome.NEEDS_HUMAN,
                 human_code="INDEED_DOWNLOAD_ACTION_REQUIRES_REVIEW",
@@ -1773,3 +2124,4 @@ class IndeedBrowser:
                 page.off("response", capture_resume_response)
             except Exception:
                 pass
+

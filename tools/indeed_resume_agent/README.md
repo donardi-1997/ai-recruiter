@@ -1,6 +1,6 @@
 # ASIATI Resume Agent
 
-Cliente Windows local para descargar de forma controlada los CV enlazados desde correos de Indeed y entregarlos al AI Recruiter. El agente usa una sesión visible de **Google Chrome**, un perfil de navegador exclusivo y una credencial de máquina almacenada en **Windows Credential Manager**.
+Cliente Windows local para descargar de forma controlada los CV enlazados desde correos de Indeed y entregarlos al AI Recruiter. Conserva el formato original compatible (**PDF o DOCX**) en lugar de forzar conversiones locales. El agente usa una sesión visible de **Google Chrome**, un perfil de navegador exclusivo y una credencial de máquina almacenada en **Windows Credential Manager**.
 
 ## Requisitos
 
@@ -71,7 +71,9 @@ El resultado queda en:
 dist\ASIATI Resume Agent\
 ```
 
-Se usa PyInstaller `--onedir`, se incluye Playwright y se reutiliza el canal `chrome` instalado. **No** es necesario ejecutar `playwright install chromium`.
+Se usa PyInstaller `--onedir`, se incluye Playwright y se reutiliza el canal `chrome` instalado. **No** es necesario ejecutar `playwright install chromium` en el PC de producción.
+
+En GitHub, los pull requests ejecutan un único workflow de validación (`CI — Tests & Build`). El artefacto Windows se genera una sola vez después de cambios validados que llegan a `main`, o manualmente mediante `workflow_dispatch`.
 
 ## Eliminar la credencial local
 

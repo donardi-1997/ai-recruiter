@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import io
+import zipfile
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import PurePosixPath
@@ -40,6 +42,8 @@ MAX_ATTEMPTS = 3
 FIRST_RETRY_SECONDS = 15
 SECOND_RETRY_SECONDS = 60
 MAX_DOCUMENT_BYTES = 15 * 1024 * 1024
+PDF_CONTENT_TYPE = "application/pdf"
+DOCX_CONTENT_TYPE = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
 
 
 class ResumeTaskNotFound(LookupError):
@@ -423,15 +427,59 @@ def record_failure(
     return task.status
 
 
-def _safe_pdf_filename(filename: str | None) -> str:
+def _is_docx(payload: bytes) -> bool:
+    if not payload.startswith(b"PK"):
+        return False
+    try:
+        with zipfile.ZipFile(io.BytesIO(payload), "r") as archive:
+            names = set(archive.namelist())
+    except (zipfile.BadZipFile, zipfile.LargeZipFile, OSError):
+        return False
+    return "[Content_Types].xml" in names and "word/document.xml" in names
+
+
+def _validate_resume_document(
+    *,
+    filename: str | None,
+    content_type: str,
+    data: bytes,
+) -> str:
+    payload = bytes(data or b"")
+    if len(payload) > MAX_DOCUMENT_BYTES:
+        raise ResumeUploadValidationError(413, "RESUME_TOO_LARGE")
+
+    declared = str(content_type or "").split(";", 1)[0].strip().casefold()
+    suffix = PurePosixPath(
+        str(filename or "").replace("\\", "/").rsplit("/", 1)[-1]
+    ).suffix.casefold()
+
+    if payload.startswith(b"%PDF-"):
+        if declared not in {PDF_CONTENT_TYPE, "application/octet-stream", ""}:
+            raise ResumeUploadValidationError(422, "RESUME_CONTENT_TYPE_INVALID")
+        return PDF_CONTENT_TYPE
+
+    if _is_docx(payload):
+        if declared not in {DOCX_CONTENT_TYPE, "application/octet-stream", ""}:
+            raise ResumeUploadValidationError(422, "RESUME_CONTENT_TYPE_INVALID")
+        return DOCX_CONTENT_TYPE
+
+    if declared == PDF_CONTENT_TYPE or suffix == ".pdf":
+        raise ResumeUploadValidationError(422, "RESUME_NOT_PDF")
+    if declared == DOCX_CONTENT_TYPE or suffix == ".docx":
+        raise ResumeUploadValidationError(422, "RESUME_NOT_DOCX")
+    raise ResumeUploadValidationError(422, "RESUME_UNSUPPORTED_FORMAT")
+
+
+def _safe_resume_filename(filename: str | None, *, content_type: str) -> str:
     raw = str(filename or "").replace("\\", "/").rsplit("/", 1)[-1].strip()
     stem = PurePosixPath(raw).stem.strip() if raw else "indeed-resume"
     stem = stem or "indeed-resume"
     safe = "".join(ch if ch.isalnum() or ch in " ._-" else "_" for ch in stem).strip()
-    return f"{safe or 'indeed-resume'}.pdf"
+    extension = ".docx" if content_type == DOCX_CONTENT_TYPE else ".pdf"
+    return f"{safe or 'indeed-resume'}{extension}"
 
 
-def store_resume_pdf(
+def store_resume_document(
     db: Session,
     *,
     owner_sub: str,
@@ -443,15 +491,13 @@ def store_resume_pdf(
     storage=None,
     now: datetime | None = None,
 ) -> CandidateIngestionDocument:
-    """Validate and persist a downloaded PDF exactly once for the leased task."""
+    """Validate and persist a supported resume exactly once for the leased task."""
     payload = bytes(data or b"")
-    if str(content_type or "").strip().casefold() != "application/pdf":
-        raise ResumeUploadValidationError(422, "RESUME_CONTENT_TYPE_INVALID")
-    if len(payload) > MAX_DOCUMENT_BYTES:
-        raise ResumeUploadValidationError(413, "RESUME_TOO_LARGE")
-    if not payload.startswith(b"%PDF-"):
-        raise ResumeUploadValidationError(422, "RESUME_NOT_PDF")
-
+    canonical_content_type = _validate_resume_document(
+        filename=filename,
+        content_type=content_type,
+        data=payload,
+    )
     digest = hashlib.sha256(payload).hexdigest()
     task = _owned_task(db, owner_sub=owner_sub, task_id=task_id)
     event = repository.get_event(
@@ -480,20 +526,23 @@ def store_resume_pdf(
         now=now,
     )
 
-    safe_filename = _safe_pdf_filename(filename)
+    safe_filename = _safe_resume_filename(
+        filename,
+        content_type=canonical_content_type,
+    )
     source_storage = storage or EmailIngestionStorage()
     source_key = source_storage.store_source_document(
         event_id=event.id,
         attachment_id=f"indeed-agent-{task.id}",
         filename=safe_filename,
         data=payload,
-        content_type="application/pdf",
+        content_type=canonical_content_type,
     )
     document = repository.create_document(
         db,
         ingestion_event_id=event.id,
         filename=safe_filename,
-        content_type="application/pdf",
+        content_type=canonical_content_type,
         size_bytes=len(payload),
         source_s3_key=source_key,
         document_sha256=digest,
@@ -514,6 +563,32 @@ def store_resume_pdf(
     db.commit()
     db.refresh(document)
     return document
+
+
+def store_resume_pdf(
+    db: Session,
+    *,
+    owner_sub: str,
+    task_id: str,
+    lease_token: str,
+    filename: str | None,
+    content_type: str,
+    data: bytes,
+    storage=None,
+    now: datetime | None = None,
+) -> CandidateIngestionDocument:
+    """Backward-compatible alias for the former PDF-only service contract."""
+    return store_resume_document(
+        db,
+        owner_sub=owner_sub,
+        task_id=task_id,
+        lease_token=lease_token,
+        filename=filename,
+        content_type=content_type,
+        data=data,
+        storage=storage,
+        now=now,
+    )
 
 
 def get_active_smoke_task(

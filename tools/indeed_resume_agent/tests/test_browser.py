@@ -1,14 +1,21 @@
+import io
 import json
 from pathlib import Path
+import zipfile
 import pytest
 
 from tools.indeed_resume_agent.browser import (
     BrowserFetchStageError,
     BrowserOutcome,
     IndeedBrowser,
+    DOCX_CONTENT_TYPE,
+    PDF_CONTENT_TYPE,
+    InvalidResumeDocument,
     InvalidResumePdf,
     normalize_pdf_filename,
+    normalize_resume_filename,
     validate_pdf,
+    validate_resume_document,
     _DOWNLOAD_NAME,
     _safe_diagnostic_url,
     _safe_diagnostic_text,
@@ -17,9 +24,20 @@ from tools.indeed_resume_agent.config import AgentConfig
 
 
 class FakeResponse:
-    def __init__(self, status=200, content_type="text/html", body=b""):
+    def __init__(
+        self,
+        status=200,
+        content_type="text/html",
+        body=b"",
+        *,
+        content_disposition=None,
+        url="",
+    ):
         self.status = status
         self.headers = {"content-type": content_type}
+        if content_disposition is not None:
+            self.headers["content-disposition"] = content_disposition
+        self.url = url
         self._body = body
     def body(self):
         return self._body
@@ -49,9 +67,24 @@ class FakeLocator:
 
 
 class FakeDownload:
-    suggested_filename = "candidate-cv.pdf"
-    def __init__(self, path): self._path = path
+    def __init__(self, path, suggested_filename="candidate-cv.pdf"):
+        self._path = path
+        self.suggested_filename = suggested_filename
     def path(self): return str(self._path)
+
+
+def _docx_bytes(text="Alejandra Camacho Saenz"):
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+        archive.writestr(
+            "[Content_Types].xml",
+            '<?xml version="1.0"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"></Types>',
+        )
+        archive.writestr(
+            "word/document.xml",
+            f'<?xml version="1.0"?><w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body><w:p><w:r><w:t>{text}</w:t></w:r></w:p></w:body></w:document>',
+        )
+    return buffer.getvalue()
 
 
 class FakeDownloadInfo:
@@ -850,6 +883,94 @@ def test_generic_resume_landing_falls_back_to_candidate_list_by_name(tmp_path):
     assert page.candidate_open is True
 
 
+def test_candidate_search_uses_observed_status_all_manage_q_route(tmp_path):
+    pdf=tmp_path / "download.pdf"
+    pdf.write_bytes(b"%PDF-query-route")
+
+    class CandidateLink:
+        def __init__(self, page):
+            self.page = page
+        def inner_text(self, timeout=None):
+            return "Alejandra camacho saenz"
+        def locator(self, selector):
+            return FakeLocator(0)
+        def click(self):
+            self.page.candidate_open = True
+            self.page.url = "https://employers.indeed.com/candidates/view?id=alejandra"
+
+    class CandidateLinks:
+        def __init__(self, page):
+            self.page = page
+        def count(self):
+            return 1
+        def nth(self, index):
+            assert index == 0
+            return CandidateLink(self.page)
+
+    class QueryRoutePage(FakePage):
+        def __init__(self):
+            super().__init__(
+                url="https://resumes.indeed.com/?from=gnav-one-host",
+                download=FakeDownload(pdf),
+            )
+            self.candidate_open = False
+
+        def goto(self, url, **kwargs):
+            self.goto_urls.append(url)
+            self.url = url
+            return FakeResponse(200, "text/html", b"")
+
+        def locator(self, selector):
+            if selector == "body":
+                return super().locator(selector)
+            if selector == '[data-testid="candidate-list-table-container"]':
+                return FakeLocator(1)
+            if (
+                'a[data-testid="NameCell"]' in selector
+                and "statusName=All&tab=manage&q=Alejandra+camacho+saenz" in self.url
+            ):
+                return CandidateLinks(self)
+            return FakeLocator(0)
+
+        def get_by_role(self, role, name=None):
+            if self.candidate_open and role in {"button", "link"}:
+                return FakeLocator(1)
+            return FakeLocator(0)
+
+        def wait_for_timeout(self, timeout):
+            return None
+
+    page=QueryRoutePage()
+    context=FakeContext(FakeResponse(200, "text/html", b""), page)
+    chromium=FakeChromium(context)
+    browser=IndeedBrowser(
+        cfg(tmp_path),
+        playwright_factory=lambda: FakeManager(FakePlaywright(chromium)),
+    )
+    browser.start()
+
+    result=browser.fetch_resume(
+        "https://indeed.test/resume",
+        candidate_name="Alejandra camacho saenz",
+    )
+
+    assert result.outcome is BrowserOutcome.DOWNLOADED
+    assert result.data == b"%PDF-query-route"
+    assert any(
+        url
+        == "https://employers.indeed.com/candidates?statusName=All&tab=manage&q=Alejandra+camacho+saenz"
+        for url in page.goto_urls
+    )
+
+
+def test_candidate_search_url_encodes_names_safely(tmp_path):
+    browser=IndeedBrowser(cfg(tmp_path))
+    assert browser._candidate_search_url("Alejandra Camacho Sáenz") == (
+        "https://employers.indeed.com/candidates"
+        "?statusName=All&tab=manage&q=Alejandra+Camacho+S%C3%A1enz"
+    )
+
+
 def test_candidates_workspace_selects_manage_and_all_stage_before_lookup(tmp_path):
     class TabLocator:
         def __init__(self, page, key):
@@ -1002,6 +1123,63 @@ def test_candidate_lookup_uses_live_namecell_dom_and_job_title(tmp_path):
     assert browser._normalize_lookup_text("SÁENZ") == "saenz"
 
 
+def test_candidate_lookup_falls_back_to_candidate_rows_when_namecell_anchor_is_absent(tmp_path):
+    class ClickTarget(FakeLocator):
+        def __init__(self):
+            super().__init__(1)
+            self.clicked = False
+        def click(self):
+            self.clicked = True
+
+    target = ClickTarget()
+
+    class Row:
+        def __init__(self):
+            self.text = (
+                "ALEJANDRA CAMACHO SÁENZ Bogotá, Cundinamarca "
+                "Empleo que solicitó: Líder de Marketing y Crecimiento"
+            )
+        @property
+        def first(self):
+            return self
+        def count(self):
+            return 1
+        def inner_text(self, timeout=None):
+            return self.text
+        def locator(self, selector):
+            if selector == '[data-testid="NameCell"]':
+                return target
+            return FakeLocator(0)
+
+    row = Row()
+
+    class Rows:
+        def count(self):
+            return 1
+        def nth(self, index):
+            assert index == 0
+            return row
+
+    class RowOnlyPage(FakePage):
+        def locator(self, selector):
+            if selector == "body":
+                return super().locator(selector)
+            if selector == '[data-testid="table-row"]':
+                return Rows()
+            return FakeLocator(0)
+
+    browser = IndeedBrowser(cfg(tmp_path))
+    link, ambiguous = browser._find_exact_candidate_link(
+        RowOnlyPage(),
+        "Alejandra camacho saenz",
+        job_title="Lider de Marketing y Crecimiento",
+    )
+
+    assert ambiguous is False
+    assert link is target
+    assert browser._normalize_lookup_text("SÁENZ") == "saenz"
+
+
 def test_duplicate_candidate_names_fail_closed_without_job_match(tmp_path):
     class RowLocator:
         def __init__(self, text):
@@ -1048,7 +1226,7 @@ def test_duplicate_candidate_names_fail_closed_without_job_match(tmp_path):
     assert ambiguous is True
 
 
-def test_candidate_list_fallback_returns_specific_review_code_when_name_missing(tmp_path):
+def test_candidate_search_route_returns_not_found_when_name_is_absent(tmp_path):
     class MissingCandidatePage(FakePage):
         def goto(self, url, **kwargs):
             self.goto_urls.append(url)
@@ -1083,8 +1261,57 @@ def test_candidate_list_fallback_returns_specific_review_code_when_name_missing(
     )
 
     assert result.outcome is BrowserOutcome.NEEDS_HUMAN
-    assert result.human_code == "INDEED_CANDIDATE_SEARCH_UNAVAILABLE"
+    assert result.human_code == "INDEED_CANDIDATE_NOT_FOUND"
     assert result.diagnostic_path is not None
+
+
+def test_candidate_search_unavailable_when_query_route_and_input_are_missing(tmp_path):
+    class SearchUnavailablePage(FakePage):
+        def __init__(self):
+            super().__init__(url="https://resumes.indeed.com/")
+            self.initial_workspace = True
+
+        def goto(self, url, **kwargs):
+            self.goto_urls.append(url)
+            if "statusName=All&tab=manage&q=" in url:
+                self.url = "https://resumes.indeed.com/?from=gnav-one-host"
+                self.initial_workspace = False
+            else:
+                self.url = "https://employers.indeed.com/candidates"
+            return FakeResponse(200, "text/html", b"")
+
+        def locator(self, selector):
+            if selector == "body":
+                return super().locator(selector)
+            if (
+                self.initial_workspace
+                and selector == '[data-testid="candidate-list-table-container"]'
+            ):
+                return FakeLocator(1)
+            return FakeLocator(0)
+
+        def get_by_text(self, pattern):
+            return FakeLocator(0)
+
+        def wait_for_timeout(self, timeout):
+            return None
+
+    page=SearchUnavailablePage()
+    context=FakeContext(FakeResponse(200, "text/html", b""), page)
+    chromium=FakeChromium(context)
+    browser=IndeedBrowser(
+        cfg(tmp_path),
+        playwright_factory=lambda: FakeManager(FakePlaywright(chromium)),
+    )
+    browser.start()
+
+    result=browser.fetch_resume(
+        "https://indeed.test/resume",
+        candidate_name="Alejandra camacho saenz",
+    )
+
+    assert result.outcome is BrowserOutcome.NEEDS_HUMAN
+    assert result.human_code == "INDEED_CANDIDATE_SEARCH_UNAVAILABLE"
 
 
 def test_unknown_ui_fails_closed(tmp_path):
@@ -1100,6 +1327,81 @@ def test_unknown_ui_fails_closed(tmp_path):
     payload = json.loads((tmp_path / "diagnostics" / (Path(result.diagnostic_path).name)).read_text(encoding="utf-8"))
     assert payload["url"] == "https://indeed.test/resume"
     assert "?" not in payload["url"]
+    assert payload["reason"] == "INDEED_UI_REQUIRES_REVIEW"
+    assert payload["inputs"] == []
+
+
+def test_validate_resume_document_accepts_docx_and_preserves_extension():
+    data = _docx_bytes()
+    content_type = validate_resume_document(
+        data,
+        filename="CVAlejandracamachosaenz.docx",
+        content_type=DOCX_CONTENT_TYPE,
+        max_bytes=15 * 1024 * 1024,
+    )
+    assert content_type == DOCX_CONTENT_TYPE
+    assert normalize_resume_filename(
+        r"C:\temp\CVAlejandracamachosaenz.docx",
+        content_type=content_type,
+    ) == "CVAlejandracamachosaenz.docx"
+
+
+def test_validate_resume_document_rejects_fake_docx():
+    with pytest.raises(InvalidResumeDocument) as caught:
+        validate_resume_document(
+            b"PK-not-a-real-docx",
+            filename="candidate.docx",
+            content_type=DOCX_CONTENT_TYPE,
+            max_bytes=15 * 1024 * 1024,
+        )
+    assert caught.value.code == "RESUME_NOT_DOCX"
+
+
+def test_resume_response_preserves_docx_filename_and_mime(tmp_path):
+    browser = IndeedBrowser(cfg(tmp_path))
+    response = FakeResponse(
+        200,
+        DOCX_CONTENT_TYPE,
+        _docx_bytes(),
+        content_disposition='attachment; filename="CVAlejandracamachosaenz.docx"',
+        url="https://employers.indeed.com/api/catws/resume/v2/download",
+    )
+
+    document = browser._response_document(response)
+
+    assert document is not None
+    data, content_type, filename = document
+    assert data.startswith(b"PK")
+    assert content_type == DOCX_CONTENT_TYPE
+    assert filename == "CVAlejandracamachosaenz.docx"
+
+
+def test_download_object_accepts_docx_resume(tmp_path):
+    docx = tmp_path / "download.docx"
+    docx.write_bytes(_docx_bytes())
+    page = FakePage(
+        download=FakeDownload(
+            docx,
+            suggested_filename="CVAlejandracamachosaenz.docx",
+        )
+    )
+    context = FakeContext(FakeResponse(200, "text/html", b""), page)
+    chromium = FakeChromium(context)
+    browser = IndeedBrowser(
+        cfg(tmp_path),
+        playwright_factory=lambda: FakeManager(FakePlaywright(chromium)),
+    )
+    browser.start()
+
+    result = browser.fetch_resume(
+        "https://indeed.test/resume",
+        candidate_name=None,
+    )
+
+    assert result.outcome is BrowserOutcome.DOWNLOADED
+    assert result.filename == "CVAlejandracamachosaenz.docx"
+    assert result.content_type == DOCX_CONTENT_TYPE
+    assert result.data == docx.read_bytes()
 
 
 @pytest.mark.parametrize("data,code", [(b"", "RESUME_NOT_PDF"), (b"hello", "RESUME_NOT_PDF")])

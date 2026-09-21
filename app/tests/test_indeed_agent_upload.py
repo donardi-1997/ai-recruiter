@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import io
+import zipfile
 
 import pytest
 from sqlalchemy import create_engine
@@ -80,6 +82,23 @@ def _message(resume_url="https://secure.indeed.com/resume/temporary"):
             ],
         },
     }
+
+
+DOCX_CONTENT_TYPE = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+
+
+def _docx_bytes(text="Wendy Dayanna Marquez Rincon"):
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+        archive.writestr(
+            "[Content_Types].xml",
+            '<?xml version="1.0"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"></Types>',
+        )
+        archive.writestr(
+            "word/document.xml",
+            f'<?xml version="1.0"?><w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body><w:p><w:r><w:t>{text}</w:t></w:r></w:p></w:body></w:document>',
+        )
+    return buffer.getvalue()
 
 
 def _event_task(db: Session, *, owner_sub="owner-1"):
@@ -175,6 +194,45 @@ def test_valid_pdf_upload_completes_task_and_keeps_event_undispatched():
         assert task.status == "COMPLETED"
         assert task.lease_token is None
         assert task.lease_expires_at is None
+    finally:
+        db.close()
+        engine.dispose()
+
+
+def test_valid_docx_upload_completes_task_and_preserves_original_format():
+    from app.domains.candidate_ingestion import indeed_email_agent_service as service
+
+    engine, db = _db()
+    event, task = _event_task(db)
+    storage = FakeStorage()
+    try:
+        claimed = service.claim_next_task(db, owner_sub="owner-1")
+        data = _docx_bytes()
+        document = service.store_resume_document(
+            db,
+            owner_sub="owner-1",
+            task_id=task.id,
+            lease_token=claimed.lease_token,
+            filename="CVAlejandracamachosaenz.docx",
+            content_type=DOCX_CONTENT_TYPE,
+            data=data,
+            storage=storage,
+        )
+
+        assert document.filename == "CVAlejandracamachosaenz.docx"
+        assert document.content_type == DOCX_CONTENT_TYPE
+        assert document.document_sha256 == hashlib.sha256(data).hexdigest()
+        assert storage.calls == [
+            {
+                "event_id": event.id,
+                "attachment_id": f"indeed-agent-{task.id}",
+                "filename": "CVAlejandracamachosaenz.docx",
+                "data": data,
+                "content_type": DOCX_CONTENT_TYPE,
+            }
+        ]
+        db.refresh(task)
+        assert task.status == "COMPLETED"
     finally:
         db.close()
         engine.dispose()
@@ -296,6 +354,12 @@ def test_existing_different_document_is_conflict_not_replaced():
     [
         pytest.param("text/plain", b"%PDF-1.7\nvalid", 422, id="invalid-content-type"),
         pytest.param("application/pdf", b"not-a-pdf", 422, id="invalid-pdf-signature"),
+        pytest.param(
+            DOCX_CONTENT_TYPE,
+            b"PK-not-a-real-docx",
+            422,
+            id="invalid-docx-signature",
+        ),
         pytest.param(
             "application/pdf",
             b"%PDF-" + b"x" * (15 * 1024 * 1024 + 1),

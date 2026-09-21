@@ -63,6 +63,43 @@ def test_mutations_include_lease_header_and_upload_pdf_multipart(tmp_path):
             assert req.headers["X-ASIATI-Lease-Token"] == "lease-1"
 
 
+def test_upload_resume_preserves_docx_mime_type(tmp_path):
+    seen = {}
+
+    def handler(request):
+        body = request.read()
+        seen["body"] = body
+        return httpx.Response(
+            200,
+            json={
+                "document_id": "d1",
+                "filename": "cv.docx",
+                "document_sha256": "abc",
+            },
+        )
+
+    client = httpx.Client(
+        transport=httpx.MockTransport(handler),
+        base_url="https://agent.test",
+    )
+    api = AgentApiClient(config(tmp_path), "a"*40, http_client=client)
+    task = api._parse_claim({
+        "task_id":"t1","candidate_name":"Ada","job_title":"Engineer",
+        "resume_url":"https://indeed.test/resume","lease_token":"lease-1",
+        "lease_expires_at":"2026-09-17T23:00:00+00:00"
+    })
+
+    api.upload_resume(
+        task,
+        filename="cv.docx",
+        data=b"PK-docx",
+        content_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    )
+
+    assert b"application/vnd.openxmlformats-officedocument.wordprocessingml.document" in seen["body"]
+    assert b'filename="cv.docx"' in seen["body"]
+
+
 def test_stats_and_resume_after_human_use_agent_only_routes(tmp_path):
     paths=[]
     def handler(request):
