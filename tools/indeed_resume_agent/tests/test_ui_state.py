@@ -30,6 +30,12 @@ def test_active_and_paused_labels():
     assert paused.status_label == "En pausa"
 
 
+def test_manual_browser_open_has_explicit_safe_status():
+    ui=build_ui_state(snap("MANUAL_BROWSER_OPEN"), stats())
+    assert ui.status_label == "Cierra Indeed manual para continuar"
+    assert ui.session_label == "Ready"
+
+
 def test_needs_human_is_attention_state():
     ui=build_ui_state(snap("WAITING_FOR_HUMAN","Ada","internal error should not leak"), stats(needs_human=2))
     assert ui.session_label == "Needs attention"
