@@ -396,6 +396,40 @@ def test_login_or_challenge_returns_needs_human(tmp_path):
     assert result.human_code == "INDEED_AUTH_REQUIRED"
 
 
+def test_html_navigation_body_unavailable_does_not_abort_download_flow(tmp_path):
+    pdf=tmp_path / "download.pdf"
+    pdf.write_bytes(b"%PDF-downloaded")
+
+    class HtmlResponseWithUnavailableBody:
+        status = 200
+        url = "https://employers.indeed.com/candidates/view?id=abc"
+        headers = {"content-type": "text/html; charset=utf-8"}
+
+        def body(self):
+            raise RuntimeError("Protocol error: body unavailable after navigation commit")
+
+    class LandedPage(FakePage):
+        def goto(self, url, **kwargs):
+            self.goto_urls.append(url)
+            self.url = "https://employers.indeed.com/candidates/view?id=abc"
+            return HtmlResponseWithUnavailableBody()
+
+    page=LandedPage(download=FakeDownload(pdf))
+    context=FakeContext(FakeResponse(200, "text/html", b""), page)
+    chromium=FakeChromium(context)
+    browser=IndeedBrowser(
+        cfg(tmp_path),
+        playwright_factory=lambda: FakeManager(FakePlaywright(chromium)),
+    )
+    browser.start()
+
+    result=browser.fetch_resume("https://indeed.test/resume")
+
+    assert result.outcome is BrowserOutcome.DOWNLOADED
+    assert result.data == b"%PDF-downloaded"
+    assert page.url == "https://employers.indeed.com/candidates/view?id=abc"
+
+
 def test_navigation_failure_has_specific_safe_stage_code(tmp_path):
     class FailingPage(FakePage):
         def goto(self, url, **kwargs):
