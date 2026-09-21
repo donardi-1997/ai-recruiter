@@ -220,6 +220,7 @@ class IndeedBrowser:
         self._diagnostic_events: list[dict] = []
         self._diagnostic_context_hooked = False
         self._diagnostic_page_ids: set[int] = set()
+        self._diagnostic_anchor_page_id: int | None = None
         self._last_diagnostic_path: str | None = None
 
     @property
@@ -281,6 +282,7 @@ class IndeedBrowser:
         self._playwright = None
         self._diagnostic_context_hooked = False
         self._diagnostic_page_ids.clear()
+        self._diagnostic_anchor_page_id = None
         if context is not None:
             context.close()
         if playwright is not None:
@@ -399,10 +401,16 @@ class IndeedBrowser:
     def _record_diagnostic_event(self, event: dict) -> None:
         if not self._diagnostic_active:
             return
-        if len(self._diagnostic_events) >= 800:
-            return
         payload = dict(event)
         payload["captured_at_utc"] = datetime.now(timezone.utc).isoformat()
+
+        # Keep a rolling window instead of stopping after the initial page-load
+        # burst. Indeed can emit hundreds of analytics/static requests before
+        # the user clicks "Descargar CV"; the useful download/close event must
+        # remain observable even when the page is noisy.
+        max_events = 1200
+        if len(self._diagnostic_events) >= max_events:
+            del self._diagnostic_events[: len(self._diagnostic_events) - max_events + 1]
         self._diagnostic_events.append(payload)
 
     def _on_diagnostic_request(self, request) -> None:
@@ -525,6 +533,32 @@ class IndeedBrowser:
         except Exception:
             pass
 
+        try:
+            page.on(
+                "close",
+                lambda: self._record_diagnostic_event(
+                    {
+                        "kind": "page_closed",
+                        "url": _safe_diagnostic_url(getattr(page, "url", "")),
+                    }
+                ),
+            )
+        except Exception:
+            pass
+
+        try:
+            page.on(
+                "crash",
+                lambda: self._record_diagnostic_event(
+                    {
+                        "kind": "page_crashed",
+                        "url": _safe_diagnostic_url(getattr(page, "url", "")),
+                    }
+                ),
+            )
+        except Exception:
+            pass
+
     def _attach_diagnostic_context(self) -> None:
         if self._context is None:
             return
@@ -533,6 +567,12 @@ class IndeedBrowser:
                 self._context.on("request", self._on_diagnostic_request)
                 self._context.on("response", self._on_diagnostic_response)
                 self._context.on("page", self._attach_diagnostic_page)
+                self._context.on(
+                    "close",
+                    lambda: self._record_diagnostic_event(
+                        {"kind": "browser_context_closed"}
+                    ),
+                )
                 self._diagnostic_context_hooked = True
             except Exception:
                 pass
@@ -548,9 +588,30 @@ class IndeedBrowser:
         self._diagnostic_started_at = datetime.now(timezone.utc).isoformat()
         self._last_diagnostic_path = None
         self._diagnostic_active = True
-        self._attach_diagnostic_context()
 
-        page = self._page()
+        # Keep one local anchor tab alive. Indeed's resume action may close the
+        # candidate tab after initiating a download; without another tab Chrome
+        # can disappear entirely, which previously made diagnosis impossible.
+        existing_pages = list(getattr(self._context, "pages", []) or [])
+        if existing_pages:
+            anchor = existing_pages[0]
+        else:
+            anchor = self._context.new_page()
+        self._diagnostic_anchor_page_id = id(anchor)
+        try:
+            anchor.set_content(
+                "<title>ASIATI Resume Agent</title>"
+                "<body style='font-family:sans-serif;padding:24px'>"
+                "ASIATI Resume Agent — diagnostic anchor. Keep this tab open."
+                "</body>"
+            )
+        except Exception:
+            pass
+
+        page = self._context.new_page()
+        self._attach_diagnostic_context()
+        self._attach_diagnostic_page(page)
+
         target = self._safe_manual_url(url)
         try:
             page.goto(
@@ -583,6 +644,21 @@ class IndeedBrowser:
         pages = list(getattr(self._context, "pages", []) or [])
         for page in pages:
             try:
+                if id(page) == self._diagnostic_anchor_page_id:
+                    continue
+                if hasattr(page, "is_closed") and page.is_closed():
+                    continue
+                page.wait_for_timeout(100)
+                return
+            except Exception:
+                continue
+
+        # If the candidate tab closed itself after the download, keep pumping
+        # Playwright from the anchor so download/close events can still flush.
+        for page in pages:
+            try:
+                if id(page) != self._diagnostic_anchor_page_id:
+                    continue
                 if hasattr(page, "is_closed") and page.is_closed():
                     continue
                 page.wait_for_timeout(100)
@@ -652,6 +728,8 @@ class IndeedBrowser:
         pages = list(getattr(self._context, "pages", []) or []) if self._context is not None else []
         for page in pages:
             try:
+                if id(page) == self._diagnostic_anchor_page_id:
+                    continue
                 if hasattr(page, "is_closed") and page.is_closed():
                     continue
                 try:
