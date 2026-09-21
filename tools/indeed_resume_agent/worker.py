@@ -147,7 +147,10 @@ class ResumeWorker:
         heartbeat.start()
         stage = "BROWSER_FETCH"
         try:
-            result = self._browser.fetch_resume(task.resume_url)
+            result = self._browser.fetch_resume(
+                task.resume_url,
+                candidate_name=task.candidate_name,
+            )
 
             if heartbeat.error is not None:
                 return self._set(

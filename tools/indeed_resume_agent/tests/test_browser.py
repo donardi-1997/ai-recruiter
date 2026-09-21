@@ -570,6 +570,102 @@ def test_spa_waits_for_download_control_before_requiring_review(tmp_path):
     assert page.probes >= 5
 
 
+def test_generic_resume_landing_falls_back_to_candidate_list_by_name(tmp_path):
+    pdf=tmp_path / "download.pdf"
+    pdf.write_bytes(b"%PDF-fallback")
+
+    class CandidateTextLocator(FakeLocator):
+        def __init__(self, page):
+            super().__init__(1)
+            self.page = page
+
+        def click(self):
+            self.page.url = "https://employers.indeed.com/candidates/view?id=alejandra"
+            self.page.candidate_open = True
+
+    class CandidateListPage(FakePage):
+        def __init__(self):
+            super().__init__(
+                url="https://resumes.indeed.com/?from=gnav-one-host",
+                download=FakeDownload(pdf),
+            )
+            self.candidate_open = False
+            self.fallback_nav = False
+
+        def goto(self, url, **kwargs):
+            self.goto_urls.append(url)
+            if url == "https://employers.indeed.com/candidates":
+                self.url = url
+                self.fallback_nav = True
+                return FakeResponse(200, "text/html", b"")
+            self.url = "https://resumes.indeed.com/?from=gnav-one-host"
+            return FakeResponse(200, "text/html", b"")
+
+        def get_by_text(self, pattern):
+            if self.fallback_nav:
+                return CandidateTextLocator(self)
+            return FakeLocator(0)
+
+        def get_by_role(self, role, name=None):
+            if self.candidate_open and role in {"button", "link"}:
+                return FakeLocator(1)
+            return FakeLocator(0)
+
+        def wait_for_timeout(self, timeout):
+            return None
+
+    page=CandidateListPage()
+    context=FakeContext(FakeResponse(200, "text/html", b""), page)
+    chromium=FakeChromium(context)
+    browser=IndeedBrowser(
+        cfg(tmp_path),
+        playwright_factory=lambda: FakeManager(FakePlaywright(chromium)),
+    )
+    browser.start()
+
+    result=browser.fetch_resume(
+        "https://indeed.test/resume",
+        candidate_name="Alejandra camacho saenz",
+    )
+
+    assert result.outcome is BrowserOutcome.DOWNLOADED
+    assert result.data == b"%PDF-fallback"
+    assert "https://employers.indeed.com/candidates" in page.goto_urls
+    assert page.candidate_open is True
+
+
+def test_candidate_list_fallback_returns_specific_review_code_when_name_missing(tmp_path):
+    class MissingCandidatePage(FakePage):
+        def goto(self, url, **kwargs):
+            self.goto_urls.append(url)
+            self.url = url
+            return FakeResponse(200, "text/html", b"")
+
+        def get_by_text(self, pattern):
+            return FakeLocator(0)
+
+        def wait_for_timeout(self, timeout):
+            return None
+
+    page=MissingCandidatePage(url="https://resumes.indeed.com/")
+    context=FakeContext(FakeResponse(200, "text/html", b""), page)
+    chromium=FakeChromium(context)
+    browser=IndeedBrowser(
+        cfg(tmp_path),
+        playwright_factory=lambda: FakeManager(FakePlaywright(chromium)),
+    )
+    browser.start()
+
+    result=browser.fetch_resume(
+        "https://indeed.test/resume",
+        candidate_name="Alejandra camacho saenz",
+    )
+
+    assert result.outcome is BrowserOutcome.NEEDS_HUMAN
+    assert result.human_code == "INDEED_CANDIDATE_NOT_FOUND"
+    assert result.diagnostic_path is not None
+
+
 def test_unknown_ui_fails_closed(tmp_path):
     page=FakePage(text="Profile page without known controls")
     context=FakeContext(FakeResponse(200, "text/html", b""), page)
