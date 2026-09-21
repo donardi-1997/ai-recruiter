@@ -216,44 +216,38 @@ def run_ui(*, worker, api, browser) -> None:
                             pass
                         publish(worker.snapshot, last_stats)
                     elif command == "diagnostic_start":
-                        if browser.manual_session_open:
+                        worker.pause()
+                        try:
+                            browser.start_diagnostic()
                             diagnostic_snapshot = WorkerSnapshot(
-                                "MANUAL_BROWSER_OPEN",
+                                "DIAGNOSTIC_MODE",
                                 worker.snapshot.active_candidate,
                                 worker.snapshot.processed_session,
                                 None,
                             )
-                        else:
-                            worker.pause()
-                            try:
-                                browser.start_diagnostic()
-                                diagnostic_snapshot = WorkerSnapshot(
-                                    "DIAGNOSTIC_MODE",
-                                    worker.snapshot.active_candidate,
-                                    worker.snapshot.processed_session,
-                                    None,
-                                )
-                            except RuntimeError as exc:
-                                error_code = str(exc)
-                                if error_code == "INDEED_MANUAL_LOGIN_REQUIRED":
-                                    state = "MANUAL_LOGIN_REQUIRED"
-                                elif error_code == "INDEED_DIAGNOSTIC_ANCHOR_FAILED":
-                                    state = "DIAGNOSTIC_ANCHOR_FAILED"
-                                else:
-                                    state = "ERROR"
-                                diagnostic_snapshot = WorkerSnapshot(
-                                    state,
-                                    worker.snapshot.active_candidate,
-                                    worker.snapshot.processed_session,
-                                    None,
-                                )
-                            except Exception:
-                                diagnostic_snapshot = WorkerSnapshot(
-                                    "ERROR",
-                                    worker.snapshot.active_candidate,
-                                    worker.snapshot.processed_session,
-                                    None,
-                                )
+                        except RuntimeError as exc:
+                            error_code = str(exc)
+                            if error_code == "INDEED_MANUAL_BROWSER_OPEN":
+                                state = "MANUAL_BROWSER_OPEN"
+                            elif error_code == "INDEED_MANUAL_LOGIN_REQUIRED":
+                                state = "MANUAL_LOGIN_REQUIRED"
+                            elif error_code == "INDEED_DIAGNOSTIC_ANCHOR_FAILED":
+                                state = "DIAGNOSTIC_ANCHOR_FAILED"
+                            else:
+                                state = "ERROR"
+                            diagnostic_snapshot = WorkerSnapshot(
+                                state,
+                                worker.snapshot.active_candidate,
+                                worker.snapshot.processed_session,
+                                None,
+                            )
+                        except Exception:
+                            diagnostic_snapshot = WorkerSnapshot(
+                                "ERROR",
+                                worker.snapshot.active_candidate,
+                                worker.snapshot.processed_session,
+                                None,
+                            )
                         publish(diagnostic_snapshot, last_stats)
                     elif command == "diagnostic_stop":
                         path = None
