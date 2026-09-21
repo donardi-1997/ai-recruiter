@@ -115,6 +115,13 @@ class FakeManager:
     def start(self): return self.p
 
 
+class FakeProcess:
+    def __init__(self, returncode=None):
+        self.returncode = returncode
+    def poll(self):
+        return self.returncode
+
+
 def cfg(tmp_path):
     return AgentConfig(api_base_url="https://agent.test", browser_profile_dir=tmp_path / "profile")
 
@@ -143,6 +150,7 @@ def test_open_indeed_uses_normal_edge_with_same_dedicated_profile(tmp_path):
 
     def run(command, **kwargs):
         calls.append((command, kwargs))
+        return FakeProcess()
 
     browser=IndeedBrowser(
         cfg(tmp_path),
@@ -162,7 +170,24 @@ def test_open_indeed_uses_normal_edge_with_same_dedicated_profile(tmp_path):
     assert "--no-sandbox" not in command
     assert not any(item.startswith("--remote-debugging") for item in command)
     assert command[-1] == "https://www.indeed.com/"
-    assert kwargs == {"check": False}
+    assert kwargs == {}
+    assert browser.manual_session_open is True
+
+
+def test_start_refuses_profile_while_manual_edge_is_open(tmp_path):
+    process = FakeProcess()
+    browser=IndeedBrowser(
+        cfg(tmp_path),
+        edge_executable_resolver=lambda: r"C:\\Program Files\\Microsoft\\Edge\\Application\\msedge.exe",
+        process_runner=lambda command: process,
+    )
+    browser.open_indeed()
+
+    with pytest.raises(RuntimeError, match="INDEED_MANUAL_BROWSER_OPEN"):
+        browser.start()
+
+    process.returncode = 0
+    assert browser.manual_session_open is False
 
 
 def test_direct_authenticated_request_returns_pdf_without_page_navigation(tmp_path):
@@ -240,6 +265,7 @@ def test_open_indeed_can_open_specific_safe_resume_url(tmp_path):
 
     def run(command, **kwargs):
         calls.append((command, kwargs))
+        return FakeProcess()
 
     browser=IndeedBrowser(
         cfg(tmp_path),
@@ -264,6 +290,7 @@ def test_open_indeed_rejects_unsafe_manual_url(tmp_path, url):
 
     def run(command, **kwargs):
         calls.append((command, kwargs))
+        return FakeProcess()
 
     browser=IndeedBrowser(
         cfg(tmp_path),
