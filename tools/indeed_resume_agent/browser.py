@@ -1903,21 +1903,37 @@ class IndeedBrowser:
             self.start()
         except Exception as exc:
             raise BrowserFetchStageError("RESUME_BROWSER_START_FAILED") from exc
+
         resume_url = str(url or "").strip()
         if not resume_url.lower().startswith("https://"):
-            return BrowserResult(BrowserOutcome.NEEDS_HUMAN, human_code="INDEED_UI_REQUIRES_REVIEW")
+            return BrowserResult(
+                BrowserOutcome.NEEDS_HUMAN,
+                human_code="INDEED_UI_REQUIRES_REVIEW",
+            )
 
+        # Fast path: the ephemeral Indeed link can occasionally resolve directly
+        # to a supported document without rendering the employer SPA.
         try:
-            response = self._context.request.get(resume_url, timeout=int(self._config.request_timeout_seconds * 1000))
-            direct = self._response_pdf(response)
+            response = self._context.request.get(
+                resume_url,
+                timeout=int(self._config.request_timeout_seconds * 1000),
+            )
+            direct = self._response_document(response)
             if direct is not None:
-                validate_pdf(direct, max_bytes=self._config.max_pdf_bytes)
+                data, content_type, filename = direct
+                validate_resume_document(
+                    data,
+                    filename=filename,
+                    content_type=content_type,
+                    max_bytes=self._config.max_pdf_bytes,
+                )
                 return BrowserResult(
                     BrowserOutcome.DOWNLOADED,
-                    filename="indeed-resume.pdf",
-                    data=direct,
+                    filename=filename,
+                    data=data,
+                    content_type=content_type,
                 )
-        except InvalidResumePdf:
+        except InvalidResumeDocument:
             raise
         except Exception:
             pass
@@ -1937,26 +1953,40 @@ class IndeedBrowser:
             raise BrowserFetchStageError("RESUME_BROWSER_NAVIGATION_FAILED") from exc
 
         try:
-            navigated_pdf = self._response_pdf(navigation, probe_body=False)
-        except InvalidResumePdf:
+            navigated_document = self._response_document(
+                navigation,
+                probe_body=False,
+            )
+        except InvalidResumeDocument:
             raise
         except Exception as exc:
             raise BrowserFetchStageError(
                 "RESUME_BROWSER_NAVIGATION_RESPONSE_FAILED"
             ) from exc
-        if navigated_pdf is not None:
-            validate_pdf(navigated_pdf, max_bytes=self._config.max_pdf_bytes)
+
+        if navigated_document is not None:
+            data, content_type, filename = navigated_document
+            validate_resume_document(
+                data,
+                filename=filename,
+                content_type=content_type,
+                max_bytes=self._config.max_pdf_bytes,
+            )
             return BrowserResult(
                 BrowserOutcome.DOWNLOADED,
-                filename="indeed-resume.pdf",
-                data=navigated_pdf,
+                filename=filename,
+                data=data,
+                content_type=content_type,
             )
 
         generic_landing = self._is_generic_recruiting_landing(page)
         control = None if generic_landing else self._wait_for_download_control(page)
 
         if self._requires_human(page):
-            return BrowserResult(BrowserOutcome.NEEDS_HUMAN, human_code="INDEED_AUTH_REQUIRED")
+            return BrowserResult(
+                BrowserOutcome.NEEDS_HUMAN,
+                human_code="INDEED_AUTH_REQUIRED",
+            )
 
         fallback_attempted = False
         lookup_error: str | None = None
@@ -1969,45 +1999,45 @@ class IndeedBrowser:
             )
 
         if self._requires_human(page):
-            return BrowserResult(BrowserOutcome.NEEDS_HUMAN, human_code="INDEED_AUTH_REQUIRED")
-
-        if control is None:
-            diagnostic_path = self._write_ui_diagnostic(
-                page,
-                reason=lookup_error
-                or (
-                    "INDEED_CANDIDATE_NOT_FOUND"
-                    if fallback_attempted
-                    else "INDEED_UI_REQUIRES_REVIEW"
-                ),
-            )
             return BrowserResult(
                 BrowserOutcome.NEEDS_HUMAN,
-                human_code=(
-                    lookup_error
-                    or (
-                        "INDEED_CANDIDATE_NOT_FOUND"
-                        if fallback_attempted
-                        else "INDEED_UI_REQUIRES_REVIEW"
-                    )
-                ),
+                human_code="INDEED_AUTH_REQUIRED",
+            )
+
+        if control is None:
+            reason = lookup_error or (
+                "INDEED_CANDIDATE_NOT_FOUND"
+                if fallback_attempted
+                else "INDEED_UI_REQUIRES_REVIEW"
+            )
+            diagnostic_path = self._write_ui_diagnostic(page, reason=reason)
+            return BrowserResult(
+                BrowserOutcome.NEEDS_HUMAN,
+                human_code=reason,
                 diagnostic_path=diagnostic_path,
             )
 
-        captured_pdf: dict[str, object] = {}
+        captured_document: dict[str, object] = {}
 
         def capture_resume_response(response) -> None:
             if not self._is_resume_download_response(response):
                 return
             try:
-                data = self._response_pdf(response)
-                if data is None:
+                document = self._response_document(response)
+                if document is None:
                     return
-                validate_pdf(data, max_bytes=self._config.max_pdf_bytes)
-                captured_pdf["data"] = data
-                captured_pdf["filename"] = self._response_filename(response)
-            except InvalidResumePdf:
-                captured_pdf["invalid_pdf"] = True
+                data, content_type, filename = document
+                validate_resume_document(
+                    data,
+                    filename=filename,
+                    content_type=content_type,
+                    max_bytes=self._config.max_pdf_bytes,
+                )
+                captured_document["data"] = data
+                captured_document["filename"] = filename
+                captured_document["content_type"] = content_type
+            except InvalidResumeDocument as exc:
+                captured_document["invalid_code"] = exc.code
             except Exception:
                 pass
 
@@ -2022,44 +2052,68 @@ class IndeedBrowser:
             ) as download_info:
                 control.click()
 
-            if captured_pdf.get("invalid_pdf"):
-                raise InvalidResumePdf("RESUME_NOT_PDF")
+            invalid_code = captured_document.get("invalid_code")
+            if invalid_code:
+                raise InvalidResumeDocument(str(invalid_code))
 
-            if isinstance(captured_pdf.get("data"), (bytes, bytearray)):
+            if isinstance(captured_document.get("data"), (bytes, bytearray)):
                 return BrowserResult(
                     BrowserOutcome.DOWNLOADED,
-                    filename=str(captured_pdf.get("filename") or "indeed-resume.pdf"),
-                    data=bytes(captured_pdf["data"]),
+                    filename=str(
+                        captured_document.get("filename") or "indeed-resume.pdf"
+                    ),
+                    data=bytes(captured_document["data"]),
+                    content_type=str(
+                        captured_document.get("content_type") or PDF_CONTENT_TYPE
+                    ),
                 )
 
             download = download_info.value
+            suggested = str(
+                getattr(download, "suggested_filename", None) or "indeed-resume"
+            )
             path = download.path()
             data = Path(path).read_bytes()
-            validate_pdf(data, max_bytes=self._config.max_pdf_bytes)
+            content_type = validate_resume_document(
+                data,
+                filename=suggested,
+                content_type=None,
+                max_bytes=self._config.max_pdf_bytes,
+            )
             return BrowserResult(
                 BrowserOutcome.DOWNLOADED,
-                filename=normalize_pdf_filename(
-                    getattr(download, "suggested_filename", None)
+                filename=normalize_resume_filename(
+                    suggested,
+                    content_type=content_type,
                 ),
                 data=data,
+                content_type=content_type,
             )
-        except InvalidResumePdf:
+        except InvalidResumeDocument:
             raise
         except Exception:
-            # Indeed currently returns the PDF response before closing the
-            # candidate tab/browser context. If the browser vanishes before
-            # Playwright can finish the Download object, prefer the already
-            # captured authenticated PDF response.
-            if captured_pdf.get("invalid_pdf"):
-                raise InvalidResumePdf("RESUME_NOT_PDF")
-            if isinstance(captured_pdf.get("data"), (bytes, bytearray)):
+            # Indeed can finish the authenticated response even if the Download
+            # object becomes unavailable because the SPA/tab closes. Prefer the
+            # already captured response in that case.
+            invalid_code = captured_document.get("invalid_code")
+            if invalid_code:
+                raise InvalidResumeDocument(str(invalid_code))
+            if isinstance(captured_document.get("data"), (bytes, bytearray)):
                 return BrowserResult(
                     BrowserOutcome.DOWNLOADED,
-                    filename=str(captured_pdf.get("filename") or "indeed-resume.pdf"),
-                    data=bytes(captured_pdf["data"]),
+                    filename=str(
+                        captured_document.get("filename") or "indeed-resume.pdf"
+                    ),
+                    data=bytes(captured_document["data"]),
+                    content_type=str(
+                        captured_document.get("content_type") or PDF_CONTENT_TYPE
+                    ),
                 )
 
-            diagnostic_path = self._write_ui_diagnostic(page)
+            diagnostic_path = self._write_ui_diagnostic(
+                page,
+                reason="INDEED_DOWNLOAD_ACTION_REQUIRES_REVIEW",
+            )
             return BrowserResult(
                 BrowserOutcome.NEEDS_HUMAN,
                 human_code="INDEED_DOWNLOAD_ACTION_REQUIRES_REVIEW",
@@ -2070,3 +2124,4 @@ class IndeedBrowser:
                 page.off("response", capture_resume_response)
             except Exception:
                 pass
+
