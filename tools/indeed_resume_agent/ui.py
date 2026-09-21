@@ -30,6 +30,7 @@ def build_ui_state(snapshot: WorkerSnapshot, stats: QueueStats) -> UiState:
         "COMPLETED": "CV cargado correctamente",
         "PAUSED": "En pausa",
         "MANUAL_BROWSER_OPEN": "Cierra el navegador manual para continuar",
+        "MANUAL_LOGIN_REQUIRED": "Inicia sesión primero con Open Indeed (Google Chrome), cierra Chrome y vuelve a intentar",
         "DIAGNOSTIC_MODE": "Modo diagnóstico activo: usa Indeed normalmente y luego pulsa Guardar diagnóstico",
         "DIAGNOSTIC_SAVED": "Diagnóstico guardado",
         "WAITING_FOR_HUMAN": "Indeed requiere intervención manual",
@@ -224,9 +225,21 @@ def run_ui(*, worker, api, browser) -> None:
                         else:
                             worker.pause()
                             try:
-                                browser.start_diagnostic(worker.human_resume_url)
+                                browser.start_diagnostic()
                                 diagnostic_snapshot = WorkerSnapshot(
                                     "DIAGNOSTIC_MODE",
+                                    worker.snapshot.active_candidate,
+                                    worker.snapshot.processed_session,
+                                    None,
+                                )
+                            except RuntimeError as exc:
+                                state = (
+                                    "MANUAL_LOGIN_REQUIRED"
+                                    if str(exc) == "INDEED_MANUAL_LOGIN_REQUIRED"
+                                    else "ERROR"
+                                )
+                                diagnostic_snapshot = WorkerSnapshot(
+                                    state,
                                     worker.snapshot.active_candidate,
                                     worker.snapshot.processed_session,
                                     None,
@@ -264,7 +277,7 @@ def run_ui(*, worker, api, browser) -> None:
                         worker.pause()
                         publish(worker.snapshot, last_stats)
                         try:
-                            browser.open_indeed(worker.human_resume_url)
+                            browser.open_indeed()
                         except Exception:
                             pass
 

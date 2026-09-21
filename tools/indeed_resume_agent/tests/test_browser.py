@@ -170,7 +170,7 @@ def test_open_indeed_uses_normal_chrome_with_same_dedicated_profile(tmp_path):
     assert "--new-window" in command
     assert "--no-sandbox" not in command
     assert not any(item.startswith("--remote-debugging") for item in command)
-    assert command[-1] == "https://www.indeed.com/"
+    assert command[-1] == "https://employers.indeed.com/"
     assert kwargs == {}
     assert browser.manual_session_open is True
 
@@ -222,6 +222,25 @@ def test_manual_session_clears_when_launcher_and_profile_process_are_gone(tmp_pa
     browser.open_indeed()
 
     assert browser.manual_session_open is False
+
+
+def test_diagnostic_requires_manual_login_instead_of_automating_auth(tmp_path):
+    page=FakePage(
+        url="https://employers.indeed.com/account/login",
+        text="Iniciar sesión",
+    )
+    context=FakeContext(FakeResponse(), page)
+    chromium=FakeChromium(context)
+    browser=IndeedBrowser(
+        cfg(tmp_path),
+        playwright_factory=lambda: FakeManager(FakePlaywright(chromium)),
+    )
+
+    with pytest.raises(RuntimeError, match="INDEED_MANUAL_LOGIN_REQUIRED"):
+        browser.start_diagnostic()
+
+    assert browser.diagnostic_active is False
+    assert context.closed is True
 
 
 def test_direct_authenticated_request_returns_pdf_without_page_navigation(tmp_path):
@@ -398,7 +417,7 @@ def test_open_indeed_rejects_unsafe_manual_url(tmp_path, url):
     )
     browser.open_indeed(url)
 
-    assert calls[0][0][-1] == "https://www.indeed.com/"
+    assert calls[0][0][-1] == "https://employers.indeed.com/"
 
 
 @pytest.mark.parametrize(

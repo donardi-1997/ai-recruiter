@@ -38,10 +38,11 @@ Para iniciar:
 
 1. Verifique que Google Chrome esté instalado.
 2. Inicie ASIATI Resume Agent.
-3. Pulse **Open Indeed**.
-4. Inicie sesión manualmente en Indeed dentro de esa ventana si hace falta.
+3. Pulse **Open Indeed (Google Chrome)**. Este botón abre Chrome normal, no Playwright.
+4. Inicie sesión manualmente en Indeed dentro de esa ventana si hace falta. Si usa Google, hágalo únicamente aquí.
 5. Complete MFA/CAPTCHA manualmente cuando Indeed lo solicite.
-6. Mantenga el perfil dedicado en `%LOCALAPPDATA%\ASIATI\ResumeAgent\browser-profile-chrome`.
+6. Cierre completamente esa ventana de Chrome antes de usar **Resume** o **Diagnostic mode**.
+7. Mantenga el perfil dedicado en `%LOCALAPPDATA%\ASIATI\ResumeAgent\browser-profile-chrome`.
 7. Active y pruebe **una sola aplicación real** antes de procesar un lote.
 
 El agente trabaja con una sola tarea a la vez. Si se cierra el PC o el proceso, el backend recupera una tarea cuando vence su lease; no borre tareas completadas.
@@ -51,7 +52,7 @@ El agente trabaja con una sola tarea a la vez. Si se cierra el PC o el proceso, 
 - **Pause**: evita reclamar la siguiente tarea; no interrumpe una descarga determinística ya iniciada.
 - **Resume**: reanuda la cola y, si había una tarea en `NEEDS_HUMAN`, solicita al backend volverla a `WAITING_DOWNLOAD`.
 - **Open Indeed (Google Chrome)**: abre Indeed usando exclusivamente el perfil persistente de Chrome del agente.
-- **Diagnostic mode**: abre una sesión visible controlada por Playwright para capturar metadatos sanitizados del flujo de descarga.
+- **Diagnostic mode**: abre una sesión visible controlada por Playwright para capturar metadatos sanitizados del flujo de descarga. Requiere que la sesión de Indeed ya se haya autenticado previamente en **Open Indeed (Google Chrome)**; el agente no intenta Google OAuth dentro de Playwright.
 - **Guardar diagnóstico**: guarda el JSON y la captura local en `%LOCALAPPDATA%\\ASIATI\\ResumeAgent\\diagnostics`.
 
 La interfaz nunca muestra tokens de máquina, lease tokens, URL temporal del CV, cookies ni errores backend sin sanitizar.

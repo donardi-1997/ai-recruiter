@@ -36,6 +36,12 @@ def test_manual_browser_open_has_explicit_safe_status():
     assert ui.session_label == "Ready"
 
 
+def test_manual_login_required_has_explicit_instruction():
+    ui=build_ui_state(snap("MANUAL_LOGIN_REQUIRED"), stats())
+    assert "Open Indeed (Google Chrome)" in ui.status_label
+    assert "Inicia sesión" in ui.status_label
+
+
 def test_diagnostic_mode_and_saved_path_are_explicit():
     active=build_ui_state(snap("DIAGNOSTIC_MODE","Ada"), stats())
     saved=build_ui_state(
