@@ -381,6 +381,8 @@ def resume_after_human(
         raise ResumeTaskStateConflict("RESUME_TASK_NOT_WAITING_FOR_HUMAN")
     task.status = "WAITING_DOWNLOAD"
     task.available_at = None
+    task.attempt_count = 0
+    task.completed_at = None
     task.last_error_code = None
     task.last_error_message = None
     _clear_lease(task)
@@ -536,6 +538,19 @@ def get_active_smoke_task(
         .first()
     )
     if task is None:
+        task = (
+            db.query(IndeedEmailResumeTask)
+            .filter(
+                IndeedEmailResumeTask.owner_sub == owner_sub,
+                IndeedEmailResumeTask.status == "FAILED",
+            )
+            .order_by(
+                IndeedEmailResumeTask.created_at.asc(),
+                IndeedEmailResumeTask.id.asc(),
+            )
+            .first()
+        )
+    if task is None:
         return {
             "task_id": None,
             "status": None,
@@ -571,6 +586,19 @@ def reactivate_one_archived_task(
         )
         .first()
     )
+    if active is None:
+        active = (
+            db.query(IndeedEmailResumeTask)
+            .filter(
+                IndeedEmailResumeTask.owner_sub == owner_sub,
+                IndeedEmailResumeTask.status == "FAILED",
+            )
+            .order_by(
+                IndeedEmailResumeTask.created_at.asc(),
+                IndeedEmailResumeTask.id.asc(),
+            )
+            .first()
+        )
     if active is not None:
         return {
             "reactivated": False,
@@ -629,12 +657,17 @@ def retry_active_needs_human_task(
     *,
     owner_sub: str,
 ) -> dict:
-    """Retry the current owner-scoped NEEDS_HUMAN smoke-test task in place."""
+    """Retry the current owner-scoped smoke-test task in place.
+
+    NEEDS_HUMAN, RETRY, and terminal FAILED tasks are eligible. FAILED retries
+    reset the attempt budget so the diagnostic build can observe the real UI.
+    """
+    retryable_statuses = ("NEEDS_HUMAN", "RETRY", "FAILED")
     task = (
         db.query(IndeedEmailResumeTask)
         .filter(
             IndeedEmailResumeTask.owner_sub == owner_sub,
-            IndeedEmailResumeTask.status == "NEEDS_HUMAN",
+            IndeedEmailResumeTask.status.in_(retryable_statuses),
         )
         .order_by(
             IndeedEmailResumeTask.created_at.asc(),
