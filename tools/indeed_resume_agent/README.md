@@ -1,16 +1,16 @@
 # ASIATI Resume Agent
 
-Cliente Windows local para descargar de forma controlada los CV enlazados desde correos de Indeed y entregarlos al AI Recruiter. El agente usa una sesión visible de **Microsoft Edge**, un perfil de navegador exclusivo y una credencial de máquina almacenada en **Windows Credential Manager**.
+Cliente Windows local para descargar de forma controlada los CV enlazados desde correos de Indeed y entregarlos al AI Recruiter. El agente usa una sesión visible de **Google Chrome**, un perfil de navegador exclusivo y una credencial de máquina almacenada en **Windows Credential Manager**.
 
 ## Requisitos
 
 - Windows 10/11.
-- Microsoft Edge instalado.
+- Google Chrome instalado.
 - Python 3.12+ solo para instalación/desarrollo desde el repositorio.
 - Acceso HTTPS a `https://dzcwl3yhv133t.cloudfront.net`.
 - Token de máquina emitido por el administrador. No lo guarde en archivos, capturas, tickets o chat.
 
-El agente no solicita ni almacena la contraseña de Indeed. Login, MFA y CAPTCHA se resuelven manualmente en la ventana visible de Edge.
+El agente no solicita ni almacena la contraseña de Indeed. Login, MFA y CAPTCHA se resuelven manualmente en la ventana visible de Chrome. Chrome es el navegador predeterminado; para pruebas de compatibilidad puede seleccionarse Edge con `ASIATI_RESUME_AGENT_BROWSER=edge`.
 
 ## Instalación para pruebas desde el repositorio
 
@@ -36,7 +36,7 @@ Para iniciar:
 
 ## Primer uso
 
-1. Verifique que Microsoft Edge esté instalado.
+1. Verifique que Google Chrome esté instalado.
 2. Inicie ASIATI Resume Agent.
 3. Pulse **Open Indeed**.
 4. Inicie sesión manualmente en Indeed dentro de esa ventana si hace falta.
@@ -50,7 +50,9 @@ El agente trabaja con una sola tarea a la vez. Si se cierra el PC o el proceso, 
 
 - **Pause**: evita reclamar la siguiente tarea; no interrumpe una descarga determinística ya iniciada.
 - **Resume**: reanuda la cola y, si había una tarea en `NEEDS_HUMAN`, solicita al backend volverla a `WAITING_DOWNLOAD`.
-- **Open Indeed**: abre Indeed usando exclusivamente el perfil persistente del agente.
+- **Open Indeed (Google Chrome)**: abre Indeed usando exclusivamente el perfil persistente de Chrome del agente.
+- **Diagnostic mode**: abre una sesión visible controlada por Playwright para capturar metadatos sanitizados del flujo de descarga.
+- **Guardar diagnóstico**: guarda el JSON y la captura local en `%LOCALAPPDATA%\\ASIATI\\ResumeAgent\\diagnostics`.
 
 La interfaz nunca muestra tokens de máquina, lease tokens, URL temporal del CV, cookies ni errores backend sin sanitizar.
 
@@ -68,7 +70,7 @@ El resultado queda en:
 dist\ASIATI Resume Agent\
 ```
 
-Se usa PyInstaller `--onedir`, se incluye Playwright y se reutiliza el canal `msedge` instalado. **No** es necesario ejecutar `playwright install chromium`.
+Se usa PyInstaller `--onedir`, se incluye Playwright y se reutiliza el canal `chrome` instalado. **No** es necesario ejecutar `playwright install chromium`.
 
 ## Eliminar la credencial local
 
@@ -78,7 +80,7 @@ Desde el repositorio y el entorno instalado:
 .\.agent-venv\Scripts\python.exe -c "from tools.indeed_resume_agent.credential_store import delete_agent_token; delete_agent_token(); print('Credencial eliminada')"
 ```
 
-Eliminar la credencial no borra el perfil de Edge ni los estados durables del backend.
+Eliminar la credencial no borra el perfil de Chrome ni los estados durables del backend.
 
 ## Corte a producción
 
