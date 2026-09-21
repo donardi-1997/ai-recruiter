@@ -6,6 +6,8 @@ import re
 import shutil
 import subprocess
 from datetime import datetime, timezone
+
+import psutil
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
@@ -52,6 +54,29 @@ def normalize_pdf_filename(filename: str | None) -> str:
 def _default_playwright_factory():
     from playwright.sync_api import sync_playwright
     return sync_playwright()
+
+
+def _manual_edge_process_exists(profile_dir: Path) -> bool:
+    """Return True when the dedicated profile is owned by a top-level Edge process."""
+    target = os.path.normcase(os.path.normpath(str(profile_dir)))
+    for process in psutil.process_iter(["name", "cmdline"]):
+        try:
+            info = process.info
+            if str(info.get("name") or "").casefold() != "msedge.exe":
+                continue
+            args = [str(value) for value in (info.get("cmdline") or [])]
+            if any(arg.startswith("--type=") for arg in args):
+                continue
+            for arg in args:
+                if not arg.casefold().startswith("--user-data-dir="):
+                    continue
+                value = arg.split("=", 1)[1].strip().strip('"')
+                candidate = os.path.normcase(os.path.normpath(value))
+                if candidate == target:
+                    return True
+        except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
+            continue
+    return False
 
 
 def _resolve_edge_executable() -> str:
@@ -120,11 +145,13 @@ class IndeedBrowser:
         playwright_factory=None,
         edge_executable_resolver=None,
         process_runner=None,
+        manual_process_probe=None,
     ):
         self._config = config
         self._playwright_factory = playwright_factory or _default_playwright_factory
         self._edge_executable_resolver = edge_executable_resolver or _resolve_edge_executable
         self._process_runner = process_runner or subprocess.Popen
+        self._manual_process_probe = manual_process_probe or _manual_edge_process_exists
         self._manual_process = None
         self._playwright = None
         self._context = None
@@ -132,16 +159,20 @@ class IndeedBrowser:
     @property
     def manual_session_open(self) -> bool:
         process = self._manual_process
-        if process is None:
-            return False
-        poll = getattr(process, "poll", None)
-        if not callable(poll):
-            self._manual_process = None
-            return False
+        if process is not None:
+            poll = getattr(process, "poll", None)
+            if callable(poll):
+                try:
+                    if poll() is None:
+                        return True
+                except Exception:
+                    return True
+
         try:
-            running = poll() is None
+            running = bool(self._manual_process_probe(self._config.browser_profile_dir))
         except Exception:
-            return True
+            running = False
+
         if not running:
             self._manual_process = None
         return running
