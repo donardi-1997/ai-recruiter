@@ -381,8 +381,6 @@ def resume_after_human(
         raise ResumeTaskStateConflict("RESUME_TASK_NOT_WAITING_FOR_HUMAN")
     task.status = "WAITING_DOWNLOAD"
     task.available_at = None
-    task.attempt_count = 0
-    task.completed_at = None
     task.last_error_code = None
     task.last_error_message = None
     _clear_lease(task)
