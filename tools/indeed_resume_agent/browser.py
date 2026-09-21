@@ -611,6 +611,14 @@ class IndeedBrowser:
 
     @staticmethod
     def _candidate_manage_tab(page):
+        # Stable attribute captured from the live Indeed Candidates DOM.
+        try:
+            locator = page.locator('[data-testid="manage-candidates-tab"]')
+            if locator.count() > 0:
+                return locator.first
+        except Exception:
+            pass
+
         name = re.compile(
             r"^(?:gestionar candidatos|manage candidates)$",
             re.IGNORECASE,
@@ -630,11 +638,54 @@ class IndeedBrowser:
             pass
         return None
 
+    @staticmethod
+    def _candidate_all_stage_tab(page):
+        # Search across every application status. Indeed remembers the last
+        # selected stage, which otherwise can hide an existing candidate.
+        try:
+            locator = page.locator('[data-testid="stage-tab-All"]')
+            if locator.count() > 0:
+                return locator.first
+        except Exception:
+            pass
+
+        name = re.compile(
+            r"^(?:todas las solicitudes|all applications|all applicants)(?:\s*[•·-]\s*\d+)?$",
+            re.IGNORECASE,
+        )
+        for role in ("tab", "button", "link"):
+            try:
+                locator = page.get_by_role(role, name=name)
+                if locator.count() > 0:
+                    return locator.first
+            except Exception:
+                continue
+        return None
+
+    @staticmethod
+    def _locator_selected(locator) -> bool:
+        try:
+            return str(locator.get_attribute("aria-selected") or "").casefold() == "true"
+        except Exception:
+            return False
+
+    @staticmethod
+    def _candidate_list_ready(page) -> bool:
+        for selector in (
+            '[data-testid="candidate-list-table-container"]',
+            'a[data-testid="NameCell"]',
+            'input[placeholder="Buscar candidatos" i]',
+            'input[placeholder="Search candidates" i]',
+        ):
+            try:
+                if page.locator(selector).count() > 0:
+                    return True
+            except Exception:
+                continue
+        return False
+
     def _open_candidates_workspace(self, page) -> bool:
-        # Prefer the canonical Candidates URL. The live employer UI exposes the
-        # application list at /candidates, with the Manage candidates tab and a
-        # Search candidates textbox. This avoids depending on icon-only left-nav
-        # accessibility labels that vary between Indeed experiments.
+        # Prefer the canonical Candidates URL.
         try:
             page.goto(
                 _INDEED_CANDIDATES_HOME,
@@ -648,24 +699,37 @@ class IndeedBrowser:
         attempts = max(
             1,
             min(
-                20,
+                30,
                 int(max(1.0, float(self._config.request_timeout_seconds)) * 1000)
                 // interval_ms,
             ),
         )
-        for _ in range(attempts):
-            if self._is_candidates_workspace(page):
-                manage_tab = self._candidate_manage_tab(page)
-                if manage_tab is not None:
-                    try:
-                        manage_tab.click()
-                        page.wait_for_timeout(500)
-                    except Exception:
-                        pass
-                return True
 
+        for _ in range(attempts):
             if self._requires_human(page):
                 return False
+
+            if self._is_candidates_workspace(page):
+                manage_tab = self._candidate_manage_tab(page)
+                if manage_tab is not None and not self._locator_selected(manage_tab):
+                    try:
+                        manage_tab.click()
+                        page.wait_for_timeout(400)
+                    except Exception:
+                        pass
+
+                all_stage = self._candidate_all_stage_tab(page)
+                if all_stage is not None and not self._locator_selected(all_stage):
+                    try:
+                        all_stage.click()
+                        page.wait_for_timeout(400)
+                    except Exception:
+                        pass
+
+                # /candidates is a client-rendered SPA. Do not start the lookup
+                # until the actual list/search UI has mounted.
+                if self._candidate_list_ready(page):
+                    return True
 
             try:
                 page.wait_for_timeout(interval_ms)
@@ -673,15 +737,24 @@ class IndeedBrowser:
                 time.sleep(interval_ms / 1000.0)
 
         # Some Indeed experiments route /candidates back through Smart
-        # Recruiting. In that case retain the semantic left-rail fallback.
+        # Recruiting. Keep the semantic left-rail navigation as a fallback.
         control = self._candidate_navigation_control(page)
         if control is not None:
             try:
                 control.click()
-                page.wait_for_timeout(750)
-                return self._is_candidates_workspace(page)
             except Exception:
-                pass
+                return False
+
+            for _ in range(12):
+                if self._requires_human(page):
+                    return False
+                if self._is_candidates_workspace(page) and self._candidate_list_ready(page):
+                    return True
+                try:
+                    page.wait_for_timeout(interval_ms)
+                except Exception:
+                    time.sleep(interval_ms / 1000.0)
+
         return False
 
     @staticmethod
@@ -907,9 +980,8 @@ class IndeedBrowser:
             except Exception:
                 return None, "INDEED_CANDIDATE_OPEN_FAILED"
 
-        deadline = time.monotonic() + max(
-            3.0, float(self._config.request_timeout_seconds)
-        )
+        lookup_budget = max(6.0, float(self._config.request_timeout_seconds))
+        deadline = time.monotonic() + lookup_budget
 
         # Wait for the SPA search input. The live page uses the placeholder
         # "Buscar candidatos" / "Search candidates" and renders it after the
@@ -950,11 +1022,13 @@ class IndeedBrowser:
                 return None, "INDEED_CANDIDATE_SEARCH_FAILED"
 
             # Indeed normally filters after a debounce. Give that behavior the
-            # first chance; Enter is only a compatibility nudge, not the primary
-            # trigger.
+            # first chance; Enter is only a compatibility nudge. Each query gets
+            # a small independent window so a slow full-name search cannot starve
+            # the normalized/short-name fallbacks.
+            query_deadline = min(deadline, time.monotonic() + 4.5)
             pressed_enter = False
             polls = 0
-            while time.monotonic() < deadline:
+            while time.monotonic() < query_deadline:
                 if self._requires_human(page):
                     return None, "INDEED_AUTH_REQUIRED"
 
