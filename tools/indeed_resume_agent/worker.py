@@ -150,6 +150,7 @@ class ResumeWorker:
             result = self._browser.fetch_resume(
                 task.resume_url,
                 candidate_name=task.candidate_name,
+                job_title=task.job_title,
             )
 
             if heartbeat.error is not None:
