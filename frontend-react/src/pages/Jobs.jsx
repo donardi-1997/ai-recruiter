@@ -265,7 +265,7 @@ function Jobs() {
   }
 
   async function enrichJobDraft() {
-    if (editingJob || enriching || !title.trim()) return;
+    if (enriching || !title.trim()) return;
     setEnriching(true);
     setEnrichmentError("");
     setEnrichmentProposal(null);
@@ -402,19 +402,21 @@ function Jobs() {
             <div className="form-group"><label htmlFor="job-title">Título de la vacante</label><input id="job-title" maxLength={75} placeholder="Ej. Cloud Engineer" value={title} onChange={(e) => setTitle(e.target.value)} required /></div>
             <div className="form-group"><label htmlFor="job-description">Descripción y requisitos</label><textarea id="job-description" placeholder="Responsabilidades, experiencia, habilidades y criterios de éxito…" value={description} onChange={(e) => setDescription(e.target.value)} required /></div>
 
-            {!editingJob && (
-              <div className="job-enrichment-actions">
-                <div>
-                  <strong>¿Quieres ayuda para completar el perfil?</strong>
-                  <p className="muted">La IA usa el contexto de Asiati y tu borrador. Nada se guarda hasta que crees la vacante.</p>
-                </div>
-                <button type="button" className="btn btn-secondary" onClick={enrichJobDraft} disabled={enriching || !title.trim()}>{enriching ? "Enriqueciendo…" : "Enriquecer con IA"}</button>
+            <div className="job-enrichment-actions">
+              <div>
+                <strong>¿Quieres ayuda para completar el perfil?</strong>
+                <p className="muted">
+                  {editingJob
+                    ? "La IA usa el contexto de Asiati y los datos actuales. Nada se guarda hasta que pulses Guardar cambios."
+                    : "La IA usa el contexto de Asiati y tu borrador. Nada se guarda hasta que crees la vacante."}
+                </p>
               </div>
-            )}
+              <button type="button" className="btn btn-secondary" onClick={enrichJobDraft} disabled={enriching || !title.trim()}>{enriching ? "Enriqueciendo…" : "Enriquecer con IA"}</button>
+            </div>
 
             {enrichmentError && <div className="alert alert-error" role="alert"><span>{enrichmentError}</span></div>}
 
-            {enrichmentProposal && !editingJob && (
+            {enrichmentProposal && (
               <section className="job-enrichment-proposal" aria-label="Propuesta de IA">
                 <div className="job-enrichment-heading"><div><span className="eyebrow">Asistente de vacantes</span><h3>Propuesta de IA</h3></div><span className="badge">Revisar antes de aplicar</span></div>
                 <p>{enrichmentProposal.improved_description}</p>
@@ -499,6 +501,19 @@ function Jobs() {
             <div className="job-detail-section">
               <h3>Descripción y requisitos</h3>
               <p className="job-detail-description">{viewJob.description || "Sin descripción."}</p>
+              {!viewJob.description && (
+                <button
+                  type="button"
+                  className="btn btn-secondary"
+                  onClick={() => {
+                    const job = viewJob;
+                    closeJobDetails();
+                    editJob(job);
+                  }}
+                >
+                  Editar y enriquecer
+                </button>
+              )}
             </div>
 
             <div className="job-detail-section indeed-panel">
