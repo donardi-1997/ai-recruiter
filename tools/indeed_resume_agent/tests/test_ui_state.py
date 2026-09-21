@@ -18,6 +18,7 @@ def test_idle_ui_state_is_safe_and_operational():
     assert ui.session_label == "Ready"
     assert ui.status_label == "Esperando tareas"
     assert ui.pending == 4 and ui.completed == 10 and ui.downloading == 0
+    assert ui.retry == 2
     assert ui.current_candidate == "-"
 
 
