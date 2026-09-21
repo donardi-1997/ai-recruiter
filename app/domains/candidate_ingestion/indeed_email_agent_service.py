@@ -700,6 +700,33 @@ def retry_active_needs_human_task(
     }
 
 
+def requeue_failed_tasks(
+    db: Session,
+    *,
+    owner_sub: str,
+) -> int:
+    """Move only this owner's terminal FAILED tasks back to a clean download state."""
+    tasks = (
+        db.query(IndeedEmailResumeTask)
+        .filter(
+            IndeedEmailResumeTask.owner_sub == owner_sub,
+            IndeedEmailResumeTask.status == "FAILED",
+        )
+        .all()
+    )
+    for task in tasks:
+        task.status = "WAITING_DOWNLOAD"
+        task.available_at = None
+        task.attempt_count = 0
+        task.last_error_code = None
+        task.last_error_message = None
+        task.completed_at = None
+        _clear_lease(task)
+    if tasks:
+        db.commit()
+    return len(tasks)
+
+
 def stats(db: Session, *, owner_sub: str) -> dict[str, int]:
     counts = indeed_email_repository.count_by_status(db, owner_sub=owner_sub)
     return {

@@ -1,0 +1,85 @@
+name: Verify & Build — ASIATI Resume Agent
+
+on:
+  push:
+    branches:
+      - feat/indeed-resume-windows-agent
+    paths:
+      - "tools/indeed_resume_agent/**"
+      - ".github/workflows/indeed-resume-agent.yml"
+  pull_request:
+    branches: [main]
+    paths:
+      - "tools/indeed_resume_agent/**"
+      - "app/domains/candidate_ingestion/indeed_agent_*.py"
+      - "app/domains/candidate_ingestion/indeed_email_*.py"
+      - ".github/workflows/indeed-resume-agent.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    name: Agent + backend contracts
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install -r tools/indeed_resume_agent/requirements.txt
+          pip install pytest
+      - name: Agent unit tests
+        run: python -m pytest -q tools/indeed_resume_agent/tests
+      - name: Backend agent contracts
+        env:
+          DATABASE_URL: "sqlite:///:memory:"
+        run: |
+          python -m pytest -q \
+            app/tests/test_indeed_agent_auth.py \
+            app/tests/test_indeed_agent_routes.py \
+            app/tests/test_indeed_agent_upload.py \
+            app/tests/test_indeed_email_resume_leases.py
+
+  windows-build:
+    name: Windows onedir artifact
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Create build environment
+        shell: powershell
+        run: |
+          python -m venv .agent-venv
+          .\.agent-venv\Scripts\python.exe -m pip install --upgrade pip
+          .\.agent-venv\Scripts\pip.exe install -r .\tools\indeed_resume_agent\requirements.txt
+          .\.agent-venv\Scripts\pip.exe install pytest
+      - name: Packaging contract tests
+        shell: powershell
+        run: .\.agent-venv\Scripts\python.exe -m pytest -q tools\indeed_resume_agent\tests\test_packaging_contract.py tools\indeed_resume_agent\tests\test_ci_workflow_contract.py
+      - name: Build Windows agent
+        shell: powershell
+        run: .\tools\indeed_resume_agent\build.ps1
+      - name: Verify executable
+        shell: powershell
+        run: |
+          $Exe = ".\dist\ASIATI Resume Agent\ASIATI Resume Agent.exe"
+          if (-not (Test-Path $Exe)) { throw "Windows executable was not created" }
+          Get-Item $Exe | Format-List Name,Length,FullName
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ASIATI-Resume-Agent-Windows
+          path: dist/ASIATI Resume Agent/**
+          if-no-files-found: error
+          retention-days: 14
