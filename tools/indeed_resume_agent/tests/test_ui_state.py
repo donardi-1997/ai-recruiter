@@ -41,3 +41,15 @@ def test_ui_state_has_no_secret_fields():
     fields=set(UiState.__dataclass_fields__)
     forbidden={"token","lease_token","resume_url","gmail_address","raw_error"}
     assert fields.isdisjoint(forbidden)
+
+
+def test_ui_surfaces_only_sanitized_indeed_diagnostic_path():
+    detail = (
+        "Indeed mostró una interfaz no reconocida. Diagnóstico local: "
+        r"C:\Users\test\AppData\Local\ASIATI\ResumeAgent\diagnostics\indeed-ui-review.json"
+    )
+    ui=build_ui_state(
+        snap("WAITING_FOR_HUMAN","Ada",detail),
+        stats(needs_human=1),
+    )
+    assert ui.status_label == detail
