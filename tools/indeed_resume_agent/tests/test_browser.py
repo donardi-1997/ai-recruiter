@@ -127,6 +127,18 @@ def cfg(tmp_path):
     return AgentConfig(api_base_url="https://agent.test", browser_profile_dir=tmp_path / "profile")
 
 
+def test_playwright_context_is_not_misclassified_as_manual_browser(tmp_path):
+    page = FakePage(url="https://employers.indeed.com/candidates")
+    context = FakeContext(FakeResponse(), page)
+    browser = IndeedBrowser(
+        cfg(tmp_path),
+        manual_process_probe=lambda profile_dir: True,
+    )
+    browser._context = context
+
+    assert browser.manual_session_open is False
+
+
 def test_start_relaunches_after_user_closes_previous_playwright_window(tmp_path):
     class ClosedPage(FakePage):
         def is_closed(self):
