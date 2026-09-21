@@ -17,7 +17,8 @@ def test_ci_workflow_is_the_only_pull_request_validation_entrypoint():
     assert "pull_request:" in ci_text
     assert "pull_request:" not in deploy_text
     assert "pull_request:" not in agent_text
-    assert "\n  push:" not in agent_text
+    assert "push:" in agent_text
+    assert "branches: [main]" in agent_text
     assert "workflow_dispatch:" in agent_text
 
 
