@@ -178,3 +178,30 @@ def test_retry_active_archived_test_uses_authenticated_owner(api, monkeypatch):
     assert response.status_code == 200
     assert response.json()["retried"] is True
     assert calls["owner_sub"] == principal["sub"]
+
+
+def test_active_archived_test_uses_authenticated_owner(api, monkeypatch):
+    client, principal = api
+    calls = {}
+
+    def fake_get_active(db, *, owner_sub):
+        calls.update(db=db, owner_sub=owner_sub)
+        return {
+            "task_id": "task-1",
+            "status": "NEEDS_HUMAN",
+            "candidate_name": "CESAR ARCILA",
+            "job_title": "Líder de Contact Center Comercial",
+            "last_error_code": "INDEED_UI_REQUIRES_REVIEW",
+        }
+
+    monkeypatch.setattr(
+        indeed_email_agent_service,
+        "get_active_smoke_task",
+        fake_get_active,
+    )
+
+    response = client.get("/api/integrations/gmail/active-archived-test")
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "NEEDS_HUMAN"
+    assert calls["owner_sub"] == principal["sub"]
