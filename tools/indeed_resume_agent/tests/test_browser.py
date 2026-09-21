@@ -435,6 +435,45 @@ def test_download_control_name_accepts_common_indeed_labels(label):
     assert _DOWNLOAD_NAME.fullmatch(label)
 
 
+def test_diagnostic_event_buffer_keeps_recent_download_event(tmp_path):
+    browser = IndeedBrowser(cfg(tmp_path))
+    browser._diagnostic_active = True
+
+    for index in range(1300):
+        browser._record_diagnostic_event(
+            {"kind": "request", "url": f"https://indeed.test/{index}"}
+        )
+    browser._record_diagnostic_event(
+        {
+            "kind": "download",
+            "url": "https://employers.indeed.com/candidates/resume",
+            "suggested_filename": "candidate.pdf",
+        }
+    )
+
+    assert len(browser._diagnostic_events) == 1200
+    assert browser._diagnostic_events[-1]["kind"] == "download"
+    assert browser._diagnostic_events[-1]["suggested_filename"] == "candidate.pdf"
+
+
+def test_diagnostic_page_close_event_is_recorded(tmp_path):
+    handlers = {}
+
+    class EventPage(FakePage):
+        def on(self, name, callback):
+            handlers[name] = callback
+
+    page = EventPage(url="https://employers.indeed.com/candidates/view")
+    browser = IndeedBrowser(cfg(tmp_path))
+    browser._diagnostic_active = True
+
+    browser._attach_diagnostic_page(page)
+    handlers["close"]()
+
+    assert browser._diagnostic_events[-1]["kind"] == "page_closed"
+    assert browser._diagnostic_events[-1]["url"] == "https://employers.indeed.com/candidates/view"
+
+
 def test_safe_diagnostic_url_strips_query_and_fragment():
     assert _safe_diagnostic_url(
         "https://employers.indeed.com/resume/abc?token=secret#section"
