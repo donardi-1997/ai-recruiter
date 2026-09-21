@@ -264,6 +264,43 @@ describe("Gmail corporate integration", () => {
     ).toBeInTheDocument();
   });
 
+
+
+  it("restores the retry button from backend smoke-test state after reload", async () => {
+    api.get
+      .mockResolvedValueOnce({
+        data: {
+          enabled: true,
+          configured: true,
+          oauth_configured: true,
+          connected: true,
+          connected_email: "recruiting@asiaticorp.com",
+          provider: "INDEED",
+          safe_filter: true,
+          redirect_uri: "https://abc.execute-api.us-east-2.amazonaws.com/prod/api/integrations/gmail/oauth/callback",
+        },
+      })
+      .mockResolvedValueOnce({
+        data: {
+          task_id: "task-1",
+          status: "NEEDS_HUMAN",
+          candidate_name: "CESAR ARCILA",
+          job_title: "Líder de Contact Center Comercial",
+          last_error_code: "INDEED_UI_REQUIRES_REVIEW",
+        },
+      });
+
+    renderPage();
+
+    expect(await screen.findByText("recruiting@asiaticorp.com")).toBeInTheDocument();
+    expect(
+      await screen.findByRole("button", { name: "Reintentar prueba" }),
+    ).toBeInTheDocument();
+    expect(api.get).toHaveBeenCalledWith(
+      "/integrations/gmail/active-archived-test",
+    );
+  });
+
   it("disconnects the corporate mailbox and refreshes status", async () => {
     api.get
       .mockResolvedValueOnce({
