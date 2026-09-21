@@ -1002,6 +1002,63 @@ def test_candidate_lookup_uses_live_namecell_dom_and_job_title(tmp_path):
     assert browser._normalize_lookup_text("SÁENZ") == "saenz"
 
 
+def test_candidate_lookup_falls_back_to_candidate_rows_when_namecell_anchor_is_absent(tmp_path):
+    class ClickTarget(FakeLocator):
+        def __init__(self):
+            super().__init__(1)
+            self.clicked = False
+        def click(self):
+            self.clicked = True
+
+    target = ClickTarget()
+
+    class Row:
+        def __init__(self):
+            self.text = (
+                "ALEJANDRA CAMACHO SÁENZ Bogotá, Cundinamarca "
+                "Empleo que solicitó: Líder de Marketing y Crecimiento"
+            )
+        @property
+        def first(self):
+            return self
+        def count(self):
+            return 1
+        def inner_text(self, timeout=None):
+            return self.text
+        def locator(self, selector):
+            if selector == '[data-testid="NameCell"]':
+                return target
+            return FakeLocator(0)
+
+    row = Row()
+
+    class Rows:
+        def count(self):
+            return 1
+        def nth(self, index):
+            assert index == 0
+            return row
+
+    class RowOnlyPage(FakePage):
+        def locator(self, selector):
+            if selector == "body":
+                return super().locator(selector)
+            if selector == '[data-testid="table-row"]':
+                return Rows()
+            return FakeLocator(0)
+
+    browser = IndeedBrowser(cfg(tmp_path))
+    link, ambiguous = browser._find_exact_candidate_link(
+        RowOnlyPage(),
+        "Alejandra camacho saenz",
+        job_title="Lider de Marketing y Crecimiento",
+    )
+
+    assert ambiguous is False
+    assert link is target
+    assert browser._normalize_lookup_text("SÁENZ") == "saenz"
+
+
 def test_duplicate_candidate_names_fail_closed_without_job_match(tmp_path):
     class RowLocator:
         def __init__(self, text):
@@ -1100,6 +1157,8 @@ def test_unknown_ui_fails_closed(tmp_path):
     payload = json.loads((tmp_path / "diagnostics" / (Path(result.diagnostic_path).name)).read_text(encoding="utf-8"))
     assert payload["url"] == "https://indeed.test/resume"
     assert "?" not in payload["url"]
+    assert payload["reason"] == "INDEED_UI_REQUIRES_REVIEW"
+    assert payload["inputs"] == []
 
 
 @pytest.mark.parametrize("data,code", [(b"", "RESUME_NOT_PDF"), (b"hello", "RESUME_NOT_PDF")])
