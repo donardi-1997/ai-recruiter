@@ -11,6 +11,12 @@ def test_primary_ci_runs_agent_tests_automatically():
     assert "python -m pytest -q tools/indeed_resume_agent/tests" in text
 
 
+def test_primary_ci_installs_chromium_for_golden_browser_fixtures():
+    text = CI_WORKFLOW.read_text(encoding="utf-8")
+    assert "playwright install --with-deps chromium" in text
+    assert "test_browser_live_fixtures.py" not in text  # discovered by the test directory run
+
+
 def test_agent_build_workflow_is_manual_only():
     text = WORKFLOW.read_text(encoding="utf-8")
     assert "workflow_dispatch:" in text
