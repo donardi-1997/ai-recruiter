@@ -207,9 +207,27 @@ def test_open_indeed_uses_normal_chrome_with_same_dedicated_profile(tmp_path):
     assert "--new-window" in command
     assert "--no-sandbox" not in command
     assert not any(item.startswith("--remote-debugging") for item in command)
-    assert command[-1] == "https://employers.indeed.com/"
+    assert command[-1] == "https://employers.indeed.com/candidates"
     assert kwargs == {}
     assert browser.manual_session_open is True
+
+
+def test_open_indeed_reissues_launch_when_profile_process_already_exists(tmp_path):
+    calls=[]
+    process=FakeProcess(returncode=None)
+
+    browser=IndeedBrowser(
+        cfg(tmp_path),
+        browser_executable_resolver=lambda: r"C:\Program Files\Google\Chrome\Application\chrome.exe",
+        process_runner=lambda command: calls.append(command) or process,
+        manual_process_probe=lambda profile_dir: True,
+    )
+    browser._manual_process = process
+
+    browser.open_indeed()
+
+    assert len(calls) == 1
+    assert calls[0][-1] == "https://employers.indeed.com/candidates"
 
 
 def test_start_refuses_profile_while_manual_edge_is_open(tmp_path):
@@ -316,6 +334,33 @@ def test_diagnostic_requires_manual_login_instead_of_automating_auth(tmp_path):
     page=FakePage(
         url="https://employers.indeed.com/account/login",
         text="Iniciar sesión",
+    )
+    context=FakeContext(FakeResponse(), page)
+    chromium=FakeChromium(context)
+    browser=IndeedBrowser(
+        cfg(tmp_path),
+        playwright_factory=lambda: FakeManager(FakePlaywright(chromium)),
+    )
+
+    with pytest.raises(RuntimeError, match="INDEED_MANUAL_LOGIN_REQUIRED"):
+        browser.start_diagnostic()
+
+    assert browser.diagnostic_active is False
+    assert context.closed is True
+
+
+def test_diagnostic_detects_captcha_iframe_and_exits_automation(tmp_path):
+    class CaptchaPage(FakePage):
+        def locator(self, selector):
+            if selector == "body":
+                return super().locator(selector)
+            if "captcha" in selector:
+                return FakeLocator(1)
+            return FakeLocator(0)
+
+    page=CaptchaPage(
+        url="https://employers.indeed.com/candidates",
+        text="Verificando navegador",
     )
     context=FakeContext(FakeResponse(), page)
     chromium=FakeChromium(context)
