@@ -37,7 +37,7 @@ def build_ui_state(snapshot: WorkerSnapshot, stats: QueueStats) -> UiState:
     }
     return UiState(
         session_label=session,
-        status_label=labels.get(state, "Procesando"),
+        status_label=snapshot.last_error or labels.get(state, "Procesando"),
         pending=max(0, stats.pending),
         downloading=1 if state == "DOWNLOADING" else min(max(stats.claimed, 0), 1),
         completed=max(stats.completed, 0),
