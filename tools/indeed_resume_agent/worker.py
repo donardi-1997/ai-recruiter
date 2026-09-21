@@ -161,7 +161,7 @@ class ResumeWorker:
                 self._api.needs_human(task, code=code)
                 self._human_task_id = task.task_id
                 self._human_resume_url = task.resume_url
-                detail = "Indeed requiere intervención manual."
+                detail = code
                 if result.diagnostic_path:
                     detail = (
                         "Indeed mostró una interfaz no reconocida. "
