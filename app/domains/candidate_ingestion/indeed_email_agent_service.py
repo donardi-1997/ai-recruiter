@@ -516,6 +516,42 @@ def store_resume_pdf(
     return document
 
 
+def get_active_smoke_task(
+    db: Session,
+    *,
+    owner_sub: str,
+) -> dict:
+    """Return the current owner-scoped smoke-test task without mutating it."""
+    active_statuses = ("WAITING_DOWNLOAD", "RETRY", "NEEDS_HUMAN", "CLAIMED")
+    task = (
+        db.query(IndeedEmailResumeTask)
+        .filter(
+            IndeedEmailResumeTask.owner_sub == owner_sub,
+            IndeedEmailResumeTask.status.in_(active_statuses),
+        )
+        .order_by(
+            IndeedEmailResumeTask.created_at.asc(),
+            IndeedEmailResumeTask.id.asc(),
+        )
+        .first()
+    )
+    if task is None:
+        return {
+            "task_id": None,
+            "status": None,
+            "candidate_name": None,
+            "job_title": None,
+            "last_error_code": None,
+        }
+    return {
+        "task_id": str(task.id),
+        "status": str(task.status),
+        "candidate_name": task.candidate_name,
+        "job_title": task.job_title,
+        "last_error_code": task.last_error_code,
+    }
+
+
 def reactivate_one_archived_task(
     db: Session,
     *,
