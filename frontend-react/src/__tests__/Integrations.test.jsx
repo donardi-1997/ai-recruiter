@@ -317,6 +317,15 @@ describe("Gmail corporate integration", () => {
       })
       .mockResolvedValueOnce({
         data: {
+          task_id: null,
+          status: null,
+          candidate_name: null,
+          job_title: null,
+          last_error_code: null,
+        },
+      })
+      .mockResolvedValueOnce({
+        data: {
           enabled: true,
           configured: false,
           oauth_configured: true,
