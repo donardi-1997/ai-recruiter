@@ -5,6 +5,7 @@ import os
 import re
 import shutil
 import subprocess
+import time
 from datetime import datetime, timezone
 
 import psutil
@@ -256,9 +257,60 @@ class IndeedBrowser:
             self._manual_process = None
         return running
 
+    def _context_has_live_page(self) -> bool:
+        context = self._context
+        if context is None:
+            return False
+        try:
+            pages = list(getattr(context, "pages", []) or [])
+        except Exception:
+            return False
+        for page in pages:
+            try:
+                if hasattr(page, "is_closed") and page.is_closed():
+                    continue
+                return True
+            except Exception:
+                return True
+        return False
+
+    def _discard_stale_context(self) -> None:
+        context, playwright = self._context, self._playwright
+        self._context = None
+        self._playwright = None
+        self._diagnostic_context_hooked = False
+        self._diagnostic_page_ids.clear()
+        self._diagnostic_anchor_page_id = None
+        try:
+            if context is not None:
+                context.close()
+        except Exception:
+            pass
+        try:
+            if playwright is not None:
+                playwright.stop()
+        except Exception:
+            pass
+
+    def _wait_for_manual_session_close(self, timeout_seconds: float = 2.5) -> bool:
+        deadline = time.monotonic() + max(0.0, float(timeout_seconds))
+        while True:
+            if not self.manual_session_open:
+                return True
+            if time.monotonic() >= deadline:
+                return False
+            time.sleep(0.1)
+
     def start(self) -> None:
         if self._context is not None:
-            return
+            if self._context_has_live_page():
+                return
+            # A user can close the Playwright Chrome window directly. The
+            # BrowserContext object then remains referenced in the agent even
+            # though the underlying browser is gone. Drop that stale context so
+            # the next Diagnostic mode click relaunches Chrome cleanly.
+            self._discard_stale_context()
+
         if self.manual_session_open:
             raise RuntimeError("INDEED_MANUAL_BROWSER_OPEN")
         self._config.browser_profile_dir.mkdir(parents=True, exist_ok=True)
@@ -581,7 +633,10 @@ class IndeedBrowser:
 
     def start_diagnostic(self, url: str | None = None) -> None:
         """Open a visible Playwright-controlled Indeed session and capture only sanitized metadata."""
-        if self.manual_session_open:
+        # Chrome can take a moment to release the dedicated profile after the
+        # user closes the manual window. Tolerate that normal shutdown race
+        # instead of making the first Diagnostic mode click appear to do nothing.
+        if self.manual_session_open and not self._wait_for_manual_session_close():
             raise RuntimeError("INDEED_MANUAL_BROWSER_OPEN")
         self.start()
         self._diagnostic_events = []
