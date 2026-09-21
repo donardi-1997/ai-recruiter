@@ -109,7 +109,8 @@ def test_technical_browser_failure_is_reported_to_backend(tmp_path):
     worker=ResumeWorker(config=config(tmp_path), api=api, browser=browser, heartbeat_factory=lambda **kw: FakeHeartbeat())
     snap=worker.run_once()
     assert snap.state == "RETRY"
-    assert api.failures == [("t1","RESUME_DOWNLOAD_FAILED")]
+    assert api.failures == [("t1","RESUME_BROWSER_FETCH_FAILED")]
+    assert snap.last_error == "RESUME_BROWSER_FETCH_FAILED"
     assert "secret URL" not in (snap.last_error or "")
 
 
