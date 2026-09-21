@@ -3,6 +3,7 @@ from pathlib import Path
 import pytest
 
 from tools.indeed_resume_agent.browser import (
+    BrowserFetchStageError,
     BrowserOutcome,
     IndeedBrowser,
     InvalidResumePdf,
@@ -393,6 +394,27 @@ def test_login_or_challenge_returns_needs_human(tmp_path):
     result=browser.fetch_resume("https://indeed.test/resume")
     assert result.outcome is BrowserOutcome.NEEDS_HUMAN
     assert result.human_code == "INDEED_AUTH_REQUIRED"
+
+
+def test_navigation_failure_has_specific_safe_stage_code(tmp_path):
+    class FailingPage(FakePage):
+        def goto(self, url, **kwargs):
+            raise RuntimeError("secret signed URL should not leak")
+
+    page=FailingPage()
+    context=FakeContext(FakeResponse(200, "text/html", b""), page)
+    chromium=FakeChromium(context)
+    browser=IndeedBrowser(
+        cfg(tmp_path),
+        playwright_factory=lambda: FakeManager(FakePlaywright(chromium)),
+    )
+    browser.start()
+
+    with pytest.raises(BrowserFetchStageError) as exc:
+        browser.fetch_resume("https://indeed.test/resume")
+
+    assert exc.value.code == "RESUME_BROWSER_NAVIGATION_FAILED"
+    assert "secret" not in str(exc.value)
 
 
 def test_known_download_control_uses_pdf_response_if_browser_closes(tmp_path):
