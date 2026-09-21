@@ -591,6 +591,7 @@ def test_generic_resume_landing_falls_back_to_candidate_list_by_name(tmp_path):
             )
             self.candidate_open = False
             self.fallback_nav = False
+            self.wait_calls = 0
 
         def goto(self, url, **kwargs):
             self.goto_urls.append(url)
@@ -612,6 +613,7 @@ def test_generic_resume_landing_falls_back_to_candidate_list_by_name(tmp_path):
             return FakeLocator(0)
 
         def wait_for_timeout(self, timeout):
+            self.wait_calls += 1
             return None
 
     page=CandidateListPage()
@@ -632,6 +634,7 @@ def test_generic_resume_landing_falls_back_to_candidate_list_by_name(tmp_path):
     assert result.data == b"%PDF-fallback"
     assert "https://employers.indeed.com/candidates" in page.goto_urls
     assert page.candidate_open is True
+    assert page.wait_calls == 0
 
 
 def test_candidate_list_fallback_returns_specific_review_code_when_name_missing(tmp_path):
