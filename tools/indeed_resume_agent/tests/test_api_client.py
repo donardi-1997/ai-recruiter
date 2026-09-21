@@ -68,13 +68,21 @@ def test_stats_and_resume_after_human_use_agent_only_routes(tmp_path):
     def handler(request):
         paths.append(request.url.path)
         if request.url.path.endswith("/stats"):
-            return httpx.Response(200, json={"pending":1,"claimed":0,"completed":2,"needs_human":3,"retry":4,"failed":5})
+            return httpx.Response(200, json={
+                "pending":1,"claimed":0,"completed":2,"needs_human":3,"retry":4,"failed":5,
+                "last_error_code":"RESUME_UPLOAD_FAILED",
+                "last_error_candidate":"Ada",
+                "last_error_status":"FAILED",
+            })
         return httpx.Response(200, json={"status":"WAITING_DOWNLOAD"})
     client=httpx.Client(transport=httpx.MockTransport(handler), base_url="https://agent.test")
     api=AgentApiClient(config(tmp_path), "a"*40, http_client=client)
     stats=api.stats()
     api.resume_after_human("t1")
     assert stats.pending == 1 and stats.needs_human == 3
+    assert stats.last_error_code == "RESUME_UPLOAD_FAILED"
+    assert stats.last_error_candidate == "Ada"
+    assert stats.last_error_status == "FAILED"
     assert paths == ["/api/agents/indeed-resume/stats", "/api/agents/indeed-resume/t1/resume-after-human"]
 
 
