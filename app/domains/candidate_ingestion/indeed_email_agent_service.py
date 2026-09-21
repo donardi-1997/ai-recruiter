@@ -686,6 +686,8 @@ def retry_active_needs_human_task(
 
     task.status = "WAITING_DOWNLOAD"
     task.available_at = None
+    task.attempt_count = 0
+    task.completed_at = None
     task.last_error_code = None
     task.last_error_message = None
     _clear_lease(task)
