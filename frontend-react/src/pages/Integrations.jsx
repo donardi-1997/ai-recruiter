@@ -48,7 +48,9 @@ function Integrations() {
               "/integrations/gmail/active-archived-test",
             );
             if (active) {
-              setActiveSmokeNeedsHuman(smokeTask?.status === "NEEDS_HUMAN");
+              setActiveSmokeNeedsHuman(
+                ["NEEDS_HUMAN", "RETRY", "FAILED"].includes(smokeTask?.status),
+              );
             }
           } catch {
             if (active) setActiveSmokeNeedsHuman(false);
@@ -129,13 +131,13 @@ function Integrations() {
         const candidate = data?.candidate_name || "Candidato";
         const role = data?.job_title ? ` · ${data.job_title}` : "";
         const errorCode = data?.last_error_code ? ` · ${data.last_error_code}` : "";
-        const needsHuman = data?.status === "NEEDS_HUMAN";
-        setActiveSmokeNeedsHuman(needsHuman);
+        const retryable = ["NEEDS_HUMAN", "RETRY", "FAILED"].includes(data?.status);
+        setActiveSmokeNeedsHuman(retryable);
         setMessage(
           data?.reactivated
             ? `Prueba preparada: ${candidate}${role}. Abre el Resume Agent para procesar solo esta tarea.`
-            : needsHuman
-              ? `La tarea activa necesita revisión: ${candidate}${role}${errorCode}.`
+            : retryable
+              ? `La tarea activa puede reintentarse: ${candidate}${role}${errorCode}.`
               : `Ya existe una tarea activa: ${candidate}${role}${errorCode}.`,
         );
       } else {
@@ -165,7 +167,7 @@ function Integrations() {
         );
       } else {
         setActiveSmokeNeedsHuman(false);
-        setMessage("No hay una tarea de prueba esperando intervención.");
+        setMessage("No hay una tarea de prueba fallida o pendiente de reintento.");
       }
     } catch (requestError) {
       const detail = requestError?.response?.data?.detail;
