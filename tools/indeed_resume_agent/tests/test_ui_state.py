@@ -93,6 +93,20 @@ def test_needs_human_is_attention_state():
     assert "internal" not in ui.status_label
 
 
+def test_needs_human_surfaces_only_safe_error_code():
+    ui=build_ui_state(
+        snap("WAITING_FOR_HUMAN","Ada","INDEED_AUTH_REQUIRED"),
+        stats(needs_human=1),
+    )
+    assert ui.status_label == "INDEED_AUTH_REQUIRED"
+
+    unsafe=build_ui_state(
+        snap("WAITING_FOR_HUMAN","Ada","internal error with secret URL"),
+        stats(needs_human=1),
+    )
+    assert unsafe.status_label == "Indeed requiere intervención manual"
+
+
 def test_ui_state_has_no_secret_fields():
     fields=set(UiState.__dataclass_fields__)
     forbidden={"token","lease_token","resume_url","gmail_address","raw_error"}

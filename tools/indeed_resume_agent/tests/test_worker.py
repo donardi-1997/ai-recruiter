@@ -77,6 +77,28 @@ def test_needs_human_blocks_new_claims_until_resume(tmp_path):
     assert len(api.claims) == 1
 
 
+def test_needs_human_preserves_safe_code_without_diagnostic_path(tmp_path):
+    api=FakeApi([task()])
+    browser=FakeBrowser(
+        BrowserResult(
+            BrowserOutcome.NEEDS_HUMAN,
+            human_code="INDEED_AUTH_REQUIRED",
+        )
+    )
+    worker=ResumeWorker(
+        config=config(tmp_path),
+        api=api,
+        browser=browser,
+        heartbeat_factory=lambda **kw: FakeHeartbeat(),
+    )
+
+    snap=worker.run_once()
+
+    assert snap.state == "WAITING_FOR_HUMAN"
+    assert snap.last_error == "INDEED_AUTH_REQUIRED"
+    assert api.human == [("t1","INDEED_AUTH_REQUIRED")]
+
+
 def test_external_attention_retry_clears_local_human_state(tmp_path):
     api=FakeApi([task()])
     browser=FakeBrowser(BrowserResult(BrowserOutcome.NEEDS_HUMAN, human_code="INDEED_UI_REQUIRES_REVIEW"))

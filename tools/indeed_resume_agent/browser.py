@@ -493,6 +493,40 @@ class IndeedBrowser:
             text = ""
         return any(marker in text for marker in _CHALLENGE_MARKERS)
 
+    def _wait_for_download_control(self, page):
+        # Indeed Employers is a client-rendered SPA. domcontentloaded only
+        # guarantees the shell document exists; the candidate view and its
+        # Descargar CV action can appear several seconds later.
+        interval_ms = 500
+        attempts = max(
+            1,
+            min(
+                30,
+                int(max(1.0, float(self._config.request_timeout_seconds)) * 1000)
+                // interval_ms,
+            ),
+        )
+        for _ in range(attempts):
+            control = self._known_download_control(page)
+            if control is not None:
+                return control
+
+            try:
+                url = str(getattr(page, "url", "") or "").casefold()
+                if any(marker in url for marker in _URL_CHALLENGE_MARKERS):
+                    return None
+                if hasattr(page, "is_closed") and page.is_closed():
+                    return None
+            except Exception:
+                return None
+
+            try:
+                page.wait_for_timeout(interval_ms)
+            except Exception:
+                time.sleep(interval_ms / 1000.0)
+
+        return self._known_download_control(page)
+
     @staticmethod
     def _known_download_control(page):
         for role in ("button", "link"):
@@ -1067,10 +1101,11 @@ class IndeedBrowser:
                 data=navigated_pdf,
             )
 
+        control = self._wait_for_download_control(page)
+
         if self._requires_human(page):
             return BrowserResult(BrowserOutcome.NEEDS_HUMAN, human_code="INDEED_AUTH_REQUIRED")
 
-        control = self._known_download_control(page)
         if control is None:
             diagnostic_path = self._write_ui_diagnostic(page)
             return BrowserResult(
