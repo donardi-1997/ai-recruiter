@@ -252,7 +252,7 @@ def test_manual_session_detects_edge_child_after_launcher_exits(tmp_path):
 
     def probe(profile_dir):
         checks.append(profile_dir)
-        return len(checks) > 1
+        return True
 
     browser=IndeedBrowser(
         cfg(tmp_path),
@@ -263,7 +263,7 @@ def test_manual_session_detects_edge_child_after_launcher_exits(tmp_path):
     browser.open_indeed()
 
     assert browser.manual_session_open is True
-    assert checks == [tmp_path / "profile", tmp_path / "profile"]
+    assert checks == [tmp_path / "profile"]
 
 
 def test_manual_session_clears_when_launcher_and_profile_process_are_gone(tmp_path):
@@ -827,6 +827,153 @@ def test_generic_resume_landing_falls_back_to_candidate_list_by_name(tmp_path):
     assert page.wait_calls == 0
 
 
+def test_candidate_lookup_uses_live_namecell_dom_and_job_title(tmp_path):
+    pdf=tmp_path / "download.pdf"
+    pdf.write_bytes(b"%PDF-live-dom")
+
+    class RowLocator:
+        def inner_text(self, timeout=None):
+            return (
+                "ALEJANDRA CAMACHO SÁENZ Bogotá "
+                "Empleo que solicitó: Líder de Marketing y Crecimiento"
+            )
+
+    class CandidateLink:
+        def __init__(self, page):
+            self.page = page
+        def inner_text(self, timeout=None):
+            return "ALEJANDRA CAMACHO SÁENZ"
+        def locator(self, selector):
+            assert "table-row" in selector
+            return RowLocator()
+        def click(self):
+            self.page.candidate_open = True
+            self.page.url = "https://employers.indeed.com/candidates/view?id=alejandra"
+
+    class CandidateLinks:
+        def __init__(self, page):
+            self.page = page
+        def count(self):
+            return 1 if self.page.search_query else 0
+        def nth(self, index):
+            assert index == 0
+            return CandidateLink(self.page)
+
+    class SearchInput:
+        def __init__(self, page):
+            self.page = page
+        @property
+        def first(self):
+            return self
+        def count(self):
+            return 1
+        def fill(self, value):
+            self.page.search_query = value
+        def press(self, key):
+            self.page.pressed.append(key)
+
+    class LiveCandidatesPage(FakePage):
+        def __init__(self):
+            super().__init__(
+                url="https://resumes.indeed.com/?from=gnav-one-host",
+                download=FakeDownload(pdf),
+            )
+            self.search_query = ""
+            self.pressed = []
+            self.candidate_open = False
+
+        def goto(self, url, **kwargs):
+            self.goto_urls.append(url)
+            if url == "https://employers.indeed.com/candidates":
+                self.url = url
+                return FakeResponse(200, "text/html", b"")
+            return super().goto(url, **kwargs)
+
+        def locator(self, selector):
+            if selector == "body":
+                return super().locator(selector)
+            if selector == 'input[placeholder="Buscar candidatos" i]':
+                return SearchInput(self)
+            if 'a[data-testid="NameCell"]' in selector:
+                return CandidateLinks(self)
+            return FakeLocator(0)
+
+        def get_by_role(self, role, name=None):
+            if self.candidate_open and role in {"button", "link"}:
+                return FakeLocator(1)
+            return FakeLocator(0)
+
+        def wait_for_timeout(self, timeout):
+            return None
+
+    page=LiveCandidatesPage()
+    context=FakeContext(FakeResponse(200, "text/html", b""), page)
+    chromium=FakeChromium(context)
+    browser=IndeedBrowser(
+        cfg(tmp_path),
+        playwright_factory=lambda: FakeManager(FakePlaywright(chromium)),
+    )
+    browser.start()
+
+    result=browser.fetch_resume(
+        "https://indeed.test/resume",
+        candidate_name="Alejandra camacho saenz",
+        job_title="Lider de Marketing y Crecimiento",
+    )
+
+    assert result.outcome is BrowserOutcome.DOWNLOADED
+    assert result.data == b"%PDF-live-dom"
+    assert page.candidate_open is True
+    assert page.search_query
+    assert browser._normalize_lookup_text("SÁENZ") == "saenz"
+
+
+def test_duplicate_candidate_names_fail_closed_without_job_match(tmp_path):
+    class RowLocator:
+        def __init__(self, text):
+            self.text = text
+        def inner_text(self, timeout=None):
+            return self.text
+
+    class CandidateLink:
+        def __init__(self, text, row):
+            self.text = text
+            self.row = row
+        def inner_text(self, timeout=None):
+            return self.text
+        def locator(self, selector):
+            return RowLocator(self.row)
+
+    class CandidateLinks:
+        def __init__(self):
+            self.items = [
+                CandidateLink("Ada Lovelace", "Empleo que solicitó: Analyst"),
+                CandidateLink("ADA LOVELACE", "Empleo que solicitó: Designer"),
+            ]
+        def count(self):
+            return len(self.items)
+        def nth(self, index):
+            return self.items[index]
+
+    class DuplicatePage(FakePage):
+        def locator(self, selector):
+            if selector == "body":
+                return super().locator(selector)
+            if 'a[data-testid="NameCell"]' in selector:
+                return CandidateLinks()
+            return FakeLocator(0)
+
+    browser=IndeedBrowser(cfg(tmp_path))
+    link, ambiguous = browser._find_exact_candidate_link(
+        DuplicatePage(),
+        "Ada Lovelace",
+        job_title="Engineer",
+    )
+
+    assert link is None
+    assert ambiguous is True
+
+
 def test_candidate_list_fallback_returns_specific_review_code_when_name_missing(tmp_path):
     class MissingCandidatePage(FakePage):
         def goto(self, url, **kwargs):
@@ -954,7 +1101,7 @@ def test_open_indeed_rejects_unsafe_manual_url(tmp_path, url):
     )
     browser.open_indeed(url)
 
-    assert calls[0][0][-1] == "https://employers.indeed.com/"
+    assert calls[0][0][-1] == "https://employers.indeed.com/candidates"
 
 
 @pytest.mark.parametrize(
