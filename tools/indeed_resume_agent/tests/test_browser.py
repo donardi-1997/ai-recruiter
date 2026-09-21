@@ -196,7 +196,7 @@ def test_manual_session_detects_edge_child_after_launcher_exits(tmp_path):
 
     def probe(profile_dir):
         checks.append(profile_dir)
-        return True
+        return len(checks) > 1
 
     browser=IndeedBrowser(
         cfg(tmp_path),
@@ -207,7 +207,7 @@ def test_manual_session_detects_edge_child_after_launcher_exits(tmp_path):
     browser.open_indeed()
 
     assert browser.manual_session_open is True
-    assert checks == [tmp_path / "profile"]
+    assert checks == [tmp_path / "profile", tmp_path / "profile"]
 
 
 def test_manual_session_clears_when_launcher_and_profile_process_are_gone(tmp_path):
