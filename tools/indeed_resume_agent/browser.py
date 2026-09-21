@@ -153,6 +153,7 @@ _CHALLENGE_MARKERS = (
 )
 _URL_CHALLENGE_MARKERS = ("/login", "/signin", "challenge", "captcha", "verify")
 _INDEED_EMPLOYER_HOME = "https://employers.indeed.com/"
+_INDEED_CANDIDATES_HOME = "https://employers.indeed.com/candidates"
 _RESUME_DOWNLOAD_PATH = "/api/catws/resume/v2/download"
 _FILENAME_STAR = re.compile(r"filename\*=UTF-8''([^;]+)", re.IGNORECASE)
 _FILENAME_BASIC = re.compile(r'filename="?([^";]+)"?', re.IGNORECASE)
@@ -526,6 +527,84 @@ class IndeedBrowser:
                 time.sleep(interval_ms / 1000.0)
 
         return self._known_download_control(page)
+
+    def _open_candidate_from_list(self, page, candidate_name: str):
+        name = " ".join(str(candidate_name or "").split()).strip()
+        if not name:
+            return None
+
+        try:
+            page.goto(
+                _INDEED_CANDIDATES_HOME,
+                wait_until="domcontentloaded",
+                timeout=int(self._config.request_timeout_seconds * 1000),
+            )
+        except Exception:
+            return None
+
+        if self._requires_human(page):
+            return None
+
+        exact_name = re.compile(rf"^\s*{re.escape(name)}\s*$", re.IGNORECASE)
+        interval_ms = 500
+        attempts = max(
+            1,
+            min(
+                30,
+                int(max(1.0, float(self._config.request_timeout_seconds)) * 1000)
+                // interval_ms,
+            ),
+        )
+        search_filled = False
+
+        for _ in range(attempts):
+            try:
+                candidate = page.get_by_text(exact_name)
+                if candidate.count() > 0:
+                    candidate.first.click()
+                    return self._wait_for_download_control(page)
+            except Exception:
+                pass
+
+            if not search_filled:
+                search_box = None
+                try:
+                    by_role = page.get_by_role(
+                        "textbox",
+                        name=re.compile(r"(?:buscar|search).*candidat", re.IGNORECASE),
+                    )
+                    if by_role.count() > 0:
+                        search_box = by_role.first
+                except Exception:
+                    search_box = None
+
+                if search_box is None:
+                    for selector in (
+                        'input[placeholder*="candidat" i]',
+                        'input[placeholder*="buscar" i]',
+                        'input[placeholder*="search" i]',
+                    ):
+                        try:
+                            located = page.locator(selector)
+                            if located.count() > 0:
+                                search_box = located.first
+                                break
+                        except Exception:
+                            continue
+
+                if search_box is not None:
+                    try:
+                        search_box.fill(name)
+                        search_filled = True
+                    except Exception:
+                        pass
+
+            try:
+                page.wait_for_timeout(interval_ms)
+            except Exception:
+                time.sleep(interval_ms / 1000.0)
+
+        return None
 
     @staticmethod
     def _known_download_control(page):
@@ -1047,7 +1126,12 @@ class IndeedBrowser:
         except Exception:
             return None
 
-    def fetch_resume(self, url: str) -> BrowserResult:
+    def fetch_resume(
+        self,
+        url: str,
+        *,
+        candidate_name: str | None = None,
+    ) -> BrowserResult:
         try:
             self.start()
         except Exception as exc:
@@ -1106,11 +1190,23 @@ class IndeedBrowser:
         if self._requires_human(page):
             return BrowserResult(BrowserOutcome.NEEDS_HUMAN, human_code="INDEED_AUTH_REQUIRED")
 
+        fallback_attempted = False
+        if control is None and str(candidate_name or "").strip():
+            fallback_attempted = True
+            control = self._open_candidate_from_list(page, str(candidate_name))
+
+        if self._requires_human(page):
+            return BrowserResult(BrowserOutcome.NEEDS_HUMAN, human_code="INDEED_AUTH_REQUIRED")
+
         if control is None:
             diagnostic_path = self._write_ui_diagnostic(page)
             return BrowserResult(
                 BrowserOutcome.NEEDS_HUMAN,
-                human_code="INDEED_UI_REQUIRES_REVIEW",
+                human_code=(
+                    "INDEED_CANDIDATE_NOT_FOUND"
+                    if fallback_attempted
+                    else "INDEED_UI_REQUIRES_REVIEW"
+                ),
                 diagnostic_path=diagnostic_path,
             )
 
