@@ -141,6 +141,10 @@ class AgentApiClient:
     def resume_after_human(self, task_id: str) -> None:
         self._request("POST", f"{BASE_PATH}/{task_id}/resume-after-human")
 
+    def retry_failed(self) -> int:
+        response = self._request("POST", f"{BASE_PATH}/retry-failed")
+        return int(response.json().get("requeued", 0))
+
     def stats(self) -> QueueStats:
         payload = self._request("GET", f"{BASE_PATH}/stats").json()
         return QueueStats(
