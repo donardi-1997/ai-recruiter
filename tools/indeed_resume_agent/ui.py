@@ -35,9 +35,18 @@ def build_ui_state(snapshot: WorkerSnapshot, stats: QueueStats) -> UiState:
         "STOPPED": "Detenido",
         "ERROR": "Error de conexión con el servicio",
     }
+    status_label = labels.get(state, "Procesando")
+    diagnostic_prefix = "Indeed mostró una interfaz no reconocida. Diagnóstico local:"
+    if (
+        state == "WAITING_FOR_HUMAN"
+        and snapshot.last_error
+        and snapshot.last_error.startswith(diagnostic_prefix)
+    ):
+        status_label = snapshot.last_error
+
     return UiState(
         session_label=session,
-        status_label=snapshot.last_error or labels.get(state, "Procesando"),
+        status_label=status_label,
         pending=max(0, stats.pending),
         downloading=1 if state == "DOWNLOADING" else min(max(stats.claimed, 0), 1),
         completed=max(stats.completed, 0),
