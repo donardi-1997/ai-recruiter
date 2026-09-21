@@ -1,3 +1,5 @@
+import json
+from pathlib import Path
 import pytest
 
 from tools.indeed_resume_agent.browser import (
@@ -7,6 +9,7 @@ from tools.indeed_resume_agent.browser import (
     normalize_pdf_filename,
     validate_pdf,
     _DOWNLOAD_NAME,
+    _safe_diagnostic_url,
 )
 from tools.indeed_resume_agent.config import AgentConfig
 
@@ -208,6 +211,10 @@ def test_unknown_ui_fails_closed(tmp_path):
     result=browser.fetch_resume("https://indeed.test/resume")
     assert result.outcome is BrowserOutcome.NEEDS_HUMAN
     assert result.human_code == "INDEED_UI_REQUIRES_REVIEW"
+    assert result.diagnostic_path is not None
+    payload = json.loads((tmp_path / "diagnostics" / (Path(result.diagnostic_path).name)).read_text(encoding="utf-8"))
+    assert payload["url"] == "https://indeed.test/resume"
+    assert "?" not in payload["url"]
 
 
 @pytest.mark.parametrize("data,code", [(b"", "RESUME_NOT_PDF"), (b"hello", "RESUME_NOT_PDF")])
@@ -281,3 +288,9 @@ def test_open_indeed_rejects_unsafe_manual_url(tmp_path, url):
 )
 def test_download_control_name_accepts_common_indeed_labels(label):
     assert _DOWNLOAD_NAME.fullmatch(label)
+
+
+def test_safe_diagnostic_url_strips_query_and_fragment():
+    assert _safe_diagnostic_url(
+        "https://employers.indeed.com/resume/abc?token=secret#section"
+    ) == "https://employers.indeed.com/resume/abc"
