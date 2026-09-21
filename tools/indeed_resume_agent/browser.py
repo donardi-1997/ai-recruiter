@@ -368,14 +368,28 @@ class IndeedBrowser:
                 diagnostic_path=diagnostic_path,
             )
 
-        with page.expect_download(timeout=int(self._config.request_timeout_seconds * 1000)) as download_info:
-            control.click()
-        download = download_info.value
-        path = download.path()
-        data = Path(path).read_bytes()
-        validate_pdf(data, max_bytes=self._config.max_pdf_bytes)
-        return BrowserResult(
-            BrowserOutcome.DOWNLOADED,
-            filename=normalize_pdf_filename(getattr(download, "suggested_filename", None)),
-            data=data,
-        )
+        try:
+            with page.expect_download(
+                timeout=int(self._config.request_timeout_seconds * 1000)
+            ) as download_info:
+                control.click()
+            download = download_info.value
+            path = download.path()
+            data = Path(path).read_bytes()
+            validate_pdf(data, max_bytes=self._config.max_pdf_bytes)
+            return BrowserResult(
+                BrowserOutcome.DOWNLOADED,
+                filename=normalize_pdf_filename(
+                    getattr(download, "suggested_filename", None)
+                ),
+                data=data,
+            )
+        except InvalidResumePdf:
+            raise
+        except Exception:
+            diagnostic_path = self._write_ui_diagnostic(page)
+            return BrowserResult(
+                BrowserOutcome.NEEDS_HUMAN,
+                human_code="INDEED_DOWNLOAD_ACTION_REQUIRES_REVIEW",
+                diagnostic_path=diagnostic_path,
+            )
