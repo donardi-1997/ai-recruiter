@@ -35,9 +35,11 @@ class FakeBrowser:
         self.error=error
         self.urls=[]
         self.candidate_names=[]
-    def fetch_resume(self, url, *, candidate_name=None):
+        self.job_titles=[]
+    def fetch_resume(self, url, *, candidate_name=None, job_title=None):
         self.urls.append(url)
         self.candidate_names.append(candidate_name)
+        self.job_titles.append(job_title)
         if self.error: raise self.error
         return self.result
 
@@ -61,6 +63,7 @@ def test_happy_path_claims_downloads_validates_and_uploads_once(tmp_path):
     assert snap.processed_session == 1
     assert api.uploads == [("t1","ada.pdf",b"%PDF-ok")]
     assert browser.candidate_names == ["Ada"]
+    assert browser.job_titles == ["Engineer"]
     assert api.failures == [] and api.human == []
     assert hb.started and hb.stopped
     assert worker.run_once().state == "IDLE"

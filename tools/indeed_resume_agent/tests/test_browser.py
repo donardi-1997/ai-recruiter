@@ -207,9 +207,27 @@ def test_open_indeed_uses_normal_chrome_with_same_dedicated_profile(tmp_path):
     assert "--new-window" in command
     assert "--no-sandbox" not in command
     assert not any(item.startswith("--remote-debugging") for item in command)
-    assert command[-1] == "https://employers.indeed.com/"
+    assert command[-1] == "https://employers.indeed.com/candidates"
     assert kwargs == {}
     assert browser.manual_session_open is True
+
+
+def test_open_indeed_reissues_launch_when_profile_process_already_exists(tmp_path):
+    calls=[]
+    process=FakeProcess(returncode=None)
+
+    browser=IndeedBrowser(
+        cfg(tmp_path),
+        browser_executable_resolver=lambda: r"C:\Program Files\Google\Chrome\Application\chrome.exe",
+        process_runner=lambda command: calls.append(command) or process,
+        manual_process_probe=lambda profile_dir: True,
+    )
+    browser._manual_process = process
+
+    browser.open_indeed()
+
+    assert len(calls) == 1
+    assert calls[0][-1] == "https://employers.indeed.com/candidates"
 
 
 def test_start_refuses_profile_while_manual_edge_is_open(tmp_path):
@@ -234,7 +252,7 @@ def test_manual_session_detects_edge_child_after_launcher_exits(tmp_path):
 
     def probe(profile_dir):
         checks.append(profile_dir)
-        return len(checks) > 1
+        return True
 
     browser=IndeedBrowser(
         cfg(tmp_path),
@@ -245,7 +263,7 @@ def test_manual_session_detects_edge_child_after_launcher_exits(tmp_path):
     browser.open_indeed()
 
     assert browser.manual_session_open is True
-    assert checks == [tmp_path / "profile", tmp_path / "profile"]
+    assert checks == [tmp_path / "profile"]
 
 
 def test_manual_session_clears_when_launcher_and_profile_process_are_gone(tmp_path):
@@ -316,6 +334,33 @@ def test_diagnostic_requires_manual_login_instead_of_automating_auth(tmp_path):
     page=FakePage(
         url="https://employers.indeed.com/account/login",
         text="Iniciar sesión",
+    )
+    context=FakeContext(FakeResponse(), page)
+    chromium=FakeChromium(context)
+    browser=IndeedBrowser(
+        cfg(tmp_path),
+        playwright_factory=lambda: FakeManager(FakePlaywright(chromium)),
+    )
+
+    with pytest.raises(RuntimeError, match="INDEED_MANUAL_LOGIN_REQUIRED"):
+        browser.start_diagnostic()
+
+    assert browser.diagnostic_active is False
+    assert context.closed is True
+
+
+def test_diagnostic_detects_captcha_iframe_and_exits_automation(tmp_path):
+    class CaptchaPage(FakePage):
+        def locator(self, selector):
+            if selector == "body":
+                return super().locator(selector)
+            if "captcha" in selector:
+                return FakeLocator(1)
+            return FakeLocator(0)
+
+    page=CaptchaPage(
+        url="https://employers.indeed.com/candidates",
+        text="Verificando navegador",
     )
     context=FakeContext(FakeResponse(), page)
     chromium=FakeChromium(context)
@@ -599,6 +644,16 @@ def test_direct_candidates_workspace_is_preferred_over_left_rail(tmp_path):
                 return FakeResponse(200, "text/html", b"")
             return super().goto(url, **kwargs)
 
+        def locator(self, selector):
+            if selector == "body":
+                return super().locator(selector)
+            if (
+                self.url.startswith("https://employers.indeed.com/candidates")
+                and selector == '[data-testid="candidate-list-table-container"]'
+            ):
+                return FakeLocator(1)
+            return FakeLocator(0)
+
         def get_by_text(self, pattern):
             if self.url.startswith("https://employers.indeed.com/candidates"):
                 return CandidateLocator(self)
@@ -682,6 +737,13 @@ def test_left_rail_is_only_fallback_when_direct_candidates_route_redirects(tmp_p
                 return FakeLocator(1)
             return FakeLocator(0)
 
+        def locator(self, selector):
+            if selector == "body":
+                return super().locator(selector)
+            if self.in_candidates and selector == '[data-testid="candidate-list-table-container"]':
+                return FakeLocator(1)
+            return FakeLocator(0)
+
         def get_by_text(self, pattern):
             if self.in_candidates:
                 return CandidateLocator(self)
@@ -743,6 +805,13 @@ def test_generic_resume_landing_falls_back_to_candidate_list_by_name(tmp_path):
             self.url = "https://resumes.indeed.com/?from=gnav-one-host"
             return FakeResponse(200, "text/html", b"")
 
+        def locator(self, selector):
+            if selector == "body":
+                return super().locator(selector)
+            if self.fallback_nav and selector == '[data-testid="candidate-list-table-container"]':
+                return FakeLocator(1)
+            return FakeLocator(0)
+
         def get_by_text(self, pattern):
             if (
                 self.fallback_nav
@@ -779,7 +848,204 @@ def test_generic_resume_landing_falls_back_to_candidate_list_by_name(tmp_path):
     assert result.data == b"%PDF-fallback"
     assert "https://employers.indeed.com/candidates" in page.goto_urls
     assert page.candidate_open is True
-    assert page.wait_calls == 0
+
+
+def test_candidates_workspace_selects_manage_and_all_stage_before_lookup(tmp_path):
+    class TabLocator:
+        def __init__(self, page, key):
+            self.page = page
+            self.key = key
+        @property
+        def first(self):
+            return self
+        def count(self):
+            return 1
+        def get_attribute(self, name):
+            if name != "aria-selected":
+                return None
+            return "true" if self.page.selected[self.key] else "false"
+        def click(self):
+            self.page.selected[self.key] = True
+            self.page.clicks.append(self.key)
+
+    class WorkspacePage(FakePage):
+        def __init__(self):
+            super().__init__(url="https://resumes.indeed.com/")
+            self.selected = {"manage": False, "all": False}
+            self.clicks = []
+
+        def goto(self, url, **kwargs):
+            self.goto_urls.append(url)
+            self.url = "https://employers.indeed.com/candidates"
+            return FakeResponse(200, "text/html", b"")
+
+        def locator(self, selector):
+            if selector == "body":
+                return super().locator(selector)
+            if selector == '[data-testid="manage-candidates-tab"]':
+                return TabLocator(self, "manage")
+            if selector == '[data-testid="stage-tab-All"]':
+                return TabLocator(self, "all")
+            if selector == '[data-testid="candidate-list-table-container"]':
+                return FakeLocator(1 if all(self.selected.values()) else 0)
+            return FakeLocator(0)
+
+        def wait_for_timeout(self, timeout):
+            return None
+
+    page = WorkspacePage()
+    browser = IndeedBrowser(cfg(tmp_path))
+
+    assert browser._open_candidates_workspace(page) is True
+    assert page.clicks == ["manage", "all"]
+    assert page.selected == {"manage": True, "all": True}
+
+
+def test_candidate_lookup_uses_live_namecell_dom_and_job_title(tmp_path):
+    pdf=tmp_path / "download.pdf"
+    pdf.write_bytes(b"%PDF-live-dom")
+
+    class RowLocator:
+        def inner_text(self, timeout=None):
+            return (
+                "ALEJANDRA CAMACHO SÁENZ Bogotá "
+                "Empleo que solicitó: Líder de Marketing y Crecimiento"
+            )
+
+    class CandidateLink:
+        def __init__(self, page):
+            self.page = page
+        def inner_text(self, timeout=None):
+            return "ALEJANDRA CAMACHO SÁENZ"
+        def locator(self, selector):
+            assert "table-row" in selector
+            return RowLocator()
+        def click(self):
+            self.page.candidate_open = True
+            self.page.url = "https://employers.indeed.com/candidates/view?id=alejandra"
+
+    class CandidateLinks:
+        def __init__(self, page):
+            self.page = page
+        def count(self):
+            return 1 if self.page.search_query else 0
+        def nth(self, index):
+            assert index == 0
+            return CandidateLink(self.page)
+
+    class SearchInput:
+        def __init__(self, page):
+            self.page = page
+        @property
+        def first(self):
+            return self
+        def count(self):
+            return 1
+        def fill(self, value):
+            self.page.search_query = value
+        def press(self, key):
+            self.page.pressed.append(key)
+
+    class LiveCandidatesPage(FakePage):
+        def __init__(self):
+            super().__init__(
+                url="https://resumes.indeed.com/?from=gnav-one-host",
+                download=FakeDownload(pdf),
+            )
+            self.search_query = ""
+            self.pressed = []
+            self.candidate_open = False
+
+        def goto(self, url, **kwargs):
+            self.goto_urls.append(url)
+            if url == "https://employers.indeed.com/candidates":
+                self.url = url
+                return FakeResponse(200, "text/html", b"")
+            return super().goto(url, **kwargs)
+
+        def locator(self, selector):
+            if selector == "body":
+                return super().locator(selector)
+            if selector == 'input[placeholder="Buscar candidatos" i]':
+                return SearchInput(self)
+            if 'a[data-testid="NameCell"]' in selector:
+                return CandidateLinks(self)
+            return FakeLocator(0)
+
+        def get_by_role(self, role, name=None):
+            if self.candidate_open and role in {"button", "link"}:
+                return FakeLocator(1)
+            return FakeLocator(0)
+
+        def wait_for_timeout(self, timeout):
+            return None
+
+    page=LiveCandidatesPage()
+    context=FakeContext(FakeResponse(200, "text/html", b""), page)
+    chromium=FakeChromium(context)
+    browser=IndeedBrowser(
+        cfg(tmp_path),
+        playwright_factory=lambda: FakeManager(FakePlaywright(chromium)),
+    )
+    browser.start()
+
+    result=browser.fetch_resume(
+        "https://indeed.test/resume",
+        candidate_name="Alejandra camacho saenz",
+        job_title="Lider de Marketing y Crecimiento",
+    )
+
+    assert result.outcome is BrowserOutcome.DOWNLOADED
+    assert result.data == b"%PDF-live-dom"
+    assert page.candidate_open is True
+    assert page.search_query
+    assert browser._normalize_lookup_text("SÁENZ") == "saenz"
+
+
+def test_duplicate_candidate_names_fail_closed_without_job_match(tmp_path):
+    class RowLocator:
+        def __init__(self, text):
+            self.text = text
+        def inner_text(self, timeout=None):
+            return self.text
+
+    class CandidateLink:
+        def __init__(self, text, row):
+            self.text = text
+            self.row = row
+        def inner_text(self, timeout=None):
+            return self.text
+        def locator(self, selector):
+            return RowLocator(self.row)
+
+    class CandidateLinks:
+        def __init__(self):
+            self.items = [
+                CandidateLink("Ada Lovelace", "Empleo que solicitó: Analyst"),
+                CandidateLink("ADA LOVELACE", "Empleo que solicitó: Designer"),
+            ]
+        def count(self):
+            return len(self.items)
+        def nth(self, index):
+            return self.items[index]
+
+    class DuplicatePage(FakePage):
+        def locator(self, selector):
+            if selector == "body":
+                return super().locator(selector)
+            if 'a[data-testid="NameCell"]' in selector:
+                return CandidateLinks()
+            return FakeLocator(0)
+
+    browser=IndeedBrowser(cfg(tmp_path))
+    link, ambiguous = browser._find_exact_candidate_link(
+        DuplicatePage(),
+        "Ada Lovelace",
+        job_title="Engineer",
+    )
+
+    assert link is None
+    assert ambiguous is True
 
 
 def test_candidate_list_fallback_returns_specific_review_code_when_name_missing(tmp_path):
@@ -788,6 +1054,13 @@ def test_candidate_list_fallback_returns_specific_review_code_when_name_missing(
             self.goto_urls.append(url)
             self.url = url
             return FakeResponse(200, "text/html", b"")
+
+        def locator(self, selector):
+            if selector == "body":
+                return super().locator(selector)
+            if selector == '[data-testid="candidate-list-table-container"]':
+                return FakeLocator(1)
+            return FakeLocator(0)
 
         def get_by_text(self, pattern):
             return FakeLocator(0)
@@ -810,7 +1083,7 @@ def test_candidate_list_fallback_returns_specific_review_code_when_name_missing(
     )
 
     assert result.outcome is BrowserOutcome.NEEDS_HUMAN
-    assert result.human_code == "INDEED_CANDIDATE_NOT_FOUND"
+    assert result.human_code == "INDEED_CANDIDATE_SEARCH_UNAVAILABLE"
     assert result.diagnostic_path is not None
 
 
@@ -909,7 +1182,7 @@ def test_open_indeed_rejects_unsafe_manual_url(tmp_path, url):
     )
     browser.open_indeed(url)
 
-    assert calls[0][0][-1] == "https://employers.indeed.com/"
+    assert calls[0][0][-1] == "https://employers.indeed.com/candidates"
 
 
 @pytest.mark.parametrize(
