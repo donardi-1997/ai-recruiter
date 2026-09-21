@@ -56,13 +56,18 @@ def _default_playwright_factory():
     return sync_playwright()
 
 
-def _manual_edge_process_exists(profile_dir: Path) -> bool:
-    """Return True when the dedicated profile is owned by a top-level Edge process."""
+def _manual_browser_process_exists(
+    profile_dir: Path,
+    *,
+    process_name: str,
+) -> bool:
+    """Return True when the dedicated profile is owned by the selected browser."""
     target = os.path.normcase(os.path.normpath(str(profile_dir)))
+    expected_process = str(process_name or "").casefold()
     for process in psutil.process_iter(["name", "cmdline"]):
         try:
             info = process.info
-            if str(info.get("name") or "").casefold() != "msedge.exe":
+            if str(info.get("name") or "").casefold() != expected_process:
                 continue
             args = [str(value) for value in (info.get("cmdline") or [])]
             if any(arg.startswith("--type=") for arg in args):
@@ -79,22 +84,42 @@ def _manual_edge_process_exists(profile_dir: Path) -> bool:
     return False
 
 
-def _resolve_edge_executable() -> str:
-    candidates: list[Path] = []
-    discovered = shutil.which("msedge")
-    if discovered:
-        return discovered
+def _resolve_browser_executable(browser_name: str) -> str:
+    browser = str(browser_name or "").strip().casefold()
+    if browser == "chrome":
+        executable_name = "chrome.exe"
+        shutil_names = ("chrome", "chrome.exe")
+        relative_paths = (
+            Path("Google") / "Chrome" / "Application" / executable_name,
+        )
+        display_name = "Google Chrome"
+    elif browser == "edge":
+        executable_name = "msedge.exe"
+        shutil_names = ("msedge", "msedge.exe")
+        relative_paths = (
+            Path("Microsoft") / "Edge" / "Application" / executable_name,
+        )
+        display_name = "Microsoft Edge"
+    else:
+        raise RuntimeError(f"Navegador no soportado: {browser_name}")
 
-    for key in ("PROGRAMFILES(X86)", "PROGRAMFILES", "LOCALAPPDATA"):
+    for candidate_name in shutil_names:
+        discovered = shutil.which(candidate_name)
+        if discovered:
+            return discovered
+
+    candidates: list[Path] = []
+    for key in ("PROGRAMFILES", "PROGRAMFILES(X86)", "LOCALAPPDATA"):
         root = str(os.environ.get(key, "")).strip()
         if not root:
             continue
-        candidates.append(Path(root) / "Microsoft" / "Edge" / "Application" / "msedge.exe")
+        for relative_path in relative_paths:
+            candidates.append(Path(root) / relative_path)
 
     for candidate in candidates:
         if candidate.is_file():
             return str(candidate)
-    raise RuntimeError("Microsoft Edge no está instalado o no pudo localizarse.")
+    raise RuntimeError(f"{display_name} no está instalado o no pudo localizarse.")
 
 
 _DOWNLOAD_NAME = re.compile(
@@ -157,15 +182,35 @@ class IndeedBrowser:
         config: AgentConfig,
         *,
         playwright_factory=None,
-        edge_executable_resolver=None,
+        browser_executable_resolver=None,
         process_runner=None,
         manual_process_probe=None,
     ):
         self._config = config
+        self._browser_name = str(config.browser_name or "chrome").strip().casefold()
+        if self._browser_name == "chrome":
+            self._playwright_channel = "chrome"
+            self._browser_process_name = "chrome.exe"
+            self._browser_label = "Google Chrome"
+        elif self._browser_name == "edge":
+            self._playwright_channel = "msedge"
+            self._browser_process_name = "msedge.exe"
+            self._browser_label = "Microsoft Edge"
+        else:
+            raise ValueError(f"Navegador no soportado: {self._browser_name}")
+
         self._playwright_factory = playwright_factory or _default_playwright_factory
-        self._edge_executable_resolver = edge_executable_resolver or _resolve_edge_executable
+        self._browser_executable_resolver = (
+            browser_executable_resolver
+            or (lambda: _resolve_browser_executable(self._browser_name))
+        )
         self._process_runner = process_runner or subprocess.Popen
-        self._manual_process_probe = manual_process_probe or _manual_edge_process_exists
+        self._manual_process_probe = manual_process_probe or (
+            lambda profile_dir: _manual_browser_process_exists(
+                profile_dir,
+                process_name=self._browser_process_name,
+            )
+        )
         self._manual_process = None
         self._playwright = None
         self._context = None
@@ -175,6 +220,10 @@ class IndeedBrowser:
         self._diagnostic_context_hooked = False
         self._diagnostic_page_ids: set[int] = set()
         self._last_diagnostic_path: str | None = None
+
+    @property
+    def browser_label(self) -> str:
+        return self._browser_label
 
     @property
     def diagnostic_active(self) -> bool:
@@ -214,7 +263,7 @@ class IndeedBrowser:
         self._playwright = self._playwright_factory().start()
         self._context = self._playwright.chromium.launch_persistent_context(
             user_data_dir=str(self._config.browser_profile_dir),
-            channel="msedge",
+            channel=self._playwright_channel,
             headless=False,
             accept_downloads=True,
             chromium_sandbox=True,
@@ -263,7 +312,7 @@ class IndeedBrowser:
         return candidate
 
     def open_indeed(self, url: str | None = None) -> None:
-        """Open Indeed in normal Edge, optionally at the blocked resume URL.
+        """Open Indeed in the configured normal browser with its dedicated profile.
 
         The same dedicated user-data directory is reused later by Playwright, so
         cookies/session state survive without automating login, MFA, or CAPTCHA.
@@ -272,9 +321,9 @@ class IndeedBrowser:
             return
         self.close()
         self._config.browser_profile_dir.mkdir(parents=True, exist_ok=True)
-        edge = self._edge_executable_resolver()
+        executable = self._browser_executable_resolver()
         command = [
-            edge,
+            executable,
             f"--user-data-dir={self._config.browser_profile_dir}",
             "--new-window",
             "--no-first-run",
