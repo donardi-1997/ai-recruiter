@@ -65,8 +65,8 @@ def run_ui(*, worker, api, browser) -> None:
 
     root = tk.Tk()
     root.title("ASIATI Resume Agent")
-    root.geometry("520x430")
-    root.minsize(480, 390)
+    root.geometry("680x430")
+    root.minsize(640, 390)
 
     style = ttk.Style(root)
     try:
