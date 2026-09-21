@@ -73,6 +73,25 @@ def test_needs_human_blocks_new_claims_until_resume(tmp_path):
     assert len(api.claims) == 1
 
 
+def test_external_attention_retry_clears_local_human_state(tmp_path):
+    api=FakeApi([task()])
+    browser=FakeBrowser(BrowserResult(BrowserOutcome.NEEDS_HUMAN, human_code="INDEED_UI_REQUIRES_REVIEW"))
+    worker=ResumeWorker(
+        config=config(tmp_path),
+        api=api,
+        browser=browser,
+        heartbeat_factory=lambda **kw: FakeHeartbeat(),
+    )
+    assert worker.run_once().state == "WAITING_FOR_HUMAN"
+    assert worker.human_task_id == "t1"
+
+    worker.reset_after_attention_retry()
+
+    assert worker.human_task_id is None
+    assert worker.human_resume_url is None
+    assert worker.snapshot.state == "IDLE"
+
+
 def test_heartbeat_failure_aborts_upload(tmp_path):
     api=FakeApi([task()])
     browser=FakeBrowser(BrowserResult(BrowserOutcome.DOWNLOADED, filename="ada.pdf", data=b"%PDF-ok"))
