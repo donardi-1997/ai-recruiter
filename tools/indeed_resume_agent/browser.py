@@ -768,6 +768,9 @@ class IndeedBrowser:
             'input[placeholder*="candidat" i]',
             'input[placeholder*="buscar" i]',
             'input[placeholder*="search" i]',
+            'input[type="search"]',
+            'input[name*="search" i]',
+            '[role="searchbox"]',
         ):
             try:
                 located = page.locator(selector)
@@ -825,11 +828,13 @@ class IndeedBrowser:
         return " ".join(text.split())
 
     def _candidate_name_links(self, page):
-        # Observed live DOM:
-        # <a data-testid="NameCell" href="/candidates/view?id=...">NAME</a>
+        # Indeed has rendered candidate names in several shapes across releases:
+        # an anchor carrying NameCell, a wrapper carrying NameCell with a child
+        # anchor, or a row whose name cell is not itself a link. Prefer the most
+        # specific live selectors first.
         for selector in (
             'a[data-testid="NameCell"][href*="/candidates/view"]',
-            'a[data-testid="NameCell"]',
+            '[data-testid="NameCell"]',
             'a[href*="/candidates/view"]',
         ):
             try:
@@ -839,6 +844,121 @@ class IndeedBrowser:
             except Exception:
                 continue
         return None
+
+    @staticmethod
+    def _candidate_click_target(node):
+        # If NameCell is only a wrapper, descend to the actual clickable target.
+        for selector in (
+            'a[href*="/candidates/view"]',
+            'a[href*="/candidates/"]',
+            'a',
+            'button',
+        ):
+            try:
+                child = node.locator(selector)
+                if child.count() > 0:
+                    return child.first
+            except Exception:
+                continue
+        return node
+
+    @staticmethod
+    def _candidate_row_for_node(node):
+        for selector in (
+            "xpath=ancestor::*[@data-testid='table-row'][1]",
+            "xpath=ancestor::tbody[@data-testid='table-row'][1]",
+            "xpath=ancestor::tr[1]",
+        ):
+            try:
+                row = node.locator(selector)
+                if row.count() > 0:
+                    return row.first
+            except Exception:
+                continue
+        return None
+
+    @staticmethod
+    def _candidate_rows(page):
+        for selector in (
+            '[data-testid="table-row"]',
+            'tbody[data-testid="table-row"]',
+            'tr',
+        ):
+            try:
+                rows = page.locator(selector)
+                if rows.count() > 0:
+                    return rows
+            except Exception:
+                continue
+        return None
+
+    def _candidate_match_from_rows(
+        self,
+        page,
+        target_name: str,
+        target_job: str,
+    ):
+        rows = self._candidate_rows(page)
+        if rows is None:
+            return None, False
+
+        matches: list[tuple[object, bool]] = []
+        try:
+            count = min(int(rows.count()), 100)
+        except Exception:
+            count = 0
+
+        for index in range(count):
+            try:
+                row = rows.nth(index)
+                row_text = self._normalize_lookup_text(row.inner_text(timeout=750))
+                if not row_text:
+                    continue
+
+                # In the live table the candidate name is the first meaningful
+                # text in the row. Accept a boundary match as a fallback when
+                # the NameCell test id is absent, but never fuzzy-match names.
+                boundary_match = (
+                    row_text == target_name
+                    or row_text.startswith(target_name + " ")
+                    or f" {target_name} " in f" {row_text} "
+                )
+                if not boundary_match:
+                    continue
+
+                click_target = None
+                for selector in (
+                    '[data-testid="NameCell"]',
+                    'a[href*="/candidates/view"]',
+                    'a[href*="/candidates/"]',
+                    'a',
+                ):
+                    try:
+                        located = row.locator(selector)
+                        if located.count() > 0:
+                            click_target = located.first
+                            break
+                    except Exception:
+                        continue
+                if click_target is None:
+                    click_target = row
+
+                job_matches = bool(target_job and target_job in row_text)
+                matches.append((click_target, job_matches))
+            except Exception:
+                continue
+
+        if not matches:
+            return None, False
+        if target_job:
+            job_matches = [node for node, matched in matches if matched]
+            if len(job_matches) == 1:
+                return job_matches[0], False
+            if len(job_matches) > 1:
+                return None, True
+        if len(matches) == 1:
+            return matches[0][0], False
+        return None, True
 
     def _find_exact_candidate_link(
         self,
@@ -853,54 +973,43 @@ class IndeedBrowser:
             return None, False
 
         links = self._candidate_name_links(page)
-        if links is None:
-            # Semantic fallback for older/alternate Indeed layouts.
-            try:
-                exact = page.get_by_text(
-                    re.compile(rf"^\s*{re.escape(candidate_name)}\s*$", re.IGNORECASE)
-                )
-                if exact.count() == 1:
-                    return exact.first, False
-                if exact.count() > 1:
-                    return None, True
-            except Exception:
-                pass
-            return None, False
-
         matches: list[tuple[object, bool]] = []
-        try:
-            count = min(int(links.count()), 100)
-        except Exception:
-            count = 0
 
-        for index in range(count):
+        if links is not None:
             try:
-                link = links.nth(index)
-                label = self._normalize_lookup_text(link.inner_text(timeout=500))
-                if label != target_name:
+                count = min(int(links.count()), 100)
+            except Exception:
+                count = 0
+
+            for index in range(count):
+                try:
+                    node = links.nth(index)
+                    label = self._normalize_lookup_text(node.inner_text(timeout=500))
+                    if label != target_name:
+                        continue
+
+                    row = self._candidate_row_for_node(node)
+                    row_text = ""
+                    if row is not None:
+                        try:
+                            row_text = self._normalize_lookup_text(
+                                row.inner_text(timeout=750)
+                            )
+                        except Exception:
+                            row_text = ""
+
+                    job_matches = bool(target_job and target_job in row_text)
+                    matches.append((self._candidate_click_target(node), job_matches))
+                except Exception:
                     continue
 
-                job_matches = False
-                if target_job:
-                    try:
-                        row = link.locator(
-                            "xpath=ancestor::tbody[@data-testid='table-row'][1]"
-                        )
-                        row_text = self._normalize_lookup_text(
-                            row.inner_text(timeout=750)
-                        )
-                        job_matches = target_job in row_text
-                    except Exception:
-                        job_matches = False
-                matches.append((link, job_matches))
-            except Exception:
-                continue
-
         if not matches:
-            return None, False
+            # Row-level fallback handles alternate Indeed layouts where the name
+            # is rendered in a non-anchor NameCell or the test id is absent.
+            return self._candidate_match_from_rows(page, target_name, target_job)
 
         if target_job:
-            job_matches = [link for link, matched in matches if matched]
+            job_matches = [node for node, matched in matches if matched]
             if len(job_matches) == 1:
                 return job_matches[0], False
             if len(job_matches) > 1:
@@ -1533,7 +1642,12 @@ class IndeedBrowser:
         except Exception:
             return None
 
-    def _write_ui_diagnostic(self, page) -> str | None:
+    def _write_ui_diagnostic(
+        self,
+        page,
+        *,
+        reason: str | None = None,
+    ) -> str | None:
         """Persist a local-only, redacted snapshot of the unexpected Indeed UI."""
         diagnostics_dir = self._config.browser_profile_dir.parent / "diagnostics"
         diagnostics_dir.mkdir(parents=True, exist_ok=True)
@@ -1578,11 +1692,36 @@ class IndeedBrowser:
                 except Exception:
                     continue
 
+        inputs: list[dict[str, str]] = []
+        try:
+            items = page.locator("input")
+            count = min(int(items.count()), 40)
+        except Exception:
+            count = 0
+            items = None
+        for index in range(count):
+            try:
+                node = items.nth(index)
+                if not node.is_visible():
+                    continue
+                inputs.append(
+                    {
+                        "type": str(node.get_attribute("type") or "")[:80],
+                        "name": str(node.get_attribute("name") or "")[:120],
+                        "placeholder": str(node.get_attribute("placeholder") or "")[:200],
+                        "aria_label": str(node.get_attribute("aria-label") or "")[:200],
+                    }
+                )
+            except Exception:
+                continue
+
         payload = {
             "captured_at_utc": datetime.now(timezone.utc).isoformat(),
             "url": _safe_diagnostic_url(getattr(page, "url", "")),
             "title": title,
+            "reason": str(reason or "")[:120],
             "controls": controls,
+            "inputs": inputs,
             "screenshot": str(png_path),
         }
 
@@ -1683,7 +1822,15 @@ class IndeedBrowser:
             return BrowserResult(BrowserOutcome.NEEDS_HUMAN, human_code="INDEED_AUTH_REQUIRED")
 
         if control is None:
-            diagnostic_path = self._write_ui_diagnostic(page)
+            diagnostic_path = self._write_ui_diagnostic(
+                page,
+                reason=lookup_error
+                or (
+                    "INDEED_CANDIDATE_NOT_FOUND"
+                    if fallback_attempted
+                    else "INDEED_UI_REQUIRES_REVIEW"
+                ),
+            )
             return BrowserResult(
                 BrowserOutcome.NEEDS_HUMAN,
                 human_code=(
