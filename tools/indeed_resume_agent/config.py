@@ -7,12 +7,15 @@ from typing import Mapping
 from urllib.parse import urlparse
 
 DEFAULT_API_BASE_URL = "https://dzcwl3yhv133t.cloudfront.net"
+DEFAULT_BROWSER = "chrome"
+SUPPORTED_BROWSERS = {"chrome", "edge"}
 
 
 @dataclass(frozen=True)
 class AgentConfig:
     api_base_url: str
     browser_profile_dir: Path
+    browser_name: str = DEFAULT_BROWSER
     request_timeout_seconds: float = 30.0
     heartbeat_interval_seconds: float = 120.0
     idle_poll_seconds: float = 10.0
@@ -44,17 +47,29 @@ def load_config(*, environ: Mapping[str, str] | None = None) -> AgentConfig:
     local_app_data = str(env.get("LOCALAPPDATA", "")).strip()
     if not local_app_data:
         local_app_data = str(Path.home() / "AppData" / "Local")
+    browser_name = str(
+        env.get("ASIATI_RESUME_AGENT_BROWSER", DEFAULT_BROWSER)
+    ).strip().casefold()
+    if browser_name not in SUPPORTED_BROWSERS:
+        raise ValueError(
+            "ASIATI_RESUME_AGENT_BROWSER must be one of: chrome, edge"
+        )
+
     profile_override = str(env.get("ASIATI_RESUME_AGENT_BROWSER_PROFILE_DIR", "")).strip()
     profile_dir = (
         Path(profile_override).expanduser()
         if profile_override
-        else Path(local_app_data) / "ASIATI" / "ResumeAgent" / "browser-profile"
+        else Path(local_app_data)
+        / "ASIATI"
+        / "ResumeAgent"
+        / f"browser-profile-{browser_name}"
     )
     return AgentConfig(
         api_base_url=_normalize_api_base_url(
             env.get("ASIATI_RESUME_AGENT_API_BASE_URL", DEFAULT_API_BASE_URL)
         ),
         browser_profile_dir=profile_dir,
+        browser_name=browser_name,
         request_timeout_seconds=_env_float(
             env, "ASIATI_RESUME_AGENT_REQUEST_TIMEOUT_SECONDS", 30.0
         ),
