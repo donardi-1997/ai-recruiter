@@ -602,9 +602,19 @@ def test_generic_landing_clicks_candidates_rail_before_direct_url(tmp_path):
             self.candidate_open = False
 
         def get_by_role(self, role, name=None):
-            if not self.in_candidates and role in {"link", "button"}:
+            if (
+                not self.in_candidates
+                and role in {"link", "button"}
+                and hasattr(name, "search")
+                and name.search("Candidatos")
+            ):
                 return NavigationLocator(self)
-            if self.candidate_open and role in {"button", "link"}:
+            if (
+                self.candidate_open
+                and role in {"button", "link"}
+                and hasattr(name, "search")
+                and name.search("Descargar CV")
+            ):
                 return FakeLocator(1)
             return FakeLocator(0)
 
