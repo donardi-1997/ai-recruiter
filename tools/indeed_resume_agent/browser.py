@@ -409,14 +409,38 @@ class IndeedBrowser:
     def _response_pdf(response) -> bytes | None:
         if response is None or int(getattr(response, "status", 0) or 0) != 200:
             return None
+
         headers = getattr(response, "headers", {}) or {}
-        content_type = str(headers.get("content-type") or headers.get("Content-Type") or "").lower()
+        content_type = str(
+            headers.get("content-type") or headers.get("Content-Type") or ""
+        ).lower()
+        content_disposition = str(
+            headers.get("content-disposition")
+            or headers.get("Content-Disposition")
+            or ""
+        ).lower()
+        response_url = str(getattr(response, "url", "") or "")
+
+        # Do not ask Playwright for the body of ordinary HTML/page responses.
+        # Chromium can discard navigation bodies once the document is committed,
+        # which makes response.body() raise even though navigation succeeded.
+        # Only probe the body when response metadata plausibly represents a file.
+        plausible_pdf = (
+            "application/pdf" in content_type
+            or "application/octet-stream" in content_type
+            or "binary/octet-stream" in content_type
+            or "attachment" in content_disposition
+            or response_url.casefold().endswith(".pdf")
+        )
+        if not plausible_pdf:
+            return None
+
         body = bytes(response.body() or b"")
 
-        # Indeed's resume endpoint can deliver the file with a generic or
-        # browser-oriented content type. Trust the PDF signature first and keep
-        # the declared PDF MIME type as a secondary signal so malformed PDFs
-        # still fail validation explicitly.
+        # Indeed's resume endpoint can deliver the file with a generic binary
+        # content type. Trust the PDF signature first and keep the declared PDF
+        # MIME type as a secondary signal so malformed PDFs still fail
+        # validation explicitly.
         if body.startswith(b"%PDF-"):
             return body
         if "application/pdf" in content_type:
