@@ -368,11 +368,11 @@ class IndeedBrowser:
     def _safe_manual_url(url: str | None) -> str:
         candidate = str(url or "").strip()
         if not candidate:
-            return _INDEED_EMPLOYER_HOME
+            return _INDEED_CANDIDATES_HOME
         try:
             parsed = urlsplit(candidate)
         except Exception:
-            return _INDEED_EMPLOYER_HOME
+            return _INDEED_CANDIDATES_HOME
         host = str(parsed.hostname or "").casefold()
         allowed = (
             host == "indeed.com"
@@ -381,7 +381,7 @@ class IndeedBrowser:
             or host.endswith(".indeedemail.com")
         )
         if parsed.scheme.casefold() != "https" or not allowed:
-            return _INDEED_EMPLOYER_HOME
+            return _INDEED_CANDIDATES_HOME
         return candidate
 
     def open_indeed(self, url: str | None = None) -> None:
@@ -390,8 +390,11 @@ class IndeedBrowser:
         The same dedicated user-data directory is reused later by Playwright, so
         cookies/session state survive without automating login, MFA, or CAPTCHA.
         """
-        if self.manual_session_open:
-            return
+        # Always issue a normal Chrome launch. If Chrome already owns this
+        # dedicated profile, Chrome routes the command to the existing process
+        # and opens a fresh window. Returning early here made the UI button look
+        # broken whenever a background Chrome process survived after its window
+        # was closed.
         self.close()
         self._config.browser_profile_dir.mkdir(parents=True, exist_ok=True)
         executable = self._browser_executable_resolver()
@@ -488,6 +491,30 @@ class IndeedBrowser:
         url = str(getattr(page, "url", "") or "").casefold()
         if any(marker in url for marker in _URL_CHALLENGE_MARKERS):
             return True
+
+        # CAPTCHA/security challenges are often rendered inside an iframe after
+        # the top-level document has already loaded. Checking only body text can
+        # therefore miss the challenge and leave Diagnostic mode pumping the
+        # automated page indefinitely.
+        try:
+            for frame in list(getattr(page, "frames", []) or []):
+                frame_url = str(getattr(frame, "url", "") or "").casefold()
+                if any(marker in frame_url for marker in _URL_CHALLENGE_MARKERS):
+                    return True
+        except Exception:
+            pass
+
+        try:
+            challenge_nodes = page.locator(
+                'iframe[src*="captcha" i], iframe[src*="challenge" i], '
+                'iframe[src*="recaptcha" i], iframe[src*="hcaptcha" i], '
+                '[id*="captcha" i], [class*="captcha" i]'
+            )
+            if int(challenge_nodes.count()) > 0:
+                return True
+        except Exception:
+            pass
+
         try:
             text = str(page.locator("body").inner_text(timeout=2000) or "").casefold()
         except Exception:
@@ -1087,6 +1114,10 @@ class IndeedBrowser:
                     continue
                 if hasattr(page, "is_closed") and page.is_closed():
                     continue
+                if self._requires_human(page):
+                    self._diagnostic_active = False
+                    self.close()
+                    raise RuntimeError("INDEED_MANUAL_LOGIN_REQUIRED")
                 page.wait_for_timeout(100)
                 return
             except Exception:
