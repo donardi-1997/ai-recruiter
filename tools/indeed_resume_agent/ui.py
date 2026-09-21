@@ -16,6 +16,7 @@ class UiState:
     downloading: int
     completed: int
     needs_attention: int
+    retry: int
     failed: int
     current_candidate: str
 
@@ -51,6 +52,7 @@ def build_ui_state(snapshot: WorkerSnapshot, stats: QueueStats) -> UiState:
         downloading=1 if state == "DOWNLOADING" else min(max(stats.claimed, 0), 1),
         completed=max(stats.completed, 0),
         needs_attention=max(stats.needs_human, 0),
+        retry=max(stats.retry, 0),
         failed=max(stats.failed, 0),
         current_candidate=snapshot.active_candidate or "-",
     )
@@ -80,7 +82,10 @@ def run_ui(*, worker, api, browser) -> None:
     session_var = tk.StringVar(value="Starting")
     status_var = tk.StringVar(value="Iniciando agente...")
     candidate_var = tk.StringVar(value="-")
-    counters = {name: tk.StringVar(value="0") for name in ("pending", "downloading", "completed", "attention", "failed")}
+    counters = {
+        name: tk.StringVar(value="0")
+        for name in ("pending", "downloading", "completed", "attention", "retry", "failed")
+    }
 
     session_row = ttk.Frame(frame)
     session_row.pack(fill="x", pady=(0, 14))
@@ -94,6 +99,7 @@ def run_ui(*, worker, api, browser) -> None:
         ("Downloading", "downloading"),
         ("Completed", "completed"),
         ("Needs attention", "attention"),
+        ("Retry", "retry"),
         ("Failed", "failed"),
     ]
     for idx, (label, key) in enumerate(rows):
@@ -174,6 +180,7 @@ def run_ui(*, worker, api, browser) -> None:
                 counters["downloading"].set(str(ui.downloading))
                 counters["completed"].set(str(ui.completed))
                 counters["attention"].set(str(ui.needs_attention))
+                counters["retry"].set(str(ui.retry))
                 counters["failed"].set(str(ui.failed))
         except queue.Empty:
             pass
