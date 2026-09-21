@@ -328,6 +328,7 @@ class IndeedBrowser:
             "--new-window",
             "--no-first-run",
             "--no-default-browser-check",
+            "--disable-background-mode",
             self._safe_manual_url(url),
         ]
         self._manual_process = self._process_runner(command)
