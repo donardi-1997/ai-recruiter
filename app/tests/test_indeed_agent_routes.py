@@ -128,6 +128,40 @@ def test_wrong_lease_token_returns_409(api):
     assert "lease" in response.json()["detail"].casefold()
 
 
+def test_retry_failed_requeues_only_current_owner_and_resets_terminal_fields(api):
+    client, db = api
+    owned = _task(db, owner_sub="owner-a", status="FAILED")
+    owned.attempt_count = 3
+    owned.last_error_code = "RESUME_DOWNLOAD_FAILED"
+    owned.last_error_message = "failed"
+    owned.completed_at = datetime(2026, 9, 21, tzinfo=timezone.utc)
+    owned.lease_token = "stale"
+    owned.lease_expires_at = datetime(2099, 1, 1, tzinfo=timezone.utc)
+    owned.claimed_at = datetime(2026, 9, 20, tzinfo=timezone.utc)
+
+    other = _task(db, owner_sub="owner-b", status="FAILED")
+    other.attempt_count = 3
+    db.commit()
+
+    response = client.post("/api/agents/indeed-resume/retry-failed")
+
+    assert response.status_code == 200
+    assert response.json() == {"status": "WAITING_DOWNLOAD", "requeued": 1}
+
+    db.refresh(owned)
+    db.refresh(other)
+    assert owned.status == "WAITING_DOWNLOAD"
+    assert owned.attempt_count == 0
+    assert owned.last_error_code is None
+    assert owned.last_error_message is None
+    assert owned.completed_at is None
+    assert owned.lease_token is None
+    assert owned.lease_expires_at is None
+    assert owned.claimed_at is None
+    assert other.status == "FAILED"
+    assert other.attempt_count == 3
+
+
 def test_claim_serializes_ephemeral_resume_url_and_lease(api, monkeypatch):
     from app.domains.candidate_ingestion import indeed_email_agent_service as service
 
