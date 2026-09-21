@@ -216,6 +216,21 @@ def retry_failed_resume_tasks(
     return {"status": "WAITING_DOWNLOAD", "requeued": count}
 
 
+@router.post("/retry-attention")
+def retry_attention_resume_tasks(
+    db: Session = Depends(get_db),
+    principal: AgentPrincipal = Depends(get_indeed_resume_agent_principal),
+):
+    try:
+        count = service.requeue_needs_human_tasks(
+            db,
+            owner_sub=principal.owner_sub,
+        )
+    except Exception as exc:
+        raise _translate(exc)
+    return {"status": "WAITING_DOWNLOAD", "requeued": count}
+
+
 @router.get("/stats")
 def resume_agent_stats(
     db: Session = Depends(get_db),
