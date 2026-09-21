@@ -52,7 +52,7 @@ def build_ui_state(snapshot: WorkerSnapshot, stats: QueueStats) -> UiState:
     if state == "DIAGNOSTIC_SAVED" and snapshot.last_error:
         status_label = snapshot.last_error
 
-    if state in {"RETRY", "FAILED"} and snapshot.last_error:
+    if state in {"RETRY", "FAILED", "ERROR"} and snapshot.last_error:
         status_label = snapshot.last_error
     elif (
         state == "IDLE"
