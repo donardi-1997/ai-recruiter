@@ -254,10 +254,17 @@ class IndeedBrowser:
             return None
         headers = getattr(response, "headers", {}) or {}
         content_type = str(headers.get("content-type") or headers.get("Content-Type") or "").lower()
-        if "application/pdf" not in content_type:
-            return None
-        body = response.body()
-        return bytes(body or b"")
+        body = bytes(response.body() or b"")
+
+        # Indeed's resume endpoint can deliver the file with a generic or
+        # browser-oriented content type. Trust the PDF signature first and keep
+        # the declared PDF MIME type as a secondary signal so malformed PDFs
+        # still fail validation explicitly.
+        if body.startswith(b"%PDF-"):
+            return body
+        if "application/pdf" in content_type:
+            return body
+        return None
 
     @staticmethod
     def _requires_human(page) -> bool:
