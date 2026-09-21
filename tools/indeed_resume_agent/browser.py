@@ -7,12 +7,13 @@ import shutil
 import subprocess
 import time
 from datetime import datetime, timezone
+from email.header import decode_header, make_header
 
 import psutil
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
-from urllib.parse import urlsplit
+from urllib.parse import unquote, urlsplit
 
 from .config import AgentConfig
 
@@ -146,6 +147,9 @@ _CHALLENGE_MARKERS = (
 )
 _URL_CHALLENGE_MARKERS = ("/login", "/signin", "challenge", "captcha", "verify")
 _INDEED_EMPLOYER_HOME = "https://employers.indeed.com/"
+_RESUME_DOWNLOAD_PATH = "/api/catws/resume/v2/download"
+_FILENAME_STAR = re.compile(r"filename\*=UTF-8''([^;]+)", re.IGNORECASE)
+_FILENAME_BASIC = re.compile(r'filename="?([^";]+)"?', re.IGNORECASE)
 
 
 
@@ -405,6 +409,41 @@ class IndeedBrowser:
         if "application/pdf" in content_type:
             return body
         return None
+
+    @staticmethod
+    def _is_resume_download_response(response) -> bool:
+        try:
+            parsed = urlsplit(str(getattr(response, "url", "") or ""))
+        except Exception:
+            return False
+        host = str(parsed.hostname or "").casefold()
+        return (
+            host == "employers.indeed.com"
+            and parsed.path == _RESUME_DOWNLOAD_PATH
+            and int(getattr(response, "status", 0) or 0) == 200
+        )
+
+    @staticmethod
+    def _response_filename(response) -> str:
+        headers = getattr(response, "headers", {}) or {}
+        disposition = str(
+            headers.get("content-disposition")
+            or headers.get("Content-Disposition")
+            or ""
+        )
+        candidate = ""
+        match = _FILENAME_STAR.search(disposition)
+        if match:
+            candidate = unquote(match.group(1))
+        else:
+            match = _FILENAME_BASIC.search(disposition)
+            if match:
+                candidate = match.group(1).strip()
+                try:
+                    candidate = str(make_header(decode_header(candidate)))
+                except Exception:
+                    pass
+        return normalize_pdf_filename(candidate or "indeed-resume.pdf")
 
     @staticmethod
     def _requires_human(page) -> bool:
@@ -985,11 +1024,44 @@ class IndeedBrowser:
                 diagnostic_path=diagnostic_path,
             )
 
+        captured_pdf: dict[str, object] = {}
+
+        def capture_resume_response(response) -> None:
+            if not self._is_resume_download_response(response):
+                return
+            try:
+                data = self._response_pdf(response)
+                if data is None:
+                    return
+                validate_pdf(data, max_bytes=self._config.max_pdf_bytes)
+                captured_pdf["data"] = data
+                captured_pdf["filename"] = self._response_filename(response)
+            except InvalidResumePdf:
+                captured_pdf["invalid_pdf"] = True
+            except Exception:
+                pass
+
+        try:
+            page.on("response", capture_resume_response)
+        except Exception:
+            pass
+
         try:
             with page.expect_download(
                 timeout=int(self._config.request_timeout_seconds * 1000)
             ) as download_info:
                 control.click()
+
+            if captured_pdf.get("invalid_pdf"):
+                raise InvalidResumePdf("RESUME_NOT_PDF")
+
+            if isinstance(captured_pdf.get("data"), (bytes, bytearray)):
+                return BrowserResult(
+                    BrowserOutcome.DOWNLOADED,
+                    filename=str(captured_pdf.get("filename") or "indeed-resume.pdf"),
+                    data=bytes(captured_pdf["data"]),
+                )
+
             download = download_info.value
             path = download.path()
             data = Path(path).read_bytes()
@@ -1004,9 +1076,27 @@ class IndeedBrowser:
         except InvalidResumePdf:
             raise
         except Exception:
+            # Indeed currently returns the PDF response before closing the
+            # candidate tab/browser context. If the browser vanishes before
+            # Playwright can finish the Download object, prefer the already
+            # captured authenticated PDF response.
+            if captured_pdf.get("invalid_pdf"):
+                raise InvalidResumePdf("RESUME_NOT_PDF")
+            if isinstance(captured_pdf.get("data"), (bytes, bytearray)):
+                return BrowserResult(
+                    BrowserOutcome.DOWNLOADED,
+                    filename=str(captured_pdf.get("filename") or "indeed-resume.pdf"),
+                    data=bytes(captured_pdf["data"]),
+                )
+
             diagnostic_path = self._write_ui_diagnostic(page)
             return BrowserResult(
                 BrowserOutcome.NEEDS_HUMAN,
                 human_code="INDEED_DOWNLOAD_ACTION_REQUIRES_REVIEW",
                 diagnostic_path=diagnostic_path,
             )
+        finally:
+            try:
+                page.off("response", capture_resume_response)
+            except Exception:
+                pass

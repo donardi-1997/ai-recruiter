@@ -383,6 +383,80 @@ def test_login_or_challenge_returns_needs_human(tmp_path):
     assert result.human_code == "INDEED_AUTH_REQUIRED"
 
 
+def test_known_download_control_uses_pdf_response_if_browser_closes(tmp_path):
+    class ResumeResponse:
+        status = 200
+        url = "https://employers.indeed.com/api/catws/resume/v2/download?candidate=secret"
+        headers = {
+            "content-type": "application/pdf",
+            "content-disposition": (
+                'attachment; filename="=?UTF-8?Q?CVNatalyFraile.pdf?="; '
+                "filename*=UTF-8''CVNatalyFraile.pdf"
+            ),
+        }
+
+        def body(self):
+            return b"%PDF-network-response"
+
+    class ClosingExpectDownload:
+        def __enter__(self):
+            return FakeDownloadInfo(None)
+
+        def __exit__(self, exc_type, exc, tb):
+            raise RuntimeError("Target page, context or browser has been closed")
+
+    class ClosingPage(FakePage):
+        def __init__(self):
+            super().__init__(url="https://employers.indeed.com/candidates/view")
+            self.handlers = {}
+
+        def on(self, name, callback):
+            self.handlers[name] = callback
+
+        def off(self, name, callback):
+            if self.handlers.get(name) is callback:
+                self.handlers.pop(name, None)
+
+        def get_by_role(self, role, name=None):
+            if role == "button":
+                return FakeLocator(1, click=self._click_download)
+            return FakeLocator(0)
+
+        def expect_download(self, timeout=None):
+            return ClosingExpectDownload()
+
+        def _click_download(self):
+            self.handlers["response"](ResumeResponse())
+
+    page = ClosingPage()
+    context = FakeContext(FakeResponse(200, "text/html", b""), page)
+    chromium = FakeChromium(context)
+    browser = IndeedBrowser(
+        cfg(tmp_path),
+        playwright_factory=lambda: FakeManager(FakePlaywright(chromium)),
+    )
+    browser.start()
+
+    result = browser.fetch_resume("https://employers.indeed.com/candidates/view?id=abc")
+
+    assert result.outcome is BrowserOutcome.DOWNLOADED
+    assert result.filename == "CVNatalyFraile.pdf"
+    assert result.data == b"%PDF-network-response"
+
+
+def test_resume_download_response_requires_exact_indeed_endpoint(tmp_path):
+    browser = IndeedBrowser(cfg(tmp_path))
+
+    class Response:
+        status = 200
+        url = "https://employers.indeed.com/api/catws/resume/v2/download?candidate=abc"
+
+    assert browser._is_resume_download_response(Response()) is True
+
+    Response.url = "https://evil.example/api/catws/resume/v2/download"
+    assert browser._is_resume_download_response(Response()) is False
+
+
 def test_known_download_control_reads_pdf(tmp_path):
     pdf=tmp_path / "download.pdf"
     pdf.write_bytes(b"%PDF-downloaded")
