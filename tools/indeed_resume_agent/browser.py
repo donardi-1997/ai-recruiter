@@ -242,6 +242,13 @@ class IndeedBrowser:
 
     @property
     def manual_session_open(self) -> bool:
+        # When Playwright owns the persistent profile, its Chrome root process
+        # has the same --user-data-dir as the manual browser. Process probing
+        # must not classify our own automated Chrome as a manual session or the
+        # UI will block every subsequent queue attempt with MANUAL_BROWSER_OPEN.
+        if self._context is not None:
+            return False
+
         process = self._manual_process
         if process is not None:
             poll = getattr(process, "poll", None)
