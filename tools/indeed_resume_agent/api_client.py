@@ -30,6 +30,9 @@ class QueueStats:
     needs_human: int
     retry: int
     failed: int
+    last_error_code: str | None = None
+    last_error_candidate: str | None = None
+    last_error_status: str | None = None
 
 
 class AgentApiError(RuntimeError):
@@ -158,4 +161,19 @@ class AgentApiClient:
             needs_human=int(payload.get("needs_human", 0)),
             retry=int(payload.get("retry", 0)),
             failed=int(payload.get("failed", 0)),
+            last_error_code=(
+                str(payload.get("last_error_code"))
+                if payload.get("last_error_code")
+                else None
+            ),
+            last_error_candidate=(
+                str(payload.get("last_error_candidate"))
+                if payload.get("last_error_candidate")
+                else None
+            ),
+            last_error_status=(
+                str(payload.get("last_error_status"))
+                if payload.get("last_error_status")
+                else None
+            ),
         )
