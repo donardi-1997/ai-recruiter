@@ -38,8 +38,24 @@ function Integrations() {
     let active = true;
 
     api.get("/integrations/gmail/status")
-      .then(({ data }) => {
-        if (active) setStatus(data);
+      .then(async ({ data }) => {
+        if (!active) return;
+        setStatus(data);
+
+        if (data?.connected) {
+          try {
+            const { data: smokeTask } = await api.get(
+              "/integrations/gmail/active-archived-test",
+            );
+            if (active) {
+              setActiveSmokeNeedsHuman(smokeTask?.status === "NEEDS_HUMAN");
+            }
+          } catch {
+            if (active) setActiveSmokeNeedsHuman(false);
+          }
+        } else {
+          setActiveSmokeNeedsHuman(false);
+        }
       })
       .catch((requestError) => {
         if (!active) return;
