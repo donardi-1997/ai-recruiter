@@ -123,6 +123,7 @@ def run_ui(*, worker, api, browser) -> None:
     ttk.Button(buttons, text="Pause", command=lambda: commands.put("pause")).pack(side="left")
     ttk.Button(buttons, text="Resume", command=lambda: commands.put("resume")).pack(side="left", padx=8)
     ttk.Button(buttons, text="Retry failed", command=lambda: commands.put("retry_failed")).pack(side="left")
+    ttk.Button(buttons, text="Retry attention", command=lambda: commands.put("retry_attention")).pack(side="left", padx=(8, 0))
     ttk.Button(buttons, text="Open Indeed (manual)", command=lambda: commands.put("open")).pack(side="right")
 
     def publish(snapshot: WorkerSnapshot, stats: QueueStats) -> None:
@@ -159,6 +160,17 @@ def run_ui(*, worker, api, browser) -> None:
                         try:
                             api.retry_failed()
                             last_stats = api.stats()
+                        except Exception:
+                            pass
+                        publish(worker.snapshot, last_stats)
+                    elif command == "retry_attention":
+                        try:
+                            api.retry_attention()
+                            last_stats = api.stats()
+                            worker._human_task_id = None
+                            worker._human_resume_url = None
+                            worker._paused = False
+                            worker._set("IDLE")
                         except Exception:
                             pass
                         publish(worker.snapshot, last_stats)
