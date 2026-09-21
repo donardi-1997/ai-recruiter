@@ -115,7 +115,7 @@ def test_ui_state_has_no_secret_fields():
 
 def test_ui_surfaces_only_sanitized_indeed_diagnostic_path():
     detail = (
-        "Indeed mostró una interfaz no reconocida. Diagnóstico local: "
+        "INDEED_CANDIDATE_NOT_FOUND — Diagnóstico local: "
         r"C:\Users\test\AppData\Local\ASIATI\ResumeAgent\diagnostics\indeed-ui-review.json"
     )
     ui=build_ui_state(
