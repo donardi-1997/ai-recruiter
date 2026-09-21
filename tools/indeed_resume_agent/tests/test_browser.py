@@ -235,6 +235,48 @@ def test_direct_authenticated_request_returns_pdf_without_page_navigation(tmp_pa
     assert page.goto_urls == []
 
 
+@pytest.mark.parametrize(
+    "content_type",
+    [
+        "application/octet-stream",
+        "binary/octet-stream",
+        "text/html",
+        "",
+    ],
+)
+def test_direct_authenticated_request_accepts_pdf_magic_with_non_pdf_mime(tmp_path, content_type):
+    page=FakePage()
+    context=FakeContext(FakeResponse(200, content_type, b"%PDF-mislabeled"), page)
+    chromium=FakeChromium(context)
+    browser=IndeedBrowser(
+        cfg(tmp_path),
+        playwright_factory=lambda: FakeManager(FakePlaywright(chromium)),
+    )
+    browser.start()
+
+    result=browser.fetch_resume("https://indeed.test/resume")
+
+    assert result.outcome is BrowserOutcome.DOWNLOADED
+    assert result.data == b"%PDF-mislabeled"
+    assert page.goto_urls == []
+
+
+def test_declared_pdf_with_invalid_body_still_fails_validation(tmp_path):
+    page=FakePage()
+    context=FakeContext(FakeResponse(200, "application/pdf", b"<html></html>"), page)
+    chromium=FakeChromium(context)
+    browser=IndeedBrowser(
+        cfg(tmp_path),
+        playwright_factory=lambda: FakeManager(FakePlaywright(chromium)),
+    )
+    browser.start()
+
+    with pytest.raises(InvalidResumePdf) as exc:
+        browser.fetch_resume("https://indeed.test/resume")
+
+    assert exc.value.code == "RESUME_NOT_PDF"
+
+
 def test_login_or_challenge_returns_needs_human(tmp_path):
     page=FakePage(url="https://indeed.test/account/login", text="Sign in - security verification CAPTCHA")
     context=FakeContext(FakeResponse(200, "text/html", b""), page)
