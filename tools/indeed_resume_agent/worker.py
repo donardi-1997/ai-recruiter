@@ -4,7 +4,12 @@ import threading
 from dataclasses import dataclass
 
 from .api_client import AgentApiError, LeaseLost
-from .browser import BrowserOutcome, InvalidResumePdf, validate_pdf
+from .browser import (
+    BrowserFetchStageError,
+    BrowserOutcome,
+    InvalidResumePdf,
+    validate_pdf,
+)
 from .config import AgentConfig
 
 
@@ -192,6 +197,13 @@ class ResumeWorker:
                 "LEASE_LOST",
                 candidate=task.candidate_name,
                 error="La tarea perdió su lease y será reclamada de forma segura.",
+            )
+        except BrowserFetchStageError as exc:
+            status = self._api.fail(task, code=exc.code)
+            return self._set(
+                status,
+                candidate=task.candidate_name,
+                error=exc.code,
             )
         except InvalidResumePdf as exc:
             status = self._api.fail(task, code=exc.code)
