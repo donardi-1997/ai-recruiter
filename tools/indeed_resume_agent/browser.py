@@ -539,18 +539,120 @@ class IndeedBrowser:
 
         return self._known_download_control(page)
 
-    def _open_candidate_from_list(self, page, candidate_name: str):
-        name = " ".join(str(candidate_name or "").split()).strip()
-        if not name:
-            return None
+    @staticmethod
+    def _candidate_navigation_control(page):
+        navigation_name = re.compile(
+            r"^(?:candidatos|candidates|ver candidatos|view candidates|"
+            r"administrar candidatos|manage candidates)$",
+            re.IGNORECASE,
+        )
+        for role in ("link", "button"):
+            try:
+                locator = page.get_by_role(role, name=navigation_name)
+                if locator.count() > 0:
+                    return locator.first
+            except Exception:
+                continue
 
+        for selector in (
+            '[aria-label="Candidatos" i]',
+            '[aria-label="Candidates" i]',
+            '[title="Candidatos" i]',
+            '[title="Candidates" i]',
+            'a[href*="candidate" i]',
+        ):
+            try:
+                locator = page.locator(selector)
+                if locator.count() > 0:
+                    return locator.first
+            except Exception:
+                continue
+        return None
+
+    def _open_candidates_workspace(self, page) -> bool:
+        control = self._candidate_navigation_control(page)
+        if control is not None:
+            try:
+                control.click()
+                page.wait_for_timeout(750)
+                if not self._is_generic_recruiting_landing(page):
+                    return True
+            except Exception:
+                pass
+
+        # Keep the old direct URL as a final fallback. Some accounts expose the
+        # classic candidates workspace here, while others redirect it back to
+        # Smart Recruiting.
         try:
             page.goto(
                 _INDEED_CANDIDATES_HOME,
                 wait_until="domcontentloaded",
                 timeout=int(self._config.request_timeout_seconds * 1000),
             )
+            return not self._is_generic_recruiting_landing(page)
         except Exception:
+            return False
+
+    @staticmethod
+    def _candidate_search_box(page):
+        try:
+            by_role = page.get_by_role(
+                "textbox",
+                name=re.compile(r"(?:buscar|search).*candidat", re.IGNORECASE),
+            )
+            if by_role.count() > 0:
+                return by_role.first
+        except Exception:
+            pass
+
+        for selector in (
+            'input[placeholder*="candidat" i]',
+            'input[placeholder*="buscar" i]',
+            'input[placeholder*="search" i]',
+        ):
+            try:
+                located = page.locator(selector)
+                if located.count() > 0:
+                    return located.first
+            except Exception:
+                continue
+        return None
+
+    @staticmethod
+    def _candidate_search_trigger(page):
+        for role in ("button", "link"):
+            try:
+                located = page.get_by_role(
+                    role,
+                    name=re.compile(
+                        r"^(?:buscar|search|buscar candidatos|search candidates)$",
+                        re.IGNORECASE,
+                    ),
+                )
+                if located.count() > 0:
+                    return located.first
+            except Exception:
+                continue
+        for selector in (
+            '[aria-label*="buscar" i]',
+            '[aria-label*="search" i]',
+            '[title*="buscar" i]',
+            '[title*="search" i]',
+        ):
+            try:
+                located = page.locator(selector)
+                if located.count() > 0:
+                    return located.first
+            except Exception:
+                continue
+        return None
+
+    def _open_candidate_from_list(self, page, candidate_name: str):
+        name = " ".join(str(candidate_name or "").split()).strip()
+        if not name:
+            return None
+
+        if not self._open_candidates_workspace(page):
             return None
 
         if self._requires_human(page):
@@ -567,6 +669,7 @@ class IndeedBrowser:
             ),
         )
         search_filled = False
+        search_triggered = False
 
         for _ in range(attempts):
             try:
@@ -578,30 +681,17 @@ class IndeedBrowser:
                 pass
 
             if not search_filled:
-                search_box = None
-                try:
-                    by_role = page.get_by_role(
-                        "textbox",
-                        name=re.compile(r"(?:buscar|search).*candidat", re.IGNORECASE),
-                    )
-                    if by_role.count() > 0:
-                        search_box = by_role.first
-                except Exception:
-                    search_box = None
-
-                if search_box is None:
-                    for selector in (
-                        'input[placeholder*="candidat" i]',
-                        'input[placeholder*="buscar" i]',
-                        'input[placeholder*="search" i]',
-                    ):
+                search_box = self._candidate_search_box(page)
+                if search_box is None and not search_triggered:
+                    trigger = self._candidate_search_trigger(page)
+                    if trigger is not None:
                         try:
-                            located = page.locator(selector)
-                            if located.count() > 0:
-                                search_box = located.first
-                                break
+                            trigger.click()
+                            search_triggered = True
+                            page.wait_for_timeout(500)
                         except Exception:
-                            continue
+                            pass
+                    search_box = self._candidate_search_box(page)
 
                 if search_box is not None:
                     try:
