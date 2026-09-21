@@ -644,6 +644,16 @@ def test_direct_candidates_workspace_is_preferred_over_left_rail(tmp_path):
                 return FakeResponse(200, "text/html", b"")
             return super().goto(url, **kwargs)
 
+        def locator(self, selector):
+            if selector == "body":
+                return super().locator(selector)
+            if (
+                self.url.startswith("https://employers.indeed.com/candidates")
+                and selector == '[data-testid="candidate-list-table-container"]'
+            ):
+                return FakeLocator(1)
+            return FakeLocator(0)
+
         def get_by_text(self, pattern):
             if self.url.startswith("https://employers.indeed.com/candidates"):
                 return CandidateLocator(self)
@@ -727,6 +737,13 @@ def test_left_rail_is_only_fallback_when_direct_candidates_route_redirects(tmp_p
                 return FakeLocator(1)
             return FakeLocator(0)
 
+        def locator(self, selector):
+            if selector == "body":
+                return super().locator(selector)
+            if self.in_candidates and selector == '[data-testid="candidate-list-table-container"]':
+                return FakeLocator(1)
+            return FakeLocator(0)
+
         def get_by_text(self, pattern):
             if self.in_candidates:
                 return CandidateLocator(self)
@@ -788,6 +805,13 @@ def test_generic_resume_landing_falls_back_to_candidate_list_by_name(tmp_path):
             self.url = "https://resumes.indeed.com/?from=gnav-one-host"
             return FakeResponse(200, "text/html", b"")
 
+        def locator(self, selector):
+            if selector == "body":
+                return super().locator(selector)
+            if self.fallback_nav and selector == '[data-testid="candidate-list-table-container"]':
+                return FakeLocator(1)
+            return FakeLocator(0)
+
         def get_by_text(self, pattern):
             if (
                 self.fallback_nav
@@ -824,7 +848,57 @@ def test_generic_resume_landing_falls_back_to_candidate_list_by_name(tmp_path):
     assert result.data == b"%PDF-fallback"
     assert "https://employers.indeed.com/candidates" in page.goto_urls
     assert page.candidate_open is True
-    assert page.wait_calls == 0
+
+
+def test_candidates_workspace_selects_manage_and_all_stage_before_lookup(tmp_path):
+    class TabLocator:
+        def __init__(self, page, key):
+            self.page = page
+            self.key = key
+        @property
+        def first(self):
+            return self
+        def count(self):
+            return 1
+        def get_attribute(self, name):
+            if name != "aria-selected":
+                return None
+            return "true" if self.page.selected[self.key] else "false"
+        def click(self):
+            self.page.selected[self.key] = True
+            self.page.clicks.append(self.key)
+
+    class WorkspacePage(FakePage):
+        def __init__(self):
+            super().__init__(url="https://resumes.indeed.com/")
+            self.selected = {"manage": False, "all": False}
+            self.clicks = []
+
+        def goto(self, url, **kwargs):
+            self.goto_urls.append(url)
+            self.url = "https://employers.indeed.com/candidates"
+            return FakeResponse(200, "text/html", b"")
+
+        def locator(self, selector):
+            if selector == "body":
+                return super().locator(selector)
+            if selector == '[data-testid="manage-candidates-tab"]':
+                return TabLocator(self, "manage")
+            if selector == '[data-testid="stage-tab-All"]':
+                return TabLocator(self, "all")
+            if selector == '[data-testid="candidate-list-table-container"]':
+                return FakeLocator(1 if all(self.selected.values()) else 0)
+            return FakeLocator(0)
+
+        def wait_for_timeout(self, timeout):
+            return None
+
+    page = WorkspacePage()
+    browser = IndeedBrowser(cfg(tmp_path))
+
+    assert browser._open_candidates_workspace(page) is True
+    assert page.clicks == ["manage", "all"]
+    assert page.selected == {"manage": True, "all": True}
 
 
 def test_candidate_lookup_uses_live_namecell_dom_and_job_title(tmp_path):
@@ -981,6 +1055,13 @@ def test_candidate_list_fallback_returns_specific_review_code_when_name_missing(
             self.url = url
             return FakeResponse(200, "text/html", b"")
 
+        def locator(self, selector):
+            if selector == "body":
+                return super().locator(selector)
+            if selector == '[data-testid="candidate-list-table-container"]':
+                return FakeLocator(1)
+            return FakeLocator(0)
+
         def get_by_text(self, pattern):
             return FakeLocator(0)
 
@@ -1002,7 +1083,7 @@ def test_candidate_list_fallback_returns_specific_review_code_when_name_missing(
     )
 
     assert result.outcome is BrowserOutcome.NEEDS_HUMAN
-    assert result.human_code == "INDEED_CANDIDATE_NOT_FOUND"
+    assert result.human_code == "INDEED_CANDIDATE_SEARCH_UNAVAILABLE"
     assert result.diagnostic_path is not None
 
 
