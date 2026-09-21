@@ -494,6 +494,17 @@ class IndeedBrowser:
             text = ""
         return any(marker in text for marker in _CHALLENGE_MARKERS)
 
+    @staticmethod
+    def _is_generic_recruiting_landing(page) -> bool:
+        try:
+            parsed = urlsplit(str(getattr(page, "url", "") or ""))
+        except Exception:
+            return False
+        host = str(parsed.hostname or "").casefold()
+        path = str(parsed.path or "").rstrip("/")
+        return host == "resumes.indeed.com" and path in {"", "/"}
+
+
     def _wait_for_download_control(self, page):
         # Indeed Employers is a client-rendered SPA. domcontentloaded only
         # guarantees the shell document exists; the candidate view and its
@@ -1185,13 +1196,14 @@ class IndeedBrowser:
                 data=navigated_pdf,
             )
 
-        control = self._wait_for_download_control(page)
+        generic_landing = self._is_generic_recruiting_landing(page)
+        control = None if generic_landing else self._wait_for_download_control(page)
 
         if self._requires_human(page):
             return BrowserResult(BrowserOutcome.NEEDS_HUMAN, human_code="INDEED_AUTH_REQUIRED")
 
         fallback_attempted = False
-        if control is None and str(candidate_name or "").strip():
+        if (generic_landing or control is None) and str(candidate_name or "").strip():
             fallback_attempted = True
             control = self._open_candidate_from_list(page, str(candidate_name))
 
