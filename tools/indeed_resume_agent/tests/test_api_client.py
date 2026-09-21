@@ -90,6 +90,18 @@ def test_retry_failed_uses_agent_only_route_and_returns_count(tmp_path):
     assert paths == ["/api/agents/indeed-resume/retry-failed"]
 
 
+def test_retry_attention_uses_agent_only_route_and_returns_count(tmp_path):
+    paths=[]
+    def handler(request):
+        paths.append(request.url.path)
+        return httpx.Response(200, json={"status":"WAITING_DOWNLOAD","requeued":1})
+    client=httpx.Client(transport=httpx.MockTransport(handler), base_url="https://agent.test")
+    api=AgentApiClient(config(tmp_path), "a"*40, http_client=client)
+
+    assert api.retry_attention() == 1
+    assert paths == ["/api/agents/indeed-resume/retry-attention"]
+
+
 def test_errors_are_sanitized_and_lease_conflict_is_specialized(tmp_path):
     secret_token="a"*40
     def handler(request):

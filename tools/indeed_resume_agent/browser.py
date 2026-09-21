@@ -137,6 +137,20 @@ def _safe_diagnostic_url(raw_url: str | None) -> str:
     return f"{parsed.scheme.lower()}://{parsed.netloc}{parsed.path}"
 
 
+_SECRET_ASSIGNMENT = re.compile(
+    r"(?i)\b(token|auth|authorization|signature|sig|api[_-]?key|code|session|cookie)=([^\s&\"']+)"
+)
+_URL_IN_TEXT = re.compile(r"https?://[^\s\"'<>]+")
+
+
+def _safe_diagnostic_text(value: object, *, limit: int = 500) -> str:
+    """Redact URL queries and common credential-like assignments from diagnostic text."""
+    text = " ".join(str(value or "").split())
+    text = _URL_IN_TEXT.sub(lambda match: _safe_diagnostic_url(match.group(0)), text)
+    text = _SECRET_ASSIGNMENT.sub(lambda match: f"{match.group(1)}=[REDACTED]", text)
+    return text[: max(0, int(limit))]
+
+
 class IndeedBrowser:
     def __init__(
         self,
@@ -155,6 +169,20 @@ class IndeedBrowser:
         self._manual_process = None
         self._playwright = None
         self._context = None
+        self._diagnostic_active = False
+        self._diagnostic_started_at: str | None = None
+        self._diagnostic_events: list[dict] = []
+        self._diagnostic_context_hooked = False
+        self._diagnostic_page_ids: set[int] = set()
+        self._last_diagnostic_path: str | None = None
+
+    @property
+    def diagnostic_active(self) -> bool:
+        return self._diagnostic_active
+
+    @property
+    def last_diagnostic_path(self) -> str | None:
+        return self._last_diagnostic_path
 
     @property
     def manual_session_open(self) -> bool:
@@ -193,9 +221,16 @@ class IndeedBrowser:
         )
 
     def close(self) -> None:
+        if self._diagnostic_active:
+            try:
+                self.stop_diagnostic()
+            except Exception:
+                self._diagnostic_active = False
         context, playwright = self._context, self._playwright
         self._context = None
         self._playwright = None
+        self._diagnostic_context_hooked = False
+        self._diagnostic_page_ids.clear()
         if context is not None:
             context.close()
         if playwright is not None:
@@ -254,10 +289,17 @@ class IndeedBrowser:
             return None
         headers = getattr(response, "headers", {}) or {}
         content_type = str(headers.get("content-type") or headers.get("Content-Type") or "").lower()
-        if "application/pdf" not in content_type:
-            return None
-        body = response.body()
-        return bytes(body or b"")
+        body = bytes(response.body() or b"")
+
+        # Indeed's resume endpoint can deliver the file with a generic or
+        # browser-oriented content type. Trust the PDF signature first and keep
+        # the declared PDF MIME type as a secondary signal so malformed PDFs
+        # still fail validation explicitly.
+        if body.startswith(b"%PDF-"):
+            return body
+        if "application/pdf" in content_type:
+            return body
+        return None
 
     @staticmethod
     def _requires_human(page) -> bool:
@@ -302,6 +344,307 @@ class IndeedBrowser:
                 continue
         return None
 
+
+    def _record_diagnostic_event(self, event: dict) -> None:
+        if not self._diagnostic_active:
+            return
+        if len(self._diagnostic_events) >= 800:
+            return
+        payload = dict(event)
+        payload["captured_at_utc"] = datetime.now(timezone.utc).isoformat()
+        self._diagnostic_events.append(payload)
+
+    def _on_diagnostic_request(self, request) -> None:
+        try:
+            self._record_diagnostic_event(
+                {
+                    "kind": "request",
+                    "method": str(getattr(request, "method", "") or "")[:16],
+                    "resource_type": str(getattr(request, "resource_type", "") or "")[:40],
+                    "url": _safe_diagnostic_url(getattr(request, "url", "")),
+                }
+            )
+        except Exception:
+            pass
+
+    def _on_diagnostic_response(self, response) -> None:
+        try:
+            request = getattr(response, "request", None)
+            headers = getattr(response, "headers", {}) or {}
+            content_type = str(
+                headers.get("content-type") or headers.get("Content-Type") or ""
+            )[:200]
+            content_disposition = _safe_diagnostic_text(
+                headers.get("content-disposition")
+                or headers.get("Content-Disposition")
+                or "",
+                limit=300,
+            )
+            safe_url = _safe_diagnostic_url(getattr(response, "url", ""))
+            event = {
+                "kind": "response",
+                "status": int(getattr(response, "status", 0) or 0),
+                "resource_type": str(
+                    getattr(request, "resource_type", "") or ""
+                )[:40],
+                "url": safe_url,
+                "content_type": content_type,
+                "content_disposition": content_disposition,
+                "content_length": str(
+                    headers.get("content-length")
+                    or headers.get("Content-Length")
+                    or ""
+                )[:40],
+            }
+
+            relevant = any(
+                marker in safe_url.casefold()
+                for marker in ("resume", "candidate", "download", ".pdf")
+            ) or any(
+                marker in content_type.casefold()
+                for marker in ("pdf", "octet-stream")
+            )
+            if relevant and event["status"] < 400:
+                try:
+                    body = bytes(response.body() or b"")
+                    event["body_size"] = len(body)
+                    event["starts_with_pdf"] = body.startswith(b"%PDF-")
+                    event["first_bytes_hex"] = body[:24].hex()
+                except Exception as exc:
+                    event["body_probe_error"] = _safe_diagnostic_text(exc, limit=160)
+            self._record_diagnostic_event(event)
+        except Exception:
+            pass
+
+    def _attach_diagnostic_page(self, page) -> None:
+        page_id = id(page)
+        if page_id in self._diagnostic_page_ids:
+            return
+        self._diagnostic_page_ids.add(page_id)
+
+        try:
+            page.on(
+                "download",
+                lambda download: self._record_diagnostic_event(
+                    {
+                        "kind": "download",
+                        "url": _safe_diagnostic_url(getattr(download, "url", "")),
+                        "suggested_filename": _safe_diagnostic_text(
+                            getattr(download, "suggested_filename", ""),
+                            limit=220,
+                        ),
+                    }
+                ),
+            )
+        except Exception:
+            pass
+
+        try:
+            page.on(
+                "console",
+                lambda message: (
+                    self._record_diagnostic_event(
+                        {
+                            "kind": "console",
+                            "level": str(getattr(message, "type", "") or "")[:20],
+                            "text": _safe_diagnostic_text(
+                                getattr(message, "text", ""),
+                                limit=500,
+                            ),
+                        }
+                    )
+                    if str(getattr(message, "type", "") or "").casefold()
+                    in {"warning", "error"}
+                    else None
+                ),
+            )
+        except Exception:
+            pass
+
+        try:
+            page.on(
+                "pageerror",
+                lambda error: self._record_diagnostic_event(
+                    {
+                        "kind": "pageerror",
+                        "text": _safe_diagnostic_text(error, limit=500),
+                    }
+                ),
+            )
+        except Exception:
+            pass
+
+    def _attach_diagnostic_context(self) -> None:
+        if self._context is None:
+            return
+        if not self._diagnostic_context_hooked:
+            try:
+                self._context.on("request", self._on_diagnostic_request)
+                self._context.on("response", self._on_diagnostic_response)
+                self._context.on("page", self._attach_diagnostic_page)
+                self._diagnostic_context_hooked = True
+            except Exception:
+                pass
+        for page in list(getattr(self._context, "pages", []) or []):
+            self._attach_diagnostic_page(page)
+
+    def start_diagnostic(self, url: str | None = None) -> None:
+        """Open a visible Playwright-controlled Indeed session and capture only sanitized metadata."""
+        if self.manual_session_open:
+            raise RuntimeError("INDEED_MANUAL_BROWSER_OPEN")
+        self.start()
+        self._diagnostic_events = []
+        self._diagnostic_started_at = datetime.now(timezone.utc).isoformat()
+        self._last_diagnostic_path = None
+        self._diagnostic_active = True
+        self._attach_diagnostic_context()
+
+        page = self._page()
+        target = self._safe_manual_url(url)
+        try:
+            page.goto(
+                target,
+                wait_until="domcontentloaded",
+                timeout=int(self._config.request_timeout_seconds * 1000),
+            )
+        except Exception as exc:
+            self._record_diagnostic_event(
+                {
+                    "kind": "navigation_error",
+                    "url": _safe_diagnostic_url(target),
+                    "text": _safe_diagnostic_text(exc, limit=300),
+                }
+            )
+
+    def poll_diagnostic(self) -> None:
+        """Pump Playwright events while the user interacts with the visible diagnostic browser."""
+        if not self._diagnostic_active or self._context is None:
+            return
+        self._attach_diagnostic_context()
+        pages = list(getattr(self._context, "pages", []) or [])
+        for page in pages:
+            try:
+                if hasattr(page, "is_closed") and page.is_closed():
+                    continue
+                page.wait_for_timeout(100)
+                return
+            except Exception:
+                continue
+
+    @staticmethod
+    def _diagnostic_controls(page) -> list[dict[str, str]]:
+        controls: list[dict[str, str]] = []
+        try:
+            items = page.locator('button, a, [role="button"], iframe, embed, object')
+            count = min(int(items.count()), 120)
+        except Exception:
+            return controls
+
+        for index in range(count):
+            try:
+                node = items.nth(index)
+                tag = str(node.evaluate("el => el.tagName.toLowerCase()") or "")[:30]
+                if tag not in {"iframe", "embed", "object"} and not node.is_visible():
+                    continue
+                href = (
+                    node.get_attribute("href")
+                    or node.get_attribute("src")
+                    or node.get_attribute("data")
+                    or ""
+                )
+                controls.append(
+                    {
+                        "tag": tag,
+                        "role": str(node.get_attribute("role") or "")[:80],
+                        "text": _safe_diagnostic_text(
+                            node.inner_text(timeout=500) if tag not in {"iframe", "embed", "object"} else "",
+                            limit=220,
+                        ),
+                        "aria_label": _safe_diagnostic_text(
+                            node.get_attribute("aria-label") or "",
+                            limit=220,
+                        ),
+                        "data_testid": _safe_diagnostic_text(
+                            node.get_attribute("data-testid") or "",
+                            limit=160,
+                        ),
+                        "target": _safe_diagnostic_url(href),
+                    }
+                )
+            except Exception:
+                continue
+        return controls
+
+    def stop_diagnostic(self) -> str | None:
+        """Persist a local sanitized JSON/screenshot bundle and stop capturing."""
+        if not self._diagnostic_active:
+            return self._last_diagnostic_path
+
+        self._diagnostic_active = False
+        diagnostics_dir = self._config.browser_profile_dir.parent / "diagnostics"
+        diagnostics_dir.mkdir(parents=True, exist_ok=True)
+        stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+        base = diagnostics_dir / f"indeed-flow-diagnostic-{stamp}"
+        json_path = base.with_suffix(".json")
+        screenshot_path = base.with_suffix(".png")
+
+        pages_payload: list[dict] = []
+        screenshot_saved = False
+        pages = list(getattr(self._context, "pages", []) or []) if self._context is not None else []
+        for page in pages:
+            try:
+                if hasattr(page, "is_closed") and page.is_closed():
+                    continue
+                try:
+                    title = _safe_diagnostic_text(page.title(), limit=300)
+                except Exception:
+                    title = ""
+                try:
+                    document_info = page.evaluate(
+                        "() => ({contentType: document.contentType || '', readyState: document.readyState || ''})"
+                    ) or {}
+                except Exception:
+                    document_info = {}
+                pages_payload.append(
+                    {
+                        "url": _safe_diagnostic_url(getattr(page, "url", "")),
+                        "title": title,
+                        "document_content_type": str(document_info.get("contentType") or "")[:160],
+                        "ready_state": str(document_info.get("readyState") or "")[:40],
+                        "controls": self._diagnostic_controls(page),
+                    }
+                )
+                if not screenshot_saved:
+                    try:
+                        page.screenshot(path=str(screenshot_path), full_page=True)
+                        screenshot_saved = True
+                    except Exception:
+                        pass
+            except Exception:
+                continue
+
+        payload = {
+            "captured_at_utc": datetime.now(timezone.utc).isoformat(),
+            "started_at_utc": self._diagnostic_started_at,
+            "events": list(self._diagnostic_events),
+            "pages": pages_payload,
+            "screenshot": str(screenshot_path) if screenshot_saved else "",
+            "privacy": {
+                "query_strings_persisted": False,
+                "cookies_persisted": False,
+                "authorization_headers_persisted": False,
+                "response_bodies_persisted": False,
+            },
+        }
+        try:
+            json_path.write_text(
+                json.dumps(payload, ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
+            self._last_diagnostic_path = str(json_path)
+            return self._last_diagnostic_path
+        except Exception:
+            return None
 
     def _write_ui_diagnostic(self, page) -> str | None:
         """Persist a local-only, redacted snapshot of the unexpected Indeed UI."""

@@ -30,6 +30,8 @@ def build_ui_state(snapshot: WorkerSnapshot, stats: QueueStats) -> UiState:
         "COMPLETED": "CV cargado correctamente",
         "PAUSED": "En pausa",
         "MANUAL_BROWSER_OPEN": "Cierra Indeed manual para continuar",
+        "DIAGNOSTIC_MODE": "Modo diagnóstico activo: usa Indeed normalmente y luego pulsa Guardar diagnóstico",
+        "DIAGNOSTIC_SAVED": "Diagnóstico guardado",
         "WAITING_FOR_HUMAN": "Indeed requiere intervención manual",
         "LEASE_LOST": "La tarea será reclamada de forma segura",
         "RETRY": "Reintento programado",
@@ -44,6 +46,8 @@ def build_ui_state(snapshot: WorkerSnapshot, stats: QueueStats) -> UiState:
         and snapshot.last_error
         and snapshot.last_error.startswith(diagnostic_prefix)
     ):
+        status_label = snapshot.last_error
+    if state == "DIAGNOSTIC_SAVED" and snapshot.last_error:
         status_label = snapshot.last_error
 
     return UiState(
@@ -65,8 +69,8 @@ def run_ui(*, worker, api, browser) -> None:
 
     root = tk.Tk()
     root.title("ASIATI Resume Agent")
-    root.geometry("520x430")
-    root.minsize(480, 390)
+    root.geometry("760x470")
+    root.minsize(700, 430)
 
     style = ttk.Style(root)
     try:
@@ -120,16 +124,34 @@ def run_ui(*, worker, api, browser) -> None:
 
     buttons = ttk.Frame(frame)
     buttons.pack(fill="x", side="bottom")
-    ttk.Button(buttons, text="Pause", command=lambda: commands.put("pause")).pack(side="left")
-    ttk.Button(buttons, text="Resume", command=lambda: commands.put("resume")).pack(side="left", padx=8)
-    ttk.Button(buttons, text="Retry failed", command=lambda: commands.put("retry_failed")).pack(side="left")
-    ttk.Button(buttons, text="Open Indeed (manual)", command=lambda: commands.put("open")).pack(side="right")
+
+    primary_buttons = ttk.Frame(buttons)
+    primary_buttons.pack(fill="x")
+    ttk.Button(primary_buttons, text="Pause", command=lambda: commands.put("pause")).pack(side="left")
+    ttk.Button(primary_buttons, text="Resume", command=lambda: commands.put("resume")).pack(side="left", padx=8)
+    ttk.Button(primary_buttons, text="Retry failed", command=lambda: commands.put("retry_failed")).pack(side="left")
+    ttk.Button(primary_buttons, text="Retry attention", command=lambda: commands.put("retry_attention")).pack(side="left", padx=(8, 0))
+    ttk.Button(primary_buttons, text="Open Indeed (manual)", command=lambda: commands.put("open")).pack(side="right")
+
+    diagnostic_buttons = ttk.Frame(buttons)
+    diagnostic_buttons.pack(fill="x", pady=(8, 0))
+    ttk.Button(
+        diagnostic_buttons,
+        text="Diagnostic mode",
+        command=lambda: commands.put("diagnostic_start"),
+    ).pack(side="left")
+    ttk.Button(
+        diagnostic_buttons,
+        text="Guardar diagnóstico",
+        command=lambda: commands.put("diagnostic_stop"),
+    ).pack(side="left", padx=(8, 0))
 
     def publish(snapshot: WorkerSnapshot, stats: QueueStats) -> None:
         updates.put(build_ui_state(snapshot, stats))
 
     def agent_loop() -> None:
         last_stats = QueueStats(0, 0, 0, 0, 0, 0)
+        diagnostic_snapshot: WorkerSnapshot | None = None
         try:
             while not stop_event.is_set():
                 while True:
@@ -139,7 +161,18 @@ def run_ui(*, worker, api, browser) -> None:
                         break
                     if command == "pause":
                         worker.pause()
+                        diagnostic_snapshot = None
                     elif command == "resume":
+                        if browser.diagnostic_active:
+                            diagnostic_snapshot = WorkerSnapshot(
+                                "DIAGNOSTIC_MODE",
+                                worker.snapshot.active_candidate,
+                                worker.snapshot.processed_session,
+                                None,
+                            )
+                            publish(diagnostic_snapshot, last_stats)
+                            continue
+                        diagnostic_snapshot = None
                         if browser.manual_session_open:
                             publish(
                                 WorkerSnapshot(
@@ -156,13 +189,74 @@ def run_ui(*, worker, api, browser) -> None:
                             except Exception:
                                 pass
                     elif command == "retry_failed":
+                        if browser.diagnostic_active:
+                            continue
+                        diagnostic_snapshot = None
                         try:
                             api.retry_failed()
                             last_stats = api.stats()
                         except Exception:
                             pass
                         publish(worker.snapshot, last_stats)
+                    elif command == "retry_attention":
+                        if browser.diagnostic_active:
+                            continue
+                        diagnostic_snapshot = None
+                        try:
+                            api.retry_attention()
+                            last_stats = api.stats()
+                            worker.reset_after_attention_retry()
+                        except Exception:
+                            pass
+                        publish(worker.snapshot, last_stats)
+                    elif command == "diagnostic_start":
+                        if browser.manual_session_open:
+                            diagnostic_snapshot = WorkerSnapshot(
+                                "MANUAL_BROWSER_OPEN",
+                                worker.snapshot.active_candidate,
+                                worker.snapshot.processed_session,
+                                None,
+                            )
+                        else:
+                            worker.pause()
+                            try:
+                                browser.start_diagnostic(worker.human_resume_url)
+                                diagnostic_snapshot = WorkerSnapshot(
+                                    "DIAGNOSTIC_MODE",
+                                    worker.snapshot.active_candidate,
+                                    worker.snapshot.processed_session,
+                                    None,
+                                )
+                            except Exception:
+                                diagnostic_snapshot = WorkerSnapshot(
+                                    "ERROR",
+                                    worker.snapshot.active_candidate,
+                                    worker.snapshot.processed_session,
+                                    None,
+                                )
+                        publish(diagnostic_snapshot, last_stats)
+                    elif command == "diagnostic_stop":
+                        path = None
+                        try:
+                            path = browser.stop_diagnostic()
+                        except Exception:
+                            path = None
+                        detail = (
+                            f"Diagnóstico guardado: {path}"
+                            if path
+                            else "No fue posible guardar el diagnóstico."
+                        )
+                        diagnostic_snapshot = WorkerSnapshot(
+                            "DIAGNOSTIC_SAVED",
+                            worker.snapshot.active_candidate,
+                            worker.snapshot.processed_session,
+                            detail,
+                        )
+                        publish(diagnostic_snapshot, last_stats)
                     elif command == "open":
+                        if browser.diagnostic_active:
+                            continue
+                        diagnostic_snapshot = None
                         worker.pause()
                         publish(worker.snapshot, last_stats)
                         try:
@@ -170,7 +264,30 @@ def run_ui(*, worker, api, browser) -> None:
                         except Exception:
                             pass
 
-                if browser.manual_session_open:
+                if browser.diagnostic_active:
+                    try:
+                        browser.poll_diagnostic()
+                    except Exception:
+                        pass
+                    snapshot = diagnostic_snapshot or WorkerSnapshot(
+                        "DIAGNOSTIC_MODE",
+                        worker.snapshot.active_candidate,
+                        worker.snapshot.processed_session,
+                        None,
+                    )
+                    try:
+                        last_stats = api.stats()
+                    except Exception:
+                        pass
+                    publish(snapshot, last_stats)
+                elif diagnostic_snapshot is not None:
+                    snapshot = diagnostic_snapshot
+                    try:
+                        last_stats = api.stats()
+                    except Exception:
+                        pass
+                    publish(snapshot, last_stats)
+                elif browser.manual_session_open:
                     snapshot = WorkerSnapshot(
                         "MANUAL_BROWSER_OPEN",
                         worker.snapshot.active_candidate,

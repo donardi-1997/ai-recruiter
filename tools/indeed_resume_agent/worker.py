@@ -98,6 +98,14 @@ class ResumeWorker:
         if not self._stopped:
             self._set("IDLE")
 
+    def reset_after_attention_retry(self) -> None:
+        """Clear local human-intervention state after an owner-scoped backend requeue."""
+        self._human_task_id = None
+        self._human_resume_url = None
+        self._paused = False
+        if not self._stopped:
+            self._set("IDLE")
+
     def stop(self) -> None:
         self._stopped = True
         self._set("STOPPED")

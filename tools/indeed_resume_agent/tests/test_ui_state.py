@@ -36,6 +36,20 @@ def test_manual_browser_open_has_explicit_safe_status():
     assert ui.session_label == "Ready"
 
 
+def test_diagnostic_mode_and_saved_path_are_explicit():
+    active=build_ui_state(snap("DIAGNOSTIC_MODE","Ada"), stats())
+    saved=build_ui_state(
+        snap(
+            "DIAGNOSTIC_SAVED",
+            "Ada",
+            r"Diagnóstico guardado: C:\Users\test\AppData\Local\ASIATI\ResumeAgent\diagnostics\indeed-flow-diagnostic.json",
+        ),
+        stats(),
+    )
+    assert "Modo diagnóstico activo" in active.status_label
+    assert "indeed-flow-diagnostic.json" in saved.status_label
+
+
 def test_needs_human_is_attention_state():
     ui=build_ui_state(snap("WAITING_FOR_HUMAN","Ada","internal error should not leak"), stats(needs_human=2))
     assert ui.session_label == "Needs attention"

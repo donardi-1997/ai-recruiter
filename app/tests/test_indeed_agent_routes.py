@@ -163,6 +163,33 @@ def test_retry_failed_requeues_only_current_owner_and_resets_terminal_fields(api
     assert other.attempt_count == 3
 
 
+def test_retry_attention_requeues_only_current_owner_needs_human(api):
+    client, db = api
+    owned = _task(db, owner_sub="owner-a", status="NEEDS_HUMAN")
+    owned.attempt_count = 2
+    owned.last_error_code = "INDEED_UI_REQUIRES_REVIEW"
+    owned.last_error_message = "manual review"
+
+    other = _task(db, owner_sub="owner-b", status="NEEDS_HUMAN")
+    waiting = _task(db, owner_sub="owner-a", status="WAITING_DOWNLOAD")
+    db.commit()
+
+    response = client.post("/api/agents/indeed-resume/retry-attention")
+
+    assert response.status_code == 200
+    assert response.json() == {"status": "WAITING_DOWNLOAD", "requeued": 1}
+
+    db.refresh(owned)
+    db.refresh(other)
+    db.refresh(waiting)
+    assert owned.status == "WAITING_DOWNLOAD"
+    assert owned.attempt_count == 2
+    assert owned.last_error_code is None
+    assert owned.last_error_message is None
+    assert other.status == "NEEDS_HUMAN"
+    assert waiting.status == "WAITING_DOWNLOAD"
+
+
 def test_claim_serializes_ephemeral_resume_url_and_lease(api, monkeypatch):
     from app.domains.candidate_ingestion import indeed_email_agent_service as service
 
