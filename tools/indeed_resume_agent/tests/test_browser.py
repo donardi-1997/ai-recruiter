@@ -1331,7 +1331,6 @@ def test_unknown_ui_fails_closed(tmp_path):
     assert payload["inputs"] == []
 
 
-@pytest.mark.parametrize("data,code", [(b"", "RESUME_NOT_PDF"), (b"hello", "RESUME_NOT_PDF")])
 def test_validate_resume_document_accepts_docx_and_preserves_extension():
     data = _docx_bytes()
     content_type = validate_resume_document(
@@ -1405,6 +1404,7 @@ def test_download_object_accepts_docx_resume(tmp_path):
     assert result.data == docx.read_bytes()
 
 
+@pytest.mark.parametrize("data,code", [(b"", "RESUME_NOT_PDF"), (b"hello", "RESUME_NOT_PDF")])
 def test_validate_pdf_rejects_non_pdf(data, code):
     with pytest.raises(InvalidResumePdf) as exc:
         validate_pdf(data, max_bytes=100)
