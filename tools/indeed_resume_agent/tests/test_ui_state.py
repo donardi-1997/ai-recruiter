@@ -32,7 +32,7 @@ def test_active_and_paused_labels():
 
 def test_manual_browser_open_has_explicit_safe_status():
     ui=build_ui_state(snap("MANUAL_BROWSER_OPEN"), stats())
-    assert ui.status_label == "Cierra Indeed manual para continuar"
+    assert ui.status_label == "Cierra el navegador manual para continuar"
     assert ui.session_label == "Ready"
 
 

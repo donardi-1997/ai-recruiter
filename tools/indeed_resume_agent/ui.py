@@ -29,7 +29,7 @@ def build_ui_state(snapshot: WorkerSnapshot, stats: QueueStats) -> UiState:
         "DOWNLOADING": "Descargando CV...",
         "COMPLETED": "CV cargado correctamente",
         "PAUSED": "En pausa",
-        "MANUAL_BROWSER_OPEN": "Cierra Indeed manual para continuar",
+        "MANUAL_BROWSER_OPEN": "Cierra el navegador manual para continuar",
         "DIAGNOSTIC_MODE": "Modo diagnóstico activo: usa Indeed normalmente y luego pulsa Guardar diagnóstico",
         "DIAGNOSTIC_SAVED": "Diagnóstico guardado",
         "WAITING_FOR_HUMAN": "Indeed requiere intervención manual",
@@ -131,7 +131,11 @@ def run_ui(*, worker, api, browser) -> None:
     ttk.Button(primary_buttons, text="Resume", command=lambda: commands.put("resume")).pack(side="left", padx=8)
     ttk.Button(primary_buttons, text="Retry failed", command=lambda: commands.put("retry_failed")).pack(side="left")
     ttk.Button(primary_buttons, text="Retry attention", command=lambda: commands.put("retry_attention")).pack(side="left", padx=(8, 0))
-    ttk.Button(primary_buttons, text="Open Indeed (manual)", command=lambda: commands.put("open")).pack(side="right")
+    ttk.Button(
+        primary_buttons,
+        text=f"Open Indeed ({browser.browser_label})",
+        command=lambda: commands.put("open"),
+    ).pack(side="right")
 
     diagnostic_buttons = ttk.Frame(buttons)
     diagnostic_buttons.pack(fill="x", pady=(8, 0))

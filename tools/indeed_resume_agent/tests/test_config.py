@@ -7,7 +7,8 @@ def test_default_profile_is_isolated_under_localappdata(tmp_path, monkeypatch):
     monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
     monkeypatch.delenv("ASIATI_RESUME_AGENT_API_BASE_URL", raising=False)
     cfg = load_config()
-    assert cfg.browser_profile_dir == tmp_path / "ASIATI" / "ResumeAgent" / "browser-profile"
+    assert cfg.browser_name == "chrome"
+    assert cfg.browser_profile_dir == tmp_path / "ASIATI" / "ResumeAgent" / "browser-profile-chrome"
     assert cfg.api_base_url == "https://dzcwl3yhv133t.cloudfront.net"
 
 
@@ -30,3 +31,26 @@ def test_allows_loopback_http_for_development(tmp_path, monkeypatch, url):
     monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
     monkeypatch.setenv("ASIATI_RESUME_AGENT_API_BASE_URL", url)
     assert load_config().api_base_url == url.rstrip("/")
+
+
+def test_edge_can_be_selected_with_isolated_profile(tmp_path, monkeypatch):
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
+    monkeypatch.setenv("ASIATI_RESUME_AGENT_BROWSER", "edge")
+    cfg = load_config()
+    assert cfg.browser_name == "edge"
+    assert cfg.browser_profile_dir == tmp_path / "ASIATI" / "ResumeAgent" / "browser-profile-edge"
+
+
+def test_browser_profile_override_wins_over_browser_specific_default(tmp_path, monkeypatch):
+    explicit = tmp_path / "custom-profile"
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
+    monkeypatch.setenv("ASIATI_RESUME_AGENT_BROWSER", "chrome")
+    monkeypatch.setenv("ASIATI_RESUME_AGENT_BROWSER_PROFILE_DIR", str(explicit))
+    assert load_config().browser_profile_dir == explicit
+
+
+def test_rejects_unknown_browser(tmp_path, monkeypatch):
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
+    monkeypatch.setenv("ASIATI_RESUME_AGENT_BROWSER", "firefox")
+    with pytest.raises(ValueError, match="chrome, edge"):
+        load_config()

@@ -32,12 +32,15 @@ def test_build_is_onedir_collects_playwright_and_does_not_install_chromium():
     assert "--collect-all" in lower and "playwright" in lower
     assert "--paths" in lower
     assert "playwright install chromium" not in lower
-    assert 'channel="msedge"' in read("browser.py")
+    browser = read("browser.py")
+    assert 'self._playwright_channel = "chrome"' in browser
+    assert 'channel=self._playwright_channel' in browser
 
 
-def test_readme_documents_edge_credential_setup_and_single_task_cutover():
+def test_readme_documents_chrome_credential_setup_and_single_task_cutover():
     text=read("README.md")
-    assert "Microsoft Edge" in text
+    assert "Google Chrome" in text
+    assert "browser-profile-chrome" in text
     assert "Windows Credential Manager" in text
     assert "Open Indeed" in text
     assert "una sola" in text.lower() or "un solo" in text.lower()
