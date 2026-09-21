@@ -1,19 +1,6 @@
-name: Verify & Build — ASIATI Resume Agent
+name: Manual Build — ASIATI Resume Agent
 
 on:
-  push:
-    branches:
-      - feat/indeed-resume-windows-agent
-    paths:
-      - "tools/indeed_resume_agent/**"
-      - ".github/workflows/indeed-resume-agent.yml"
-  pull_request:
-    branches: [main]
-    paths:
-      - "tools/indeed_resume_agent/**"
-      - "app/domains/candidate_ingestion/indeed_agent_*.py"
-      - "app/domains/candidate_ingestion/indeed_email_*.py"
-      - ".github/workflows/indeed-resume-agent.yml"
   workflow_dispatch:
 
 permissions:
@@ -50,6 +37,7 @@ jobs:
 
   windows-build:
     name: Windows onedir artifact
+    needs: verify
     runs-on: windows-latest
     timeout-minutes: 15
     steps:
