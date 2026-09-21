@@ -570,6 +570,73 @@ def test_spa_waits_for_download_control_before_requiring_review(tmp_path):
     assert page.probes >= 5
 
 
+def test_generic_landing_clicks_candidates_rail_before_direct_url(tmp_path):
+    pdf=tmp_path / "download.pdf"
+    pdf.write_bytes(b"%PDF-rail")
+
+    class NavigationLocator(FakeLocator):
+        def __init__(self, page):
+            super().__init__(1)
+            self.page = page
+
+        def click(self):
+            self.page.url = "https://employers.indeed.com/candidates/manage"
+            self.page.in_candidates = True
+
+    class CandidateLocator(FakeLocator):
+        def __init__(self, page):
+            super().__init__(1)
+            self.page = page
+
+        def click(self):
+            self.page.url = "https://employers.indeed.com/candidates/view?id=alejandra"
+            self.page.candidate_open = True
+
+    class RailNavigationPage(FakePage):
+        def __init__(self):
+            super().__init__(
+                url="https://resumes.indeed.com/?from=gnav-one-host",
+                download=FakeDownload(pdf),
+            )
+            self.in_candidates = False
+            self.candidate_open = False
+
+        def get_by_role(self, role, name=None):
+            if not self.in_candidates and role in {"link", "button"}:
+                return NavigationLocator(self)
+            if self.candidate_open and role in {"button", "link"}:
+                return FakeLocator(1)
+            return FakeLocator(0)
+
+        def get_by_text(self, pattern):
+            if self.in_candidates:
+                return CandidateLocator(self)
+            return FakeLocator(0)
+
+        def wait_for_timeout(self, timeout):
+            return None
+
+    page=RailNavigationPage()
+    context=FakeContext(FakeResponse(200, "text/html", b""), page)
+    chromium=FakeChromium(context)
+    browser=IndeedBrowser(
+        cfg(tmp_path),
+        playwright_factory=lambda: FakeManager(FakePlaywright(chromium)),
+    )
+    browser.start()
+
+    result=browser.fetch_resume(
+        "https://indeed.test/resume",
+        candidate_name="Alejandra camacho saenz",
+    )
+
+    assert result.outcome is BrowserOutcome.DOWNLOADED
+    assert result.data == b"%PDF-rail"
+    assert page.in_candidates is True
+    assert page.candidate_open is True
+    assert "https://employers.indeed.com/candidates" not in page.goto_urls
+
+
 def test_generic_resume_landing_falls_back_to_candidate_list_by_name(tmp_path):
     pdf=tmp_path / "download.pdf"
     pdf.write_bytes(b"%PDF-fallback")
