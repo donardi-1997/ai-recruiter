@@ -144,6 +144,7 @@ _CHALLENGE_MARKERS = (
     "two factor",
 )
 _URL_CHALLENGE_MARKERS = ("/login", "/signin", "challenge", "captcha", "verify")
+_INDEED_EMPLOYER_HOME = "https://employers.indeed.com/"
 
 
 
@@ -295,11 +296,11 @@ class IndeedBrowser:
     def _safe_manual_url(url: str | None) -> str:
         candidate = str(url or "").strip()
         if not candidate:
-            return "https://www.indeed.com/"
+            return _INDEED_EMPLOYER_HOME
         try:
             parsed = urlsplit(candidate)
         except Exception:
-            return "https://www.indeed.com/"
+            return _INDEED_EMPLOYER_HOME
         host = str(parsed.hostname or "").casefold()
         allowed = (
             host == "indeed.com"
@@ -308,7 +309,7 @@ class IndeedBrowser:
             or host.endswith(".indeedemail.com")
         )
         if parsed.scheme.casefold() != "https" or not allowed:
-            return "https://www.indeed.com/"
+            return _INDEED_EMPLOYER_HOME
         return candidate
 
     def open_indeed(self, url: str | None = None) -> None:
@@ -565,6 +566,14 @@ class IndeedBrowser:
                     "text": _safe_diagnostic_text(exc, limit=300),
                 }
             )
+
+        # Google/Indeed authentication must happen in the normal manual browser,
+        # never inside the Playwright-controlled diagnostic window. Google can
+        # reject automated browser contexts as "not secure".
+        if self._requires_human(page):
+            self._diagnostic_active = False
+            self.close()
+            raise RuntimeError("INDEED_MANUAL_LOGIN_REQUIRED")
 
     def poll_diagnostic(self) -> None:
         """Pump Playwright events while the user interacts with the visible diagnostic browser."""
