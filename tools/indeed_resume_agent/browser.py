@@ -1005,11 +1005,25 @@ class IndeedBrowser:
             pass
 
         page = self._page()
-        navigation = page.goto(
-            resume_url,
-            wait_until="domcontentloaded",
-            timeout=int(self._config.request_timeout_seconds * 1000),
-        )
+        navigation = None
+        try:
+            navigation = page.goto(
+                resume_url,
+                wait_until="domcontentloaded",
+                timeout=int(self._config.request_timeout_seconds * 1000),
+            )
+        except Exception:
+            # Indeed can interrupt the navigation while still landing on the
+            # candidate page (for example during public-resume redirects or
+            # download-related client transitions). If the page is still alive,
+            # continue by inspecting its UI instead of treating the interrupted
+            # goto as a terminal browser failure.
+            try:
+                if hasattr(page, "is_closed") and page.is_closed():
+                    raise
+            except AttributeError:
+                pass
+
         navigated_pdf = self._response_pdf(navigation)
         if navigated_pdf is not None:
             validate_pdf(navigated_pdf, max_bytes=self._config.max_pdf_bytes)
@@ -1050,6 +1064,10 @@ class IndeedBrowser:
 
         try:
             page.on("response", capture_resume_response)
+        except Exception:
+            pass
+        try:
+            self._context.on("response", capture_resume_response)
         except Exception:
             pass
 
@@ -1107,3 +1125,10 @@ class IndeedBrowser:
                 page.off("response", capture_resume_response)
             except Exception:
                 pass
+            try:
+                self._context.remove_listener("response", capture_resume_response)
+            except Exception:
+                try:
+                    self._context.off("response", capture_resume_response)
+                except Exception:
+                    pass
