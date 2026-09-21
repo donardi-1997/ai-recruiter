@@ -294,3 +294,29 @@ def test_safe_diagnostic_url_strips_query_and_fragment():
     assert _safe_diagnostic_url(
         "https://employers.indeed.com/resume/abc?token=secret#section"
     ) == "https://employers.indeed.com/resume/abc"
+
+
+def test_known_control_that_does_not_download_becomes_human_review(tmp_path):
+    class ControlWithoutDownloadPage(FakePage):
+        def get_by_role(self, role, name=None):
+            if role == "button":
+                return FakeLocator(1)
+            return FakeLocator(0)
+
+        def expect_download(self, timeout=None):
+            raise RuntimeError("download did not start")
+
+    page=ControlWithoutDownloadPage(text="Candidate profile")
+    context=FakeContext(FakeResponse(200, "text/html", b""), page)
+    chromium=FakeChromium(context)
+    browser=IndeedBrowser(
+        cfg(tmp_path),
+        playwright_factory=lambda: FakeManager(FakePlaywright(chromium)),
+    )
+    browser.start()
+
+    result=browser.fetch_resume("https://indeed.test/resume")
+
+    assert result.outcome is BrowserOutcome.NEEDS_HUMAN
+    assert result.human_code == "INDEED_DOWNLOAD_ACTION_REQUIRES_REVIEW"
+    assert result.diagnostic_path is not None
