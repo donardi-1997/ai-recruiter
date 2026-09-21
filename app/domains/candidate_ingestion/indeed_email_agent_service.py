@@ -727,6 +727,31 @@ def requeue_failed_tasks(
     return len(tasks)
 
 
+def requeue_needs_human_tasks(
+    db: Session,
+    *,
+    owner_sub: str,
+) -> int:
+    """Move only this owner's NEEDS_HUMAN tasks back to WAITING_DOWNLOAD."""
+    tasks = (
+        db.query(IndeedEmailResumeTask)
+        .filter(
+            IndeedEmailResumeTask.owner_sub == owner_sub,
+            IndeedEmailResumeTask.status == "NEEDS_HUMAN",
+        )
+        .all()
+    )
+    for task in tasks:
+        task.status = "WAITING_DOWNLOAD"
+        task.available_at = None
+        task.last_error_code = None
+        task.last_error_message = None
+        _clear_lease(task)
+    if tasks:
+        db.commit()
+    return len(tasks)
+
+
 def stats(db: Session, *, owner_sub: str) -> dict[str, int]:
     counts = indeed_email_repository.count_by_status(db, owner_sub=owner_sub)
     return {
