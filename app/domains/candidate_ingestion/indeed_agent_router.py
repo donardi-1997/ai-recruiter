@@ -124,7 +124,7 @@ async def upload_resume(
     if len(data) > service.MAX_DOCUMENT_BYTES:
         raise HTTPException(status_code=413, detail="RESUME_TOO_LARGE")
     try:
-        document = service.store_resume_pdf(
+        document = service.store_resume_document(
             db,
             owner_sub=principal.owner_sub,
             task_id=task_id,
