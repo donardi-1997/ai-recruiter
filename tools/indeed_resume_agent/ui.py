@@ -167,10 +167,7 @@ def run_ui(*, worker, api, browser) -> None:
                         try:
                             api.retry_attention()
                             last_stats = api.stats()
-                            worker._human_task_id = None
-                            worker._human_resume_url = None
-                            worker._paused = False
-                            worker._set("IDLE")
+                            worker.reset_after_attention_retry()
                         except Exception:
                             pass
                         publish(worker.snapshot, last_stats)
