@@ -10,6 +10,7 @@ from tools.indeed_resume_agent.browser import (
     validate_pdf,
     _DOWNLOAD_NAME,
     _safe_diagnostic_url,
+    _safe_diagnostic_text,
 )
 from tools.indeed_resume_agent.config import AgentConfig
 
@@ -396,6 +397,90 @@ def test_safe_diagnostic_url_strips_query_and_fragment():
     assert _safe_diagnostic_url(
         "https://employers.indeed.com/resume/abc?token=secret#section"
     ) == "https://employers.indeed.com/resume/abc"
+
+
+def test_safe_diagnostic_text_redacts_urls_and_secret_assignments():
+    value = (
+        "request https://employers.indeed.com/resume/abc?token=secret&sig=hidden "
+        "authorization=topsecret"
+    )
+    safe = _safe_diagnostic_text(value)
+    assert "secret" not in safe
+    assert "hidden" not in safe
+    assert "topsecret" not in safe
+    assert "https://employers.indeed.com/resume/abc" in safe
+    assert "authorization=[REDACTED]" in safe
+
+
+def test_diagnostic_response_records_only_sanitized_metadata_and_pdf_signature(tmp_path):
+    class Request:
+        resource_type = "fetch"
+
+    class Response:
+        status = 200
+        url = "https://employers.indeed.com/candidates/resume?token=secret&sig=hidden"
+        request = Request()
+        headers = {
+            "content-type": "application/octet-stream",
+            "content-disposition": 'attachment; filename="Candidate.pdf"; token=secret',
+            "content-length": "9",
+            "set-cookie": "must-not-be-recorded",
+        }
+
+        def body(self):
+            return b"%PDF-test"
+
+    browser = IndeedBrowser(cfg(tmp_path))
+    browser._diagnostic_active = True
+    browser._on_diagnostic_response(Response())
+
+    assert len(browser._diagnostic_events) == 1
+    event = browser._diagnostic_events[0]
+    assert event["url"] == "https://employers.indeed.com/candidates/resume"
+    assert event["starts_with_pdf"] is True
+    assert event["body_size"] == 9
+    assert "secret" not in json.dumps(event)
+    assert "hidden" not in json.dumps(event)
+    assert "must-not-be-recorded" not in json.dumps(event)
+
+
+def test_stop_diagnostic_writes_privacy_manifest_and_page_snapshot(tmp_path):
+    class DiagnosticPage(FakePage):
+        def title(self):
+            return "Candidate resume"
+
+        def evaluate(self, script):
+            if "document.contentType" in script:
+                return {"contentType": "text/html", "readyState": "complete"}
+            return "div"
+
+        def is_closed(self):
+            return False
+
+        def screenshot(self, *, path, full_page):
+            Path(path).write_bytes(b"png")
+
+    page = DiagnosticPage(url="https://employers.indeed.com/candidates/resume?token=secret")
+    context = FakeContext(FakeResponse(), page)
+    browser = IndeedBrowser(cfg(tmp_path))
+    browser._context = context
+    browser._diagnostic_active = True
+    browser._diagnostic_started_at = "2026-09-21T16:00:00+00:00"
+    browser._diagnostic_events = [{"kind": "request", "url": "https://indeed.com/path"}]
+
+    path = browser.stop_diagnostic()
+
+    assert path is not None
+    payload = json.loads(Path(path).read_text(encoding="utf-8"))
+    assert payload["pages"][0]["url"] == "https://employers.indeed.com/candidates/resume"
+    assert payload["pages"][0]["document_content_type"] == "text/html"
+    assert payload["privacy"] == {
+        "query_strings_persisted": False,
+        "cookies_persisted": False,
+        "authorization_headers_persisted": False,
+        "response_bodies_persisted": False,
+    }
+    assert Path(payload["screenshot"]).is_file()
 
 
 def test_known_control_that_does_not_download_becomes_human_review(tmp_path):
