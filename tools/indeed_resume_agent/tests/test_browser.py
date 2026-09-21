@@ -127,7 +127,7 @@ def cfg(tmp_path):
     return AgentConfig(api_base_url="https://agent.test", browser_profile_dir=tmp_path / "profile")
 
 
-def test_start_uses_dedicated_visible_edge_profile_with_sandbox(tmp_path):
+def test_start_uses_dedicated_visible_chrome_profile_with_sandbox(tmp_path):
     context=FakeContext(FakeResponse(), FakePage())
     chromium=FakeChromium(context)
     browser=IndeedBrowser(cfg(tmp_path), playwright_factory=lambda: FakeManager(FakePlaywright(chromium)))
@@ -135,7 +135,7 @@ def test_start_uses_dedicated_visible_edge_profile_with_sandbox(tmp_path):
     assert (tmp_path / "profile").is_dir()
     assert chromium.kwargs == {
         "user_data_dir": str(tmp_path / "profile"),
-        "channel": "msedge",
+        "channel": "chrome",
         "headless": False,
         "accept_downloads": True,
         "chromium_sandbox": True,
@@ -144,7 +144,7 @@ def test_start_uses_dedicated_visible_edge_profile_with_sandbox(tmp_path):
     assert context.closed
 
 
-def test_open_indeed_uses_normal_edge_with_same_dedicated_profile(tmp_path):
+def test_open_indeed_uses_normal_chrome_with_same_dedicated_profile(tmp_path):
     context=FakeContext(FakeResponse(), FakePage())
     chromium=FakeChromium(context)
     calls=[]
@@ -156,7 +156,7 @@ def test_open_indeed_uses_normal_edge_with_same_dedicated_profile(tmp_path):
     browser=IndeedBrowser(
         cfg(tmp_path),
         playwright_factory=lambda: FakeManager(FakePlaywright(chromium)),
-        edge_executable_resolver=lambda: r"C:\Program Files\Microsoft\Edge\Application\msedge.exe",
+        browser_executable_resolver=lambda: r"C:\Program Files\Google\Chrome\Application\chrome.exe",
         process_runner=run,
     )
     browser.start()
@@ -165,7 +165,7 @@ def test_open_indeed_uses_normal_edge_with_same_dedicated_profile(tmp_path):
     assert context.closed is True
     assert len(calls) == 1
     command, kwargs = calls[0]
-    assert command[0].endswith("msedge.exe")
+    assert command[0].endswith("chrome.exe")
     assert f"--user-data-dir={tmp_path / 'profile'}" in command
     assert "--new-window" in command
     assert "--no-sandbox" not in command
@@ -179,7 +179,7 @@ def test_start_refuses_profile_while_manual_edge_is_open(tmp_path):
     process = FakeProcess()
     browser=IndeedBrowser(
         cfg(tmp_path),
-        edge_executable_resolver=lambda: r"C:\\Program Files\\Microsoft\\Edge\\Application\\msedge.exe",
+        browser_executable_resolver=lambda: r"C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe",
         process_runner=lambda command: process,
     )
     browser.open_indeed()
@@ -201,7 +201,7 @@ def test_manual_session_detects_edge_child_after_launcher_exits(tmp_path):
 
     browser=IndeedBrowser(
         cfg(tmp_path),
-        edge_executable_resolver=lambda: r"C:\\Program Files\\Microsoft\\Edge\\Application\\msedge.exe",
+        browser_executable_resolver=lambda: r"C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe",
         process_runner=lambda command: process,
         manual_process_probe=probe,
     )
@@ -215,7 +215,7 @@ def test_manual_session_clears_when_launcher_and_profile_process_are_gone(tmp_pa
     process = FakeProcess(returncode=0)
     browser=IndeedBrowser(
         cfg(tmp_path),
-        edge_executable_resolver=lambda: r"C:\\Program Files\\Microsoft\\Edge\\Application\\msedge.exe",
+        browser_executable_resolver=lambda: r"C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe",
         process_runner=lambda command: process,
         manual_process_probe=lambda profile_dir: False,
     )
@@ -336,6 +336,29 @@ def test_normalize_pdf_filename_removes_paths_and_forces_pdf_extension():
     assert normalize_pdf_filename("../../evil.pdf") == "evil.pdf"
 
 
+def test_edge_configuration_uses_edge_channel_and_executable(tmp_path):
+    context=FakeContext(FakeResponse(), FakePage())
+    chromium=FakeChromium(context)
+    calls=[]
+    edge_cfg = AgentConfig(
+        api_base_url="https://agent.test",
+        browser_profile_dir=tmp_path / "profile-edge",
+        browser_name="edge",
+    )
+
+    browser=IndeedBrowser(
+        edge_cfg,
+        playwright_factory=lambda: FakeManager(FakePlaywright(chromium)),
+        browser_executable_resolver=lambda: r"C:\Program Files\Microsoft\Edge\Application\msedge.exe",
+        process_runner=lambda command: calls.append(command) or FakeProcess(),
+    )
+    browser.start()
+    assert chromium.kwargs["channel"] == "msedge"
+    browser.open_indeed()
+
+    assert calls[0][0].endswith("msedge.exe")
+
+
 def test_open_indeed_can_open_specific_safe_resume_url(tmp_path):
     calls=[]
 
@@ -345,7 +368,7 @@ def test_open_indeed_can_open_specific_safe_resume_url(tmp_path):
 
     browser=IndeedBrowser(
         cfg(tmp_path),
-        edge_executable_resolver=lambda: r"C:\Program Files\Microsoft\Edge\Application\msedge.exe",
+        browser_executable_resolver=lambda: r"C:\Program Files\Google\Chrome\Application\chrome.exe",
         process_runner=run,
     )
     browser.open_indeed("https://employers.indeed.com/resume/ada")
@@ -370,7 +393,7 @@ def test_open_indeed_rejects_unsafe_manual_url(tmp_path, url):
 
     browser=IndeedBrowser(
         cfg(tmp_path),
-        edge_executable_resolver=lambda: r"C:\Program Files\Microsoft\Edge\Application\msedge.exe",
+        browser_executable_resolver=lambda: r"C:\Program Files\Google\Chrome\Application\chrome.exe",
         process_runner=run,
     )
     browser.open_indeed(url)
