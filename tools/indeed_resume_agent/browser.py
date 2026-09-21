@@ -406,7 +406,7 @@ class IndeedBrowser:
         self._manual_process = self._process_runner(command)
 
     @staticmethod
-    def _response_pdf(response) -> bytes | None:
+    def _response_pdf(response, *, probe_body: bool = True) -> bytes | None:
         if response is None or int(getattr(response, "status", 0) or 0) != 200:
             return None
 
@@ -432,7 +432,7 @@ class IndeedBrowser:
             or "attachment" in content_disposition
             or response_url.casefold().endswith(".pdf")
         )
-        if not plausible_pdf:
+        if not plausible_pdf and not probe_body:
             return None
 
         body = bytes(response.body() or b"")
@@ -1052,7 +1052,7 @@ class IndeedBrowser:
             raise BrowserFetchStageError("RESUME_BROWSER_NAVIGATION_FAILED") from exc
 
         try:
-            navigated_pdf = self._response_pdf(navigation)
+            navigated_pdf = self._response_pdf(navigation, probe_body=False)
         except InvalidResumePdf:
             raise
         except Exception as exc:
