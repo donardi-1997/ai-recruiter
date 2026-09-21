@@ -22,6 +22,29 @@ def test_idle_ui_state_is_safe_and_operational():
     assert ui.current_candidate == "-"
 
 
+def test_idle_ui_surfaces_latest_safe_failure_code():
+    ui=build_ui_state(
+        snap("IDLE"),
+        stats(
+            pending=0,
+            retry=0,
+            failed=2,
+            last_error_code="RESUME_UPLOAD_FAILED",
+            last_error_candidate="Alejandra",
+            last_error_status="FAILED",
+        ),
+    )
+    assert ui.status_label == "Último error: RESUME_UPLOAD_FAILED — Alejandra"
+
+
+def test_retry_state_surfaces_worker_stage_code():
+    ui=build_ui_state(
+        snap("RETRY", "Alejandra", "RESUME_BROWSER_FETCH_FAILED"),
+        stats(retry=1, failed=0),
+    )
+    assert ui.status_label == "RESUME_BROWSER_FETCH_FAILED"
+
+
 def test_active_and_paused_labels():
     active=build_ui_state(snap("DOWNLOADING","Ada"), stats(claimed=1))
     paused=build_ui_state(snap("PAUSED"), stats())
