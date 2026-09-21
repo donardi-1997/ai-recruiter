@@ -744,7 +744,11 @@ def test_generic_resume_landing_falls_back_to_candidate_list_by_name(tmp_path):
             return FakeResponse(200, "text/html", b"")
 
         def get_by_text(self, pattern):
-            if self.fallback_nav:
+            if (
+                self.fallback_nav
+                and hasattr(pattern, "pattern")
+                and "Alejandra" in pattern.pattern
+            ):
                 return CandidateTextLocator(self)
             return FakeLocator(0)
 
