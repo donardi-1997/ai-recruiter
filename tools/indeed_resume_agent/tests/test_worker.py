@@ -1,7 +1,11 @@
 from datetime import datetime, timezone
 
 from tools.indeed_resume_agent.api_client import ClaimedTask, LeaseLost
-from tools.indeed_resume_agent.browser import BrowserOutcome, BrowserResult
+from tools.indeed_resume_agent.browser import (
+    BrowserFetchStageError,
+    BrowserOutcome,
+    BrowserResult,
+)
 from tools.indeed_resume_agent.config import AgentConfig
 from tools.indeed_resume_agent.worker import ResumeWorker
 
@@ -112,6 +116,21 @@ def test_technical_browser_failure_is_reported_to_backend(tmp_path):
     assert api.failures == [("t1","RESUME_BROWSER_FETCH_FAILED")]
     assert snap.last_error == "RESUME_BROWSER_FETCH_FAILED"
     assert "secret URL" not in (snap.last_error or "")
+
+
+def test_browser_stage_failure_code_is_preserved(tmp_path):
+    api=FakeApi([task()])
+    browser=FakeBrowser(error=BrowserFetchStageError("RESUME_BROWSER_NAVIGATION_FAILED"))
+    worker=ResumeWorker(
+        config=config(tmp_path),
+        api=api,
+        browser=browser,
+        heartbeat_factory=lambda **kw: FakeHeartbeat(),
+    )
+    snap=worker.run_once()
+    assert snap.state == "RETRY"
+    assert api.failures == [("t1","RESUME_BROWSER_NAVIGATION_FAILED")]
+    assert snap.last_error == "RESUME_BROWSER_NAVIGATION_FAILED"
 
 
 def test_pause_and_stop_prevent_claims(tmp_path):
