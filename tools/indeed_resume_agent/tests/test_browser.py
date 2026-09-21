@@ -1193,7 +1193,7 @@ def test_duplicate_candidate_names_fail_closed_without_job_match(tmp_path):
     assert ambiguous is True
 
 
-def test_candidate_list_fallback_returns_specific_review_code_when_name_missing(tmp_path):
+def test_candidate_search_route_returns_not_found_when_name_is_absent(tmp_path):
     class MissingCandidatePage(FakePage):
         def goto(self, url, **kwargs):
             self.goto_urls.append(url)
@@ -1228,8 +1228,57 @@ def test_candidate_list_fallback_returns_specific_review_code_when_name_missing(
     )
 
     assert result.outcome is BrowserOutcome.NEEDS_HUMAN
-    assert result.human_code == "INDEED_CANDIDATE_SEARCH_UNAVAILABLE"
+    assert result.human_code == "INDEED_CANDIDATE_NOT_FOUND"
     assert result.diagnostic_path is not None
+
+
+def test_candidate_search_unavailable_when_query_route_and_input_are_missing(tmp_path):
+    class SearchUnavailablePage(FakePage):
+        def __init__(self):
+            super().__init__(url="https://resumes.indeed.com/")
+            self.initial_workspace = True
+
+        def goto(self, url, **kwargs):
+            self.goto_urls.append(url)
+            if "statusName=All&tab=manage&q=" in url:
+                self.url = "https://resumes.indeed.com/?from=gnav-one-host"
+                self.initial_workspace = False
+            else:
+                self.url = "https://employers.indeed.com/candidates"
+            return FakeResponse(200, "text/html", b"")
+
+        def locator(self, selector):
+            if selector == "body":
+                return super().locator(selector)
+            if (
+                self.initial_workspace
+                and selector == '[data-testid="candidate-list-table-container"]'
+            ):
+                return FakeLocator(1)
+            return FakeLocator(0)
+
+        def get_by_text(self, pattern):
+            return FakeLocator(0)
+
+        def wait_for_timeout(self, timeout):
+            return None
+
+    page=SearchUnavailablePage()
+    context=FakeContext(FakeResponse(200, "text/html", b""), page)
+    chromium=FakeChromium(context)
+    browser=IndeedBrowser(
+        cfg(tmp_path),
+        playwright_factory=lambda: FakeManager(FakePlaywright(chromium)),
+    )
+    browser.start()
+
+    result=browser.fetch_resume(
+        "https://indeed.test/resume",
+        candidate_name="Alejandra camacho saenz",
+    )
+
+    assert result.outcome is BrowserOutcome.NEEDS_HUMAN
+    assert result.human_code == "INDEED_CANDIDATE_SEARCH_UNAVAILABLE"
 
 
 def test_unknown_ui_fails_closed(tmp_path):
