@@ -127,6 +127,30 @@ def cfg(tmp_path):
     return AgentConfig(api_base_url="https://agent.test", browser_profile_dir=tmp_path / "profile")
 
 
+def test_start_relaunches_after_user_closes_previous_playwright_window(tmp_path):
+    class ClosedPage(FakePage):
+        def is_closed(self):
+            return True
+
+    stale_context = FakeContext(FakeResponse(), ClosedPage())
+    stale_chromium = FakeChromium(stale_context)
+    fresh_context = FakeContext(FakeResponse(), FakePage())
+    fresh_chromium = FakeChromium(fresh_context)
+
+    browser = IndeedBrowser(
+        cfg(tmp_path),
+        playwright_factory=lambda: FakeManager(FakePlaywright(fresh_chromium)),
+    )
+    browser._context = stale_context
+    browser._playwright = FakePlaywright(stale_chromium)
+
+    browser.start()
+
+    assert stale_context.closed is True
+    assert browser._context is fresh_context
+    assert fresh_chromium.kwargs["channel"] == "chrome"
+
+
 def test_start_uses_dedicated_visible_chrome_profile_with_sandbox(tmp_path):
     context=FakeContext(FakeResponse(), FakePage())
     chromium=FakeChromium(context)
