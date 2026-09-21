@@ -34,7 +34,8 @@ def build_ui_state(snapshot: WorkerSnapshot, stats: QueueStats) -> UiState:
         "COMPLETED": "CV cargado correctamente",
         "PAUSED": "En pausa",
         "MANUAL_BROWSER_OPEN": "Cierra el navegador manual para continuar",
-        "MANUAL_LOGIN_REQUIRED": "Inicia sesión primero con Open Indeed (Google Chrome), cierra Chrome y vuelve a intentar",
+        "MANUAL_LOGIN_REQUIRED": "Indeed mostró CAPTCHA/verificación. Resuélvelo en Chrome normal, cierra Chrome y vuelve a intentar",
+        "MANUAL_OPEN_FAILED": "No se pudo abrir Google Chrome con el perfil del agente",
         "DIAGNOSTIC_ANCHOR_FAILED": "Chrome no creó la pestaña de respaldo. Cierra Chrome y vuelve a abrir Diagnostic mode",
         "DIAGNOSTIC_MODE": "Modo diagnóstico activo: usa Indeed normalmente y luego pulsa Guardar diagnóstico",
         "DIAGNOSTIC_SAVED": "Diagnóstico guardado",
@@ -281,21 +282,61 @@ def run_ui(*, worker, api, browser) -> None:
                         )
                         publish(diagnostic_snapshot, last_stats)
                     elif command == "open":
-                        if browser.diagnostic_active:
-                            continue
                         diagnostic_snapshot = None
                         worker.pause()
                         publish(worker.snapshot, last_stats)
+                        if browser.diagnostic_active:
+                            try:
+                                browser.stop_diagnostic()
+                            except Exception:
+                                pass
                         try:
                             browser.open_indeed()
+                            diagnostic_snapshot = WorkerSnapshot(
+                                "MANUAL_BROWSER_OPEN",
+                                worker.snapshot.active_candidate,
+                                worker.snapshot.processed_session,
+                                None,
+                            )
                         except Exception:
-                            pass
+                            diagnostic_snapshot = WorkerSnapshot(
+                                "MANUAL_OPEN_FAILED",
+                                worker.snapshot.active_candidate,
+                                worker.snapshot.processed_session,
+                                None,
+                            )
+                        publish(diagnostic_snapshot, last_stats)
 
                 if browser.diagnostic_active:
                     try:
                         browser.poll_diagnostic()
+                    except RuntimeError as exc:
+                        error_code = str(exc)
+                        if error_code == "INDEED_MANUAL_LOGIN_REQUIRED":
+                            try:
+                                browser.open_indeed()
+                            except Exception:
+                                pass
+                            diagnostic_snapshot = WorkerSnapshot(
+                                "MANUAL_LOGIN_REQUIRED",
+                                worker.snapshot.active_candidate,
+                                worker.snapshot.processed_session,
+                                None,
+                            )
+                        else:
+                            diagnostic_snapshot = WorkerSnapshot(
+                                "ERROR",
+                                worker.snapshot.active_candidate,
+                                worker.snapshot.processed_session,
+                                None,
+                            )
                     except Exception:
-                        pass
+                        diagnostic_snapshot = WorkerSnapshot(
+                            "ERROR",
+                            worker.snapshot.active_candidate,
+                            worker.snapshot.processed_session,
+                            None,
+                        )
                     snapshot = diagnostic_snapshot or WorkerSnapshot(
                         "DIAGNOSTIC_MODE",
                         worker.snapshot.active_candidate,
