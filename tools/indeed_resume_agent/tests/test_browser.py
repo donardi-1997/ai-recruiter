@@ -539,6 +539,37 @@ def test_known_download_control_reads_pdf(tmp_path):
     assert result.data == b"%PDF-downloaded"
 
 
+def test_spa_waits_for_download_control_before_requiring_review(tmp_path):
+    pdf=tmp_path / "download.pdf"
+    pdf.write_bytes(b"%PDF-delayed")
+
+    class DelayedControlPage(FakePage):
+        def __init__(self):
+            super().__init__(url="https://employers.indeed.com/candidates/resume", download=FakeDownload(pdf))
+            self.probes = 0
+
+        def get_by_role(self, role, name=None):
+            self.probes += 1
+            if self.probes < 5:
+                return FakeLocator(0)
+            return FakeLocator(1)
+
+    page=DelayedControlPage()
+    context=FakeContext(FakeResponse(200, "text/html", b""), page)
+    chromium=FakeChromium(context)
+    browser=IndeedBrowser(
+        cfg(tmp_path),
+        playwright_factory=lambda: FakeManager(FakePlaywright(chromium)),
+    )
+    browser.start()
+
+    result=browser.fetch_resume("https://indeed.test/resume")
+
+    assert result.outcome is BrowserOutcome.DOWNLOADED
+    assert result.data == b"%PDF-delayed"
+    assert page.probes >= 5
+
+
 def test_unknown_ui_fails_closed(tmp_path):
     page=FakePage(text="Profile page without known controls")
     context=FakeContext(FakeResponse(200, "text/html", b""), page)
