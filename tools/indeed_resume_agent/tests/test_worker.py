@@ -30,9 +30,14 @@ class FakeApi:
 
 
 class FakeBrowser:
-    def __init__(self, result=None, error=None): self.result=result; self.error=error; self.urls=[]
-    def fetch_resume(self, url):
+    def __init__(self, result=None, error=None):
+        self.result=result
+        self.error=error
+        self.urls=[]
+        self.candidate_names=[]
+    def fetch_resume(self, url, *, candidate_name=None):
         self.urls.append(url)
+        self.candidate_names.append(candidate_name)
         if self.error: raise self.error
         return self.result
 
@@ -55,6 +60,7 @@ def test_happy_path_claims_downloads_validates_and_uploads_once(tmp_path):
     assert snap.state == "COMPLETED"
     assert snap.processed_session == 1
     assert api.uploads == [("t1","ada.pdf",b"%PDF-ok")]
+    assert browser.candidate_names == ["Ada"]
     assert api.failures == [] and api.human == []
     assert hb.started and hb.stopped
     assert worker.run_once().state == "IDLE"
