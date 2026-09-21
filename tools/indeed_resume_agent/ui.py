@@ -31,6 +31,7 @@ def build_ui_state(snapshot: WorkerSnapshot, stats: QueueStats) -> UiState:
         "PAUSED": "En pausa",
         "MANUAL_BROWSER_OPEN": "Cierra el navegador manual para continuar",
         "MANUAL_LOGIN_REQUIRED": "Inicia sesión primero con Open Indeed (Google Chrome), cierra Chrome y vuelve a intentar",
+        "DIAGNOSTIC_ANCHOR_FAILED": "Chrome no creó la pestaña de respaldo. Cierra Chrome y vuelve a abrir Diagnostic mode",
         "DIAGNOSTIC_MODE": "Modo diagnóstico activo: usa Indeed normalmente y luego pulsa Guardar diagnóstico",
         "DIAGNOSTIC_SAVED": "Diagnóstico guardado",
         "WAITING_FOR_HUMAN": "Indeed requiere intervención manual",
@@ -233,11 +234,13 @@ def run_ui(*, worker, api, browser) -> None:
                                     None,
                                 )
                             except RuntimeError as exc:
-                                state = (
-                                    "MANUAL_LOGIN_REQUIRED"
-                                    if str(exc) == "INDEED_MANUAL_LOGIN_REQUIRED"
-                                    else "ERROR"
-                                )
+                                error_code = str(exc)
+                                if error_code == "INDEED_MANUAL_LOGIN_REQUIRED":
+                                    state = "MANUAL_LOGIN_REQUIRED"
+                                elif error_code == "INDEED_DIAGNOSTIC_ANCHOR_FAILED":
+                                    state = "DIAGNOSTIC_ANCHOR_FAILED"
+                                else:
+                                    state = "ERROR"
                                 diagnostic_snapshot = WorkerSnapshot(
                                     state,
                                     worker.snapshot.active_candidate,

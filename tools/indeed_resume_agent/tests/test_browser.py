@@ -224,6 +224,57 @@ def test_manual_session_clears_when_launcher_and_profile_process_are_gone(tmp_pa
     assert browser.manual_session_open is False
 
 
+def test_diagnostic_materializes_second_keep_alive_page(tmp_path):
+    class AnchorPage(FakePage):
+        def __init__(self):
+            super().__init__(url="about:blank", text="")
+            self.content = ""
+            self.front_calls = 0
+
+        def set_content(self, content):
+            self.content = content
+
+        def bring_to_front(self):
+            self.front_calls += 1
+
+        def wait_for_timeout(self, timeout):
+            return None
+
+    class MultiPageContext(FakeContext):
+        def __init__(self, response, page):
+            super().__init__(response, page)
+            self.handlers = {}
+            self.anchor = AnchorPage()
+
+        def on(self, name, callback):
+            self.handlers[name] = callback
+
+        def new_page(self):
+            if self.anchor not in self.pages:
+                self.pages.append(self.anchor)
+            return self.anchor
+
+    page = FakePage(url="https://employers.indeed.com/candidates", text="Candidates")
+    context = MultiPageContext(FakeResponse(), page)
+    chromium = FakeChromium(context)
+    browser = IndeedBrowser(
+        cfg(tmp_path),
+        playwright_factory=lambda: FakeManager(FakePlaywright(chromium)),
+    )
+
+    browser.start_diagnostic()
+
+    assert len(context.pages) == 2
+    assert "ASIATI — KEEP OPEN" in context.anchor.content
+    assert browser._diagnostic_anchor_page_id == id(context.anchor)
+    ready = [
+        event for event in browser._diagnostic_events
+        if event.get("kind") == "diagnostic_pages_ready"
+    ]
+    assert ready[-1]["page_count"] == 2
+    assert ready[-1]["anchor_created"] is True
+
+
 def test_diagnostic_requires_manual_login_instead_of_automating_auth(tmp_path):
     page=FakePage(
         url="https://employers.indeed.com/account/login",

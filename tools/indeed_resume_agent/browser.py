@@ -589,26 +589,11 @@ class IndeedBrowser:
         self._last_diagnostic_path = None
         self._diagnostic_active = True
 
-        # Keep one local anchor tab alive. Indeed's resume action may close the
-        # candidate tab after initiating a download; without another tab Chrome
-        # can disappear entirely, which previously made diagnosis impossible.
-        existing_pages = list(getattr(self._context, "pages", []) or [])
-        if existing_pages:
-            anchor = existing_pages[0]
-        else:
-            anchor = self._context.new_page()
-        self._diagnostic_anchor_page_id = id(anchor)
-        try:
-            anchor.set_content(
-                "<title>ASIATI Resume Agent</title>"
-                "<body style='font-family:sans-serif;padding:24px'>"
-                "ASIATI Resume Agent — diagnostic anchor. Keep this tab open."
-                "</body>"
-            )
-        except Exception:
-            pass
-
-        page = self._context.new_page()
+        # Use the first browser page as the real Indeed page. Creating the
+        # anchor first proved unreliable on Windows/Chrome because Chrome could
+        # coalesce the initial blank page. We materialize Indeed first, then
+        # create and focus a second explicit anchor page.
+        page = self._page()
         self._attach_diagnostic_context()
         self._attach_diagnostic_page(page)
 
@@ -635,6 +620,50 @@ class IndeedBrowser:
             self._diagnostic_active = False
             self.close()
             raise RuntimeError("INDEED_MANUAL_LOGIN_REQUIRED")
+
+        # Create the keep-alive page only after Indeed is loaded. Bring the
+        # anchor to front once, then return focus to Indeed; this forces Chrome
+        # to materialize the second page instead of silently reusing the startup
+        # blank page.
+        anchor = self._context.new_page()
+        self._diagnostic_anchor_page_id = id(anchor)
+        self._attach_diagnostic_page(anchor)
+        try:
+            anchor.set_content(
+                "<title>ASIATI — KEEP OPEN</title>"
+                "<body style='font-family:sans-serif;padding:28px'>"
+                "<h2>ASIATI Resume Agent</h2>"
+                "<p>Diagnostic keep-alive page. Do not close this tab.</p>"
+                "</body>"
+            )
+            if hasattr(anchor, "bring_to_front"):
+                anchor.bring_to_front()
+            if hasattr(anchor, "wait_for_timeout"):
+                anchor.wait_for_timeout(250)
+            if hasattr(page, "bring_to_front"):
+                page.bring_to_front()
+        except Exception:
+            pass
+
+        open_pages = [
+            candidate
+            for candidate in list(getattr(self._context, "pages", []) or [])
+            if not (hasattr(candidate, "is_closed") and candidate.is_closed())
+        ]
+        self._record_diagnostic_event(
+            {
+                "kind": "diagnostic_pages_ready",
+                "page_count": len(open_pages),
+                "anchor_created": any(
+                    id(candidate) == self._diagnostic_anchor_page_id
+                    for candidate in open_pages
+                ),
+            }
+        )
+        if len(open_pages) < 2:
+            self._diagnostic_active = False
+            self.close()
+            raise RuntimeError("INDEED_DIAGNOSTIC_ANCHOR_FAILED")
 
     def poll_diagnostic(self) -> None:
         """Pump Playwright events while the user interacts with the visible diagnostic browser."""
