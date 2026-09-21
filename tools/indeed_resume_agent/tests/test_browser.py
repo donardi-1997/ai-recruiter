@@ -850,6 +850,94 @@ def test_generic_resume_landing_falls_back_to_candidate_list_by_name(tmp_path):
     assert page.candidate_open is True
 
 
+def test_candidate_search_uses_observed_status_all_manage_q_route(tmp_path):
+    pdf=tmp_path / "download.pdf"
+    pdf.write_bytes(b"%PDF-query-route")
+
+    class CandidateLink:
+        def __init__(self, page):
+            self.page = page
+        def inner_text(self, timeout=None):
+            return "Alejandra camacho saenz"
+        def locator(self, selector):
+            return FakeLocator(0)
+        def click(self):
+            self.page.candidate_open = True
+            self.page.url = "https://employers.indeed.com/candidates/view?id=alejandra"
+
+    class CandidateLinks:
+        def __init__(self, page):
+            self.page = page
+        def count(self):
+            return 1
+        def nth(self, index):
+            assert index == 0
+            return CandidateLink(self.page)
+
+    class QueryRoutePage(FakePage):
+        def __init__(self):
+            super().__init__(
+                url="https://resumes.indeed.com/?from=gnav-one-host",
+                download=FakeDownload(pdf),
+            )
+            self.candidate_open = False
+
+        def goto(self, url, **kwargs):
+            self.goto_urls.append(url)
+            self.url = url
+            return FakeResponse(200, "text/html", b"")
+
+        def locator(self, selector):
+            if selector == "body":
+                return super().locator(selector)
+            if selector == '[data-testid="candidate-list-table-container"]':
+                return FakeLocator(1)
+            if (
+                'a[data-testid="NameCell"]' in selector
+                and "statusName=All&tab=manage&q=Alejandra+camacho+saenz" in self.url
+            ):
+                return CandidateLinks(self)
+            return FakeLocator(0)
+
+        def get_by_role(self, role, name=None):
+            if self.candidate_open and role in {"button", "link"}:
+                return FakeLocator(1)
+            return FakeLocator(0)
+
+        def wait_for_timeout(self, timeout):
+            return None
+
+    page=QueryRoutePage()
+    context=FakeContext(FakeResponse(200, "text/html", b""), page)
+    chromium=FakeChromium(context)
+    browser=IndeedBrowser(
+        cfg(tmp_path),
+        playwright_factory=lambda: FakeManager(FakePlaywright(chromium)),
+    )
+    browser.start()
+
+    result=browser.fetch_resume(
+        "https://indeed.test/resume",
+        candidate_name="Alejandra camacho saenz",
+    )
+
+    assert result.outcome is BrowserOutcome.DOWNLOADED
+    assert result.data == b"%PDF-query-route"
+    assert any(
+        url
+        == "https://employers.indeed.com/candidates?statusName=All&tab=manage&q=Alejandra+camacho+saenz"
+        for url in page.goto_urls
+    )
+
+
+def test_candidate_search_url_encodes_names_safely(tmp_path):
+    browser=IndeedBrowser(cfg(tmp_path))
+    assert browser._candidate_search_url("Alejandra Camacho Sáenz") == (
+        "https://employers.indeed.com/candidates"
+        "?statusName=All&tab=manage&q=Alejandra+Camacho+S%C3%A1enz"
+    )
+
+
 def test_candidates_workspace_selects_manage_and_all_stage_before_lookup(tmp_path):
     class TabLocator:
         def __init__(self, page, key):
