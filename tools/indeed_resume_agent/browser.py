@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import io
 import json
 import os
 import re
@@ -7,6 +8,7 @@ import shutil
 import subprocess
 import time
 import unicodedata
+import zipfile
 from datetime import datetime, timezone
 from email.header import decode_header, make_header
 
@@ -29,14 +31,20 @@ class BrowserResult:
     outcome: BrowserOutcome
     filename: str | None = None
     data: bytes | None = None
+    content_type: str | None = None
     human_code: str | None = None
     diagnostic_path: str | None = None
 
 
-class InvalidResumePdf(ValueError):
+class InvalidResumeDocument(ValueError):
     def __init__(self, code: str):
         self.code = str(code)
         super().__init__(self.code)
+
+
+# Backwards-compatible name for callers/tests that imported the former PDF-only
+# exception. The agent now accepts PDF and DOCX.
+InvalidResumePdf = InvalidResumeDocument
 
 
 class BrowserFetchStageError(RuntimeError):
@@ -45,19 +53,79 @@ class BrowserFetchStageError(RuntimeError):
         super().__init__(self.code)
 
 
-def validate_pdf(data: bytes, *, max_bytes: int) -> None:
+PDF_CONTENT_TYPE = "application/pdf"
+DOCX_CONTENT_TYPE = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+_GENERIC_BINARY_CONTENT_TYPES = {
+    "",
+    "application/octet-stream",
+    "binary/octet-stream",
+}
+
+
+def _is_docx(payload: bytes) -> bool:
+    if not payload.startswith(b"PK"):
+        return False
+    try:
+        with zipfile.ZipFile(io.BytesIO(payload), "r") as archive:
+            names = set(archive.namelist())
+    except (zipfile.BadZipFile, zipfile.LargeZipFile, OSError):
+        return False
+    return "[Content_Types].xml" in names and "word/document.xml" in names
+
+
+def validate_resume_document(
+    data: bytes,
+    *,
+    filename: str | None = None,
+    content_type: str | None = None,
+    max_bytes: int,
+) -> str:
+    """Validate a supported resume and return its canonical MIME type."""
     payload = bytes(data or b"")
-    if not payload.startswith(b"%PDF-"):
-        raise InvalidResumePdf("RESUME_NOT_PDF")
     if len(payload) > int(max_bytes):
-        raise InvalidResumePdf("RESUME_TOO_LARGE")
+        raise InvalidResumeDocument("RESUME_TOO_LARGE")
+
+    declared = str(content_type or "").split(";", 1)[0].strip().casefold()
+    suffix = Path(str(filename or "")).suffix.casefold()
+
+    if payload.startswith(b"%PDF-"):
+        return PDF_CONTENT_TYPE
+    if _is_docx(payload):
+        return DOCX_CONTENT_TYPE
+
+    if declared == PDF_CONTENT_TYPE or suffix == ".pdf":
+        raise InvalidResumeDocument("RESUME_NOT_PDF")
+    if declared == DOCX_CONTENT_TYPE or suffix == ".docx":
+        raise InvalidResumeDocument("RESUME_NOT_DOCX")
+    raise InvalidResumeDocument("RESUME_UNSUPPORTED_FORMAT")
 
 
-def normalize_pdf_filename(filename: str | None) -> str:
+def validate_pdf(data: bytes, *, max_bytes: int) -> None:
+    """Compatibility wrapper for legacy PDF-only callers."""
+    detected = validate_resume_document(
+        data,
+        filename="resume.pdf",
+        content_type=PDF_CONTENT_TYPE,
+        max_bytes=max_bytes,
+    )
+    if detected != PDF_CONTENT_TYPE:
+        raise InvalidResumeDocument("RESUME_NOT_PDF")
+
+
+def normalize_resume_filename(
+    filename: str | None,
+    *,
+    content_type: str,
+) -> str:
     raw = str(filename or "").replace("\\", "/").rsplit("/", 1)[-1].strip()
     stem = Path(raw).stem.strip() if raw else "indeed-resume"
     safe = "".join(ch if ch.isalnum() or ch in " ._-" else "_" for ch in stem).strip()
-    return f"{safe or 'indeed-resume'}.pdf"
+    extension = ".docx" if content_type == DOCX_CONTENT_TYPE else ".pdf"
+    return f"{safe or 'indeed-resume'}{extension}"
+
+
+def normalize_pdf_filename(filename: str | None) -> str:
+    return normalize_resume_filename(filename, content_type=PDF_CONTENT_TYPE)
 
 
 def _default_playwright_factory():
@@ -411,46 +479,67 @@ class IndeedBrowser:
         self._manual_process = self._process_runner(command)
 
     @staticmethod
-    def _response_pdf(response, *, probe_body: bool = True) -> bytes | None:
+    def _response_document(response, *, probe_body: bool = True):
         if response is None or int(getattr(response, "status", 0) or 0) != 200:
             return None
 
         headers = getattr(response, "headers", {}) or {}
         content_type = str(
             headers.get("content-type") or headers.get("Content-Type") or ""
-        ).lower()
+        ).split(";", 1)[0].strip().casefold()
         content_disposition = str(
             headers.get("content-disposition")
             or headers.get("Content-Disposition")
             or ""
-        ).lower()
-        response_url = str(getattr(response, "url", "") or "")
-
-        # Do not ask Playwright for the body of ordinary HTML/page responses.
-        # Chromium can discard navigation bodies once the document is committed,
-        # which makes response.body() raise even though navigation succeeded.
-        # Only probe the body when response metadata plausibly represents a file.
-        plausible_pdf = (
-            "application/pdf" in content_type
-            or "application/octet-stream" in content_type
-            or "binary/octet-stream" in content_type
-            or "attachment" in content_disposition
-            or response_url.casefold().endswith(".pdf")
         )
-        if not plausible_pdf and not probe_body:
+        response_url = str(getattr(response, "url", "") or "")
+        disposition_lower = content_disposition.casefold()
+
+        plausible_document = (
+            content_type in {PDF_CONTENT_TYPE, DOCX_CONTENT_TYPE}
+            or content_type in _GENERIC_BINARY_CONTENT_TYPES
+            or "attachment" in disposition_lower
+            or response_url.casefold().endswith((".pdf", ".docx"))
+        )
+        if not plausible_document and not probe_body:
             return None
 
         body = bytes(response.body() or b"")
+        filename = IndeedBrowser._response_filename_raw(response)
+        try:
+            canonical_type = validate_resume_document(
+                body,
+                filename=filename,
+                content_type=content_type,
+                max_bytes=15 * 1024 * 1024,
+            )
+        except InvalidResumeDocument:
+            # A declared supported resume must fail explicitly rather than being
+            # mistaken for an ordinary HTML response.
+            if (
+                content_type in {PDF_CONTENT_TYPE, DOCX_CONTENT_TYPE}
+                or response_url.casefold().endswith((".pdf", ".docx"))
+                or "attachment" in disposition_lower
+            ):
+                raise
+            return None
 
-        # Indeed's resume endpoint can deliver the file with a generic binary
-        # content type. Trust the PDF signature first and keep the declared PDF
-        # MIME type as a secondary signal so malformed PDFs still fail
-        # validation explicitly.
-        if body.startswith(b"%PDF-"):
-            return body
-        if "application/pdf" in content_type:
-            return body
-        return None
+        return (
+            body,
+            canonical_type,
+            normalize_resume_filename(filename, content_type=canonical_type),
+        )
+
+    @staticmethod
+    def _response_pdf(response, *, probe_body: bool = True) -> bytes | None:
+        """Compatibility helper retained for the existing test surface."""
+        document = IndeedBrowser._response_document(response, probe_body=probe_body)
+        if document is None:
+            return None
+        data, content_type, _filename = document
+        if content_type != PDF_CONTENT_TYPE:
+            return None
+        return data
 
     @staticmethod
     def _is_resume_download_response(response) -> bool:
@@ -466,7 +555,7 @@ class IndeedBrowser:
         )
 
     @staticmethod
-    def _response_filename(response) -> str:
+    def _response_filename_raw(response) -> str:
         headers = getattr(response, "headers", {}) or {}
         disposition = str(
             headers.get("content-disposition")
@@ -485,7 +574,14 @@ class IndeedBrowser:
                     candidate = str(make_header(decode_header(candidate)))
                 except Exception:
                     pass
-        return normalize_pdf_filename(candidate or "indeed-resume.pdf")
+        return candidate or "indeed-resume"
+
+    @staticmethod
+    def _response_filename(response, *, content_type: str = PDF_CONTENT_TYPE) -> str:
+        return normalize_resume_filename(
+            IndeedBrowser._response_filename_raw(response),
+            content_type=content_type,
+        )
 
     @staticmethod
     def _requires_human(page) -> bool:
