@@ -92,6 +92,7 @@ def test_sync_uses_operational_configuration_from_secret(monkeypatch):
         provider,
         mailbox_client,
         allowed_senders,
+        allowed_sender_domains,
         storage,
     ):
         captured.update(
@@ -99,6 +100,7 @@ def test_sync_uses_operational_configuration_from_secret(monkeypatch):
                 "owner_sub": owner_sub,
                 "provider": provider,
                 "allowed_senders": allowed_senders,
+                "allowed_sender_domains": allowed_sender_domains,
             }
         )
         return GmailMailboxSyncResult(
@@ -128,4 +130,17 @@ def test_sync_uses_operational_configuration_from_secret(monkeypatch):
         "owner_sub": "owner-a",
         "provider": "INDEED",
         "allowed_senders": (),
+        "allowed_sender_domains": ("indeedemail.com",),
     }
+
+
+def test_sender_domains_are_derived_only_from_safe_from_terms():
+    assert gmail_integration._sender_domains_from_query(
+        'from:indeedemail.com newer_than:7d'
+    ) == ("indeedemail.com",)
+    assert gmail_integration._sender_domains_from_query(
+        'from:conversation@sub.indeedemail.com'
+    ) == ("sub.indeedemail.com",)
+    assert gmail_integration._sender_domains_from_query(
+        'subject:"from:evil.example"'
+    ) == ()

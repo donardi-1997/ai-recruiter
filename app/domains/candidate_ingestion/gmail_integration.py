@@ -6,6 +6,7 @@ import base64
 import hashlib
 import hmac
 import json
+import re
 import secrets
 import time
 from dataclasses import asdict, replace
@@ -22,9 +23,20 @@ from app.config import (
     get_gmail_oauth_settings,
     get_gmail_settings,
 )
+from app.domains.candidate_ingestion import repository
 from app.domains.candidate_ingestion.mailbox_sync import sync_gmail_mailbox
+from app.domains.candidate_ingestion.models import (
+    CandidateIngestionEvent,
+    IndeedEmailResumeTask,
+)
 from app.infrastructure.gmail_oauth_store import GmailOAuthSecretStore
-from app.integrations.email_ingestion.gmail import GmailClient
+from app.integrations.email_ingestion.gmail import (
+    GmailApiHttpError,
+    GmailApiPermissionDenied,
+    GmailApiUnauthorized,
+    GmailClient,
+    GmailTokenRefreshRejected,
+)
 
 
 class GmailDisabled(RuntimeError):
@@ -57,6 +69,23 @@ def is_safe_mailbox_filter(settings: GmailSettings) -> bool:
         return True
     query = str(settings.query or "").casefold()
     return "from:" in query
+
+
+
+
+def _sender_domains_from_query(query: str) -> tuple[str, ...]:
+    """Extract conservative sender-domain restrictions from simple Gmail from: terms."""
+    domains: list[str] = []
+    for match in re.finditer(r"(?:^|\s)from:([^\s]+)", str(query or ""), flags=re.IGNORECASE):
+        token = match.group(1).strip().strip("()[]{}<>\"'")
+        if not token:
+            continue
+        candidate = token.rsplit("@", 1)[-1].strip().casefold().lstrip(".")
+        if not re.fullmatch(r"[a-z0-9.-]+\.[a-z0-9-]+", candidate):
+            continue
+        if candidate not in domains:
+            domains.append(candidate)
+    return tuple(domains)
 
 
 def _b64encode(raw: bytes) -> str:
@@ -407,11 +436,22 @@ def sync_mailbox(
             provider=resolved.ingestion_provider,
             mailbox_client=client,
             allowed_senders=resolved.allowed_senders,
+            allowed_sender_domains=_sender_domains_from_query(resolved.query),
             storage=storage,
         )
         return asdict(result)
+    except GmailTokenRefreshRejected as exc:
+        raise GmailRemoteError(
+            "GMAIL_TOKEN_REFRESH_REJECTED: vuelve a conectar la cuenta de Gmail."
+        ) from exc
+    except GmailApiUnauthorized as exc:
+        raise GmailRemoteError(str(exc)) from exc
+    except GmailApiPermissionDenied as exc:
+        raise GmailRemoteError(str(exc)) from exc
+    except GmailApiHttpError as exc:
+        raise GmailRemoteError(str(exc)) from exc
     except httpx.HTTPError as exc:
-        raise GmailRemoteError("Gmail API is unavailable.") from exc
+        raise GmailRemoteError("GMAIL_NETWORK_ERROR: no fue posible contactar Google.") from exc
     except RuntimeError as exc:
         code = str(exc)
         if code == "GMAIL_NOT_CONFIGURED":
@@ -419,3 +459,114 @@ def sync_mailbox(
         if code.startswith("GMAIL_"):
             raise GmailRemoteError("Gmail API request failed.") from exc
         raise
+
+
+
+def reset_mailbox_to_current(
+    db: Session,
+    *,
+    owner_sub: str,
+    settings: GmailSettings | None = None,
+    oauth_settings: GmailOAuthSettings | None = None,
+    oauth_store=None,
+    mailbox_client=None,
+) -> dict:
+    """Archive the current Indeed resume backlog and start Gmail incrementally from now.
+
+    This is deliberately reversible: ingestion events are retained, and resume tasks
+    are moved to the non-claimable IGNORED state instead of being deleted.
+    """
+    current = settings or get_gmail_settings()
+    oauth = oauth_settings or get_gmail_oauth_settings()
+    payload = _read_oauth_secret(
+        oauth,
+        oauth_store,
+        tolerate_unavailable=True,
+    )
+    resolved = _resolved_gmail_settings(current, payload)
+    if not resolved.enabled:
+        raise GmailDisabled("Gmail ingestion is disabled.")
+    if not resolved.configured:
+        raise GmailNotConfigured("Gmail OAuth is not configured.")
+    if not is_safe_mailbox_filter(resolved):
+        raise GmailUnsafeConfiguration(
+            "Gmail ingestion requires GMAIL_ALLOWED_SENDERS or a restrictive from: query."
+        )
+
+    client = mailbox_client or GmailClient(resolved)
+    try:
+        profile = client.get_profile()
+    except GmailTokenRefreshRejected as exc:
+        raise GmailRemoteError(
+            "GMAIL_TOKEN_REFRESH_REJECTED: vuelve a conectar la cuenta de Gmail."
+        ) from exc
+    except GmailApiUnauthorized as exc:
+        raise GmailRemoteError(str(exc)) from exc
+    except GmailApiPermissionDenied as exc:
+        raise GmailRemoteError(str(exc)) from exc
+    except GmailApiHttpError as exc:
+        raise GmailRemoteError(str(exc)) from exc
+    except httpx.HTTPError as exc:
+        raise GmailRemoteError(
+            "GMAIL_NETWORK_ERROR: no fue posible contactar Google."
+        ) from exc
+
+    source_account = str(profile.email_address or "").strip().casefold()
+    history_id = str(profile.history_id or "").strip()
+    if not source_account or not history_id:
+        raise GmailRemoteError("GMAIL_PROFILE_INCOMPLETE")
+
+    archivable_statuses = (
+        "WAITING_DOWNLOAD",
+        "RETRY",
+        "NEEDS_HUMAN",
+        "CLAIMED",
+    )
+    tasks = (
+        db.query(IndeedEmailResumeTask)
+        .join(
+            CandidateIngestionEvent,
+            CandidateIngestionEvent.id == IndeedEmailResumeTask.ingestion_event_id,
+        )
+        .filter(
+            IndeedEmailResumeTask.owner_sub == owner_sub,
+            CandidateIngestionEvent.owner_sub == owner_sub,
+            CandidateIngestionEvent.source == "EMAIL",
+            CandidateIngestionEvent.provider == resolved.ingestion_provider,
+            CandidateIngestionEvent.source_account == source_account,
+            IndeedEmailResumeTask.status.in_(archivable_statuses),
+        )
+        .all()
+    )
+
+    archived_by_status: dict[str, int] = {}
+    for task in tasks:
+        previous = str(task.status or "")
+        archived_by_status[previous] = archived_by_status.get(previous, 0) + 1
+        task.status = "IGNORED"
+        task.available_at = None
+        task.lease_token = None
+        task.lease_expires_at = None
+        task.claimed_at = None
+        task.last_error_code = "HISTORICAL_BOOTSTRAP_SKIPPED"
+        task.last_error_message = (
+            "Tarea historica archivada al reiniciar Gmail desde el estado actual."
+        )
+
+    repository.upsert_cursor(
+        db,
+        owner_sub=owner_sub,
+        source="EMAIL",
+        provider=resolved.ingestion_provider,
+        source_account=source_account,
+        cursor_value=history_id,
+    )
+    db.commit()
+
+    return {
+        "source_account": source_account,
+        "cursor_value": history_id,
+        "archived": len(tasks),
+        "archived_by_status": archived_by_status,
+        "mode": "INCREMENTAL_FROM_NOW",
+    }

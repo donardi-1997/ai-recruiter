@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 
 from app.config import get_gmail_oauth_settings
 from app.deps import get_current_user, get_db
-from app.domains.candidate_ingestion import gmail_integration
+from app.domains.candidate_ingestion import gmail_integration, indeed_email_agent_service
 
 router = APIRouter(tags=["gmail-ingestion"])
 
@@ -80,6 +80,64 @@ def gmail_sync(
 ):
     try:
         return gmail_integration.sync_mailbox(
+            db,
+            owner_sub=user["sub"],
+        )
+    except Exception as exc:
+        raise _translate(exc)
+
+
+@router.post("/api/integrations/gmail/reset-to-current")
+def gmail_reset_to_current(
+    db: Session = Depends(get_db),
+    user: dict = Depends(get_current_user),
+):
+    try:
+        return gmail_integration.reset_mailbox_to_current(
+            db,
+            owner_sub=user["sub"],
+        )
+    except Exception as exc:
+        raise _translate(exc)
+
+
+
+
+@router.get("/api/integrations/gmail/active-archived-test")
+def gmail_active_archived_test(
+    db: Session = Depends(get_db),
+    user: dict = Depends(get_current_user),
+):
+    try:
+        return indeed_email_agent_service.get_active_smoke_task(
+            db,
+            owner_sub=user["sub"],
+        )
+    except Exception as exc:
+        raise _translate(exc)
+
+
+@router.post("/api/integrations/gmail/reactivate-one-archived")
+def gmail_reactivate_one_archived(
+    db: Session = Depends(get_db),
+    user: dict = Depends(get_current_user),
+):
+    try:
+        return indeed_email_agent_service.reactivate_one_archived_task(
+            db,
+            owner_sub=user["sub"],
+        )
+    except Exception as exc:
+        raise _translate(exc)
+
+
+@router.post("/api/integrations/gmail/retry-active-archived-test")
+def gmail_retry_active_archived_test(
+    db: Session = Depends(get_db),
+    user: dict = Depends(get_current_user),
+):
+    try:
+        return indeed_email_agent_service.retry_active_needs_human_task(
             db,
             owner_sub=user["sub"],
         )

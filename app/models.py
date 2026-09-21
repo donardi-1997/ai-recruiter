@@ -412,12 +412,18 @@ class IndeedJobLink(Base):
     __tablename__ = "indeed_job_links"
     __table_args__ = (
         UniqueConstraint("job_id", name="uq_indeed_job_links_job"),
+        UniqueConstraint(
+            "owner_sub",
+            "discovery_key",
+            name="uq_indeed_job_links_owner_discovery_key",
+        ),
         Index("idx_indeed_job_links_owner", "owner_sub"),
     )
 
     id = Column(UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid.uuid4()))
     job_id = Column(UUID(as_uuid=False), ForeignKey("jobs.id", ondelete="CASCADE"), nullable=False)
     owner_sub = Column(Text, nullable=False)
+    discovery_key = Column(Text, nullable=True)
     sourced_posting_id = Column(Text, nullable=True)
     employer_job_id = Column(Text, nullable=True)
     external_status = Column(JSON, nullable=True, default=dict)

@@ -133,6 +133,16 @@ def test_alembic_head_builds_current_postgres_schema():
             "updated_at",
         }.issubset(indeed_email_task_columns)
 
+        indeed_job_link_columns = {
+            column["name"] for column in inspector.get_columns("indeed_job_links")
+        }
+        assert "discovery_key" in indeed_job_link_columns
+        indeed_job_link_uniques = {
+            constraint["name"]
+            for constraint in inspector.get_unique_constraints("indeed_job_links")
+        }
+        assert "uq_indeed_job_links_owner_discovery_key" in indeed_job_link_uniques
+
         company_context_columns = {
             column["name"] for column in inspector.get_columns("company_contexts")
         }
@@ -150,6 +160,6 @@ def test_alembic_head_builds_current_postgres_schema():
             revision = connection.execute(
                 text("SELECT version_num FROM alembic_version")
             ).scalar_one()
-        assert revision == "011"
+        assert revision == "012"
     finally:
         engine.dispose()

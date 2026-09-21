@@ -8,10 +8,11 @@ import app.config as config
 
 
 class FakeResponse:
-    def __init__(self, payload, *, status_code=200, content=b""):
+    def __init__(self, payload, *, status_code=200, content=b"", headers=None):
         self._payload = payload
         self.status_code = status_code
         self.content = content
+        self.headers = dict(headers or {})
 
     def json(self):
         return self._payload
@@ -126,3 +127,169 @@ def test_get_message_and_attachment_use_google_message_ids(monkeypatch):
     assert fake.gets[1][0].endswith(
         "/users/me/messages/gmail-1/attachments/attachment-1"
     )
+
+
+def test_refresh_access_token_classifies_rejected_refresh_without_exposing_payload(monkeypatch):
+    gmail = _module()
+    fake = FakeHttpClient()
+    fake.post_response = FakeResponse(
+        {"error": "invalid_grant", "error_description": "sensitive remote detail"},
+        status_code=400,
+    )
+    client = gmail.GmailClient(_settings(monkeypatch), http_client=fake)
+
+    with pytest.raises(gmail.GmailTokenRefreshRejected) as exc:
+        client.refresh_access_token()
+
+    assert str(exc.value) == "GMAIL_TOKEN_REFRESH_REJECTED"
+    assert "sensitive remote detail" not in str(exc.value)
+
+
+def test_gmail_profile_classifies_permission_denied_without_response_body(monkeypatch):
+    gmail = _module()
+    fake = FakeHttpClient()
+    fake.get_responses = [
+        FakeResponse(
+            {
+                "error": {
+                    "message": "sensitive permission detail",
+                    "errors": [{"reason": "insufficientPermissions"}],
+                    "status": "PERMISSION_DENIED",
+                }
+            },
+            status_code=403,
+        )
+    ]
+    client = gmail.GmailClient(_settings(monkeypatch), http_client=fake)
+    monkeypatch.setattr(client, "get_access_token", lambda: "access-1")
+
+    with pytest.raises(gmail.GmailApiPermissionDenied) as exc:
+        client.get_profile()
+
+    assert str(exc.value) == (
+        "GMAIL_API_PERMISSION_DENIED:get_profile:insufficientPermissions"
+    )
+    assert "sensitive permission detail" not in str(exc.value)
+
+
+def test_gmail_list_classifies_unauthorized(monkeypatch):
+    gmail = _module()
+    fake = FakeHttpClient()
+    fake.get_responses = [FakeResponse({"error": "invalid_token"}, status_code=401)]
+    client = gmail.GmailClient(_settings(monkeypatch), http_client=fake)
+    monkeypatch.setattr(client, "get_access_token", lambda: "access-1")
+
+    with pytest.raises(gmail.GmailApiUnauthorized) as exc:
+        client.list_messages()
+
+    assert str(exc.value) == "GMAIL_API_UNAUTHORIZED:list_messages:UNKNOWN"
+
+
+def test_gmail_permission_denied_identifies_list_messages_operation(monkeypatch):
+    gmail = _module()
+    fake = FakeHttpClient()
+    fake.get_responses = [
+        FakeResponse(
+            {
+                "error": {
+                    "message": "do not expose this message",
+                    "errors": [{"reason": "accessNotConfigured"}],
+                }
+            },
+            status_code=403,
+        )
+    ]
+    client = gmail.GmailClient(_settings(monkeypatch), http_client=fake)
+    monkeypatch.setattr(client, "get_access_token", lambda: "access-1")
+
+    with pytest.raises(gmail.GmailApiPermissionDenied) as exc:
+        client.list_messages()
+
+    assert str(exc.value) == (
+        "GMAIL_API_PERMISSION_DENIED:list_messages:accessNotConfigured"
+    )
+    assert "do not expose this message" not in str(exc.value)
+
+
+def test_gmail_rate_limit_retries_then_succeeds(monkeypatch):
+    gmail = _module()
+    fake = FakeHttpClient()
+    fake.get_responses = [
+        FakeResponse(
+            {"error": {"errors": [{"reason": "rateLimitExceeded"}]}},
+            status_code=403,
+        ),
+        FakeResponse(
+            {"id": "gmail-1", "historyId": "55", "payload": {"parts": []}},
+            status_code=200,
+        ),
+    ]
+    sleeps = []
+    client = gmail.GmailClient(
+        _settings(monkeypatch),
+        http_client=fake,
+        sleep_fn=sleeps.append,
+        jitter_fn=lambda: 0.0,
+    )
+    monkeypatch.setattr(client, "get_access_token", lambda: "access-1")
+
+    message = client.get_message("gmail-1")
+
+    assert message["id"] == "gmail-1"
+    assert len(fake.gets) == 2
+    assert sleeps == [1.0]
+
+
+def test_gmail_rate_limit_honors_retry_after(monkeypatch):
+    gmail = _module()
+    fake = FakeHttpClient()
+    fake.get_responses = [
+        FakeResponse(
+            {"error": {"errors": [{"reason": "userRateLimitExceeded"}]}},
+            status_code=403,
+            headers={"Retry-After": "3"},
+        ),
+        FakeResponse({"emailAddress": "user@gmail.com", "historyId": "123"}),
+    ]
+    sleeps = []
+    client = gmail.GmailClient(
+        _settings(monkeypatch),
+        http_client=fake,
+        sleep_fn=sleeps.append,
+        jitter_fn=lambda: 0.0,
+    )
+    monkeypatch.setattr(client, "get_access_token", lambda: "access-1")
+
+    profile = client.get_profile()
+
+    assert profile.email_address == "user@gmail.com"
+    assert sleeps == [3.0]
+
+
+def test_gmail_rate_limit_remains_classified_after_bounded_retries(monkeypatch):
+    gmail = _module()
+    fake = FakeHttpClient()
+    fake.get_responses = [
+        FakeResponse(
+            {"error": {"errors": [{"reason": "rateLimitExceeded"}]}},
+            status_code=403,
+        )
+        for _ in range(4)
+    ]
+    sleeps = []
+    client = gmail.GmailClient(
+        _settings(monkeypatch),
+        http_client=fake,
+        sleep_fn=sleeps.append,
+        jitter_fn=lambda: 0.0,
+    )
+    monkeypatch.setattr(client, "get_access_token", lambda: "access-1")
+
+    with pytest.raises(gmail.GmailApiPermissionDenied) as exc:
+        client.get_message("gmail-1")
+
+    assert str(exc.value) == (
+        "GMAIL_API_PERMISSION_DENIED:get_message:rateLimitExceeded"
+    )
+    assert len(fake.gets) == 4
+    assert sleeps == [1.0, 2.0, 4.0]

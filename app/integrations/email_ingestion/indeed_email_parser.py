@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from email.utils import parseaddr
 from html.parser import HTMLParser
 from typing import Any, Iterable
-from urllib.parse import urlsplit
+from urllib.parse import parse_qs, urlsplit
 
 
 class NotIndeedMessage(ValueError):
@@ -33,6 +33,7 @@ class ParsedIndeedApplication:
     subject: str
     candidate_name: str
     job_title: str
+    external_job_id: str | None
     resume_url: str
     internal_date_ms: int | None
 
@@ -80,6 +81,29 @@ _APPLICATION_PATTERNS = (
 
 def _normalize_space(value: str) -> str:
     return " ".join(str(value or "").split())
+
+
+def _clean_job_title(value: str) -> str:
+    title = _normalize_space(value)
+    title = re.sub(
+        r"^(?:el\s+puesto\s+de|puesto\s+de|la\s+vacante\s+de|vacante\s+de)\s+",
+        "",
+        title,
+        flags=re.IGNORECASE,
+    )
+    title = re.sub(
+        r"\s+publicad[oa]\s+en\s+Indeed\b.*$",
+        "",
+        title,
+        flags=re.IGNORECASE,
+    )
+    title = re.sub(
+        r"\.\s+Encontrar[aá]\s+su\s+informaci[oó]n\b.*$",
+        "",
+        title,
+        flags=re.IGNORECASE,
+    )
+    return _normalize_space(title).strip(" .-")
 
 
 def _host_allowed(host: str, suffixes: tuple[str, ...]) -> bool:
@@ -190,7 +214,7 @@ def _extract_application_fields(texts: Iterable[str]) -> tuple[str, str]:
                 if not match:
                     continue
                 candidate_name = _normalize_space(match.group("candidate"))
-                job_title = _normalize_space(match.group("job"))
+                job_title = _clean_job_title(match.group("job"))
                 if candidate_name and job_title:
                     return candidate_name, job_title
     raise InvalidIndeedMessage("INDEED_APPLICATION_FIELDS_MISSING")
@@ -209,6 +233,48 @@ def _validate_resume_url(
     if not _host_allowed(host, resume_host_suffixes):
         raise InvalidIndeedResumeLink("INDEED_RESUME_LINK_INVALID")
     return url
+
+
+
+
+_JOB_ID_QUERY_KEYS = (
+    "sourcedpostingid",
+    "jobkey",
+    "jobid",
+    "vjk",
+    "jk",
+)
+
+
+def _extract_external_job_id(
+    anchors: Iterable[tuple[str, str]],
+    *,
+    host_suffixes: tuple[str, ...],
+) -> str | None:
+    """Extract a stable Indeed posting identifier when the email exposes one."""
+    for href, _label in anchors:
+        raw = html.unescape(str(href or "").strip())
+        if not raw:
+            continue
+        try:
+            parsed = urlsplit(raw)
+        except ValueError:
+            continue
+        host = parsed.hostname or ""
+        if parsed.scheme.casefold() != "https" or not _host_allowed(host, host_suffixes):
+            continue
+        query = {
+            str(key).casefold(): values
+            for key, values in parse_qs(parsed.query, keep_blank_values=False).items()
+        }
+        for key in _JOB_ID_QUERY_KEYS:
+            values = query.get(key)
+            if not values:
+                continue
+            value = str(values[0] or "").strip()
+            if re.fullmatch(r"[A-Za-z0-9_-]{4,200}", value):
+                return value
+    return None
 
 
 def _resume_link_from_html(
@@ -296,6 +362,10 @@ def parse_indeed_application_email(
     candidate_name, job_title = _extract_application_fields(
         (*html_texts, *plain_texts)
     )
+    external_job_id = _extract_external_job_id(
+        anchors,
+        host_suffixes=resume_host_suffixes,
+    )
 
     internal_date_raw = str(message.get("internalDate") or "").strip()
     try:
@@ -310,6 +380,7 @@ def parse_indeed_application_email(
         subject=headers.get("subject", ""),
         candidate_name=candidate_name,
         job_title=job_title,
+        external_job_id=external_job_id,
         resume_url=resume_url,
         internal_date_ms=internal_date_ms,
     )

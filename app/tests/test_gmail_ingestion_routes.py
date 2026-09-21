@@ -4,7 +4,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.deps import get_current_user, get_db
-from app.domains.candidate_ingestion import gmail_integration
+from app.domains.candidate_ingestion import gmail_integration, indeed_email_agent_service
 from app.main import app
 
 
@@ -100,3 +100,108 @@ def test_gmail_sync_translates_operational_failures(
 
     assert response.status_code == expected_status
     assert "detail" in response.json()
+
+
+def test_gmail_reset_to_current_uses_authenticated_owner(api, monkeypatch):
+    client, principal = api
+    calls = {}
+
+    def fake_reset(db, *, owner_sub):
+        calls.update(db=db, owner_sub=owner_sub)
+        return {
+            "source_account": "recruiting@example.com",
+            "cursor_value": "999",
+            "archived": 7,
+            "archived_by_status": {"WAITING_DOWNLOAD": 6, "NEEDS_HUMAN": 1},
+            "mode": "INCREMENTAL_FROM_NOW",
+        }
+
+    monkeypatch.setattr(gmail_integration, "reset_mailbox_to_current", fake_reset)
+
+    response = client.post("/api/integrations/gmail/reset-to-current")
+
+    assert response.status_code == 200
+    assert response.json()["archived"] == 7
+    assert calls["owner_sub"] == principal["sub"]
+
+
+def test_reactivate_one_archived_uses_authenticated_owner(api, monkeypatch):
+    client, principal = api
+    calls = {}
+
+    def fake_reactivate(db, *, owner_sub):
+        calls.update(db=db, owner_sub=owner_sub)
+        return {
+            "reactivated": True,
+            "task_id": "task-1",
+            "status": "WAITING_DOWNLOAD",
+            "candidate_name": "Ana Perez",
+            "job_title": "Country Manager Chile",
+        }
+
+    monkeypatch.setattr(
+        indeed_email_agent_service,
+        "reactivate_one_archived_task",
+        fake_reactivate,
+    )
+
+    response = client.post("/api/integrations/gmail/reactivate-one-archived")
+
+    assert response.status_code == 200
+    assert response.json()["reactivated"] is True
+    assert response.json()["task_id"] == "task-1"
+    assert calls["owner_sub"] == principal["sub"]
+
+
+def test_retry_active_archived_test_uses_authenticated_owner(api, monkeypatch):
+    client, principal = api
+    calls = {}
+
+    def fake_retry(db, *, owner_sub):
+        calls.update(db=db, owner_sub=owner_sub)
+        return {
+            "retried": True,
+            "task_id": "task-1",
+            "status": "WAITING_DOWNLOAD",
+            "candidate_name": "Ana Perez",
+            "job_title": "Country Manager Chile",
+        }
+
+    monkeypatch.setattr(
+        indeed_email_agent_service,
+        "retry_active_needs_human_task",
+        fake_retry,
+    )
+
+    response = client.post("/api/integrations/gmail/retry-active-archived-test")
+
+    assert response.status_code == 200
+    assert response.json()["retried"] is True
+    assert calls["owner_sub"] == principal["sub"]
+
+
+def test_active_archived_test_uses_authenticated_owner(api, monkeypatch):
+    client, principal = api
+    calls = {}
+
+    def fake_get_active(db, *, owner_sub):
+        calls.update(db=db, owner_sub=owner_sub)
+        return {
+            "task_id": "task-1",
+            "status": "NEEDS_HUMAN",
+            "candidate_name": "CESAR ARCILA",
+            "job_title": "Líder de Contact Center Comercial",
+            "last_error_code": "INDEED_UI_REQUIRES_REVIEW",
+        }
+
+    monkeypatch.setattr(
+        indeed_email_agent_service,
+        "get_active_smoke_task",
+        fake_get_active,
+    )
+
+    response = client.get("/api/integrations/gmail/active-archived-test")
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "NEEDS_HUMAN"
+    assert calls["owner_sub"] == principal["sub"]

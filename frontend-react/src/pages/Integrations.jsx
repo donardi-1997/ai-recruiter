@@ -11,6 +11,7 @@ function Integrations() {
   const [status, setStatus] = useState(null);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState("");
+  const [activeSmokeNeedsHuman, setActiveSmokeNeedsHuman] = useState(false);
   const [message, setMessage] = useState(() =>
     oauthOutcome === "connected" ? "Gmail corporativo conectado correctamente." : "",
   );
@@ -37,8 +38,26 @@ function Integrations() {
     let active = true;
 
     api.get("/integrations/gmail/status")
-      .then(({ data }) => {
-        if (active) setStatus(data);
+      .then(async ({ data }) => {
+        if (!active) return;
+        setStatus(data);
+
+        if (data?.connected) {
+          try {
+            const { data: smokeTask } = await api.get(
+              "/integrations/gmail/active-archived-test",
+            );
+            if (active) {
+              setActiveSmokeNeedsHuman(
+                ["NEEDS_HUMAN", "RETRY", "FAILED"].includes(smokeTask?.status),
+              );
+            }
+          } catch {
+            if (active) setActiveSmokeNeedsHuman(false);
+          }
+        } else {
+          setActiveSmokeNeedsHuman(false);
+        }
       })
       .catch((requestError) => {
         if (!active) return;
@@ -97,6 +116,62 @@ function Integrations() {
     } catch (requestError) {
       const detail = requestError?.response?.data?.detail;
       setError(detail || "No fue posible sincronizar Gmail.");
+    } finally {
+      setBusy("");
+    }
+  }
+
+  async function reactivateOneArchived() {
+    setBusy("reactivate");
+    setError("");
+    setMessage("");
+    try {
+      const { data } = await api.post("/integrations/gmail/reactivate-one-archived");
+      if (data?.task_id) {
+        const candidate = data?.candidate_name || "Candidato";
+        const role = data?.job_title ? ` · ${data.job_title}` : "";
+        const errorCode = data?.last_error_code ? ` · ${data.last_error_code}` : "";
+        const retryable = ["NEEDS_HUMAN", "RETRY", "FAILED"].includes(data?.status);
+        setActiveSmokeNeedsHuman(retryable);
+        setMessage(
+          data?.reactivated
+            ? `Prueba preparada: ${candidate}${role}. Abre el Resume Agent para procesar solo esta tarea.`
+            : retryable
+              ? `La tarea activa puede reintentarse: ${candidate}${role}${errorCode}.`
+              : `Ya existe una tarea activa: ${candidate}${role}${errorCode}.`,
+        );
+      } else {
+        setActiveSmokeNeedsHuman(false);
+        setMessage("No hay tareas históricas archivadas disponibles para prueba.");
+      }
+    } catch (requestError) {
+      const detail = requestError?.response?.data?.detail;
+      setError(detail || "No fue posible preparar una tarea de prueba.");
+    } finally {
+      setBusy("");
+    }
+  }
+
+  async function retryActiveArchivedTest() {
+    setBusy("retry-test");
+    setError("");
+    setMessage("");
+    try {
+      const { data } = await api.post("/integrations/gmail/retry-active-archived-test");
+      if (data?.retried) {
+        setActiveSmokeNeedsHuman(false);
+        const candidate = data?.candidate_name || "Candidato";
+        const role = data?.job_title ? ` · ${data.job_title}` : "";
+        setMessage(
+          `Prueba reactivada: ${candidate}${role}. El Resume Agent intentará esta misma tarea otra vez.`,
+        );
+      } else {
+        setActiveSmokeNeedsHuman(false);
+        setMessage("No hay una tarea de prueba fallida o pendiente de reintento.");
+      }
+    } catch (requestError) {
+      const detail = requestError?.response?.data?.detail;
+      setError(detail || "No fue posible reintentar la tarea de prueba.");
     } finally {
       setBusy("");
     }
@@ -227,6 +302,24 @@ function Integrations() {
                   >
                     {busy === "sync" ? "Sincronizando…" : "Sincronizar ahora"}
                   </button>
+                  <button
+                    type="button"
+                    className="integration-secondary"
+                    onClick={reactivateOneArchived}
+                    disabled={Boolean(busy)}
+                  >
+                    {busy === "reactivate" ? "Preparando prueba…" : "Probar 1 candidato archivado"}
+                  </button>
+                  {activeSmokeNeedsHuman && (
+                    <button
+                      type="button"
+                      className="integration-secondary"
+                      onClick={retryActiveArchivedTest}
+                      disabled={Boolean(busy)}
+                    >
+                      {busy === "retry-test" ? "Reintentando…" : "Reintentar prueba"}
+                    </button>
+                  )}
                   <button
                     type="button"
                     className="integration-secondary"

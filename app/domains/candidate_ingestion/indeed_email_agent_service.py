@@ -15,7 +15,12 @@ from app.config import (
     get_gmail_settings,
     get_indeed_resume_agent_settings,
 )
-from app.domains.candidate_ingestion import gmail_integration, indeed_email_repository, repository
+from app.domains.candidate_ingestion import (
+    gmail_integration,
+    indeed_email_repository,
+    job_resolution,
+    repository,
+)
 from app.domains.candidate_ingestion.models import (
     CandidateIngestionDocument,
     IndeedEmailResumeTask,
@@ -245,7 +250,7 @@ def claim_next_task_with_resume_url(
             resume_host_suffixes=parser_settings.resume_host_suffixes,
         )
     except (InvalidIndeedResumeLink, InvalidIndeedMessage, NotIndeedMessage) as exc:
-        code = (
+        code = str(exc or "").strip() or (
             "INDEED_RESUME_LINK_INVALID"
             if isinstance(exc, InvalidIndeedResumeLink)
             else "INDEED_EMAIL_INVALID"
@@ -270,10 +275,43 @@ def claim_next_task_with_resume_url(
         )
         raise ResumeClaimResolutionError("Gmail message is unavailable.") from exc
 
+    metadata.update(
+        {
+            "candidate_name": parsed.candidate_name,
+            "job_title": parsed.job_title,
+            "external_job_id": parsed.external_job_id,
+            "sender": parsed.sender,
+            "subject": parsed.subject,
+        }
+    )
+    try:
+        job = job_resolution.resolve_or_create_indeed_job(
+            db,
+            owner_sub=owner_sub,
+            metadata=metadata,
+        )
+        event.raw_metadata = metadata
+        event.job_id = job.id if job is not None else None
+        task.job_id = job.id if job is not None else None
+        task.candidate_name = parsed.candidate_name
+        task.job_title = parsed.job_title
+        db.commit()
+    except Exception as exc:
+        db.rollback()
+        _safe_resolution_failure(
+            db,
+            owner_sub=owner_sub,
+            task_id=claimed.task_id,
+            lease_token=claimed.lease_token,
+            code="INDEED_JOB_RESOLUTION_FAILED",
+            human_required=False,
+        )
+        raise ResumeClaimResolutionError("Indeed job resolution failed.") from exc
+
     return ClaimedResumeTaskWithUrl(
         task_id=claimed.task_id,
-        candidate_name=claimed.candidate_name,
-        job_title=claimed.job_title,
+        candidate_name=parsed.candidate_name,
+        job_title=parsed.job_title,
         resume_url=parsed.resume_url,
         lease_token=claimed.lease_token,
         lease_expires_at=claimed.lease_expires_at,
@@ -476,6 +514,190 @@ def store_resume_pdf(
     db.commit()
     db.refresh(document)
     return document
+
+
+def get_active_smoke_task(
+    db: Session,
+    *,
+    owner_sub: str,
+) -> dict:
+    """Return the current owner-scoped smoke-test task without mutating it."""
+    active_statuses = ("WAITING_DOWNLOAD", "RETRY", "NEEDS_HUMAN", "CLAIMED")
+    task = (
+        db.query(IndeedEmailResumeTask)
+        .filter(
+            IndeedEmailResumeTask.owner_sub == owner_sub,
+            IndeedEmailResumeTask.status.in_(active_statuses),
+        )
+        .order_by(
+            IndeedEmailResumeTask.created_at.asc(),
+            IndeedEmailResumeTask.id.asc(),
+        )
+        .first()
+    )
+    if task is None:
+        task = (
+            db.query(IndeedEmailResumeTask)
+            .filter(
+                IndeedEmailResumeTask.owner_sub == owner_sub,
+                IndeedEmailResumeTask.status == "FAILED",
+            )
+            .order_by(
+                IndeedEmailResumeTask.created_at.asc(),
+                IndeedEmailResumeTask.id.asc(),
+            )
+            .first()
+        )
+    if task is None:
+        return {
+            "task_id": None,
+            "status": None,
+            "candidate_name": None,
+            "job_title": None,
+            "last_error_code": None,
+        }
+    return {
+        "task_id": str(task.id),
+        "status": str(task.status),
+        "candidate_name": task.candidate_name,
+        "job_title": task.job_title,
+        "last_error_code": task.last_error_code,
+    }
+
+
+def reactivate_one_archived_task(
+    db: Session,
+    *,
+    owner_sub: str,
+) -> dict:
+    """Prepare exactly one archived historical task for a controlled smoke test."""
+    active_statuses = ("WAITING_DOWNLOAD", "RETRY", "NEEDS_HUMAN", "CLAIMED")
+    active = (
+        db.query(IndeedEmailResumeTask)
+        .filter(
+            IndeedEmailResumeTask.owner_sub == owner_sub,
+            IndeedEmailResumeTask.status.in_(active_statuses),
+        )
+        .order_by(
+            IndeedEmailResumeTask.created_at.asc(),
+            IndeedEmailResumeTask.id.asc(),
+        )
+        .first()
+    )
+    if active is None:
+        active = (
+            db.query(IndeedEmailResumeTask)
+            .filter(
+                IndeedEmailResumeTask.owner_sub == owner_sub,
+                IndeedEmailResumeTask.status == "FAILED",
+            )
+            .order_by(
+                IndeedEmailResumeTask.created_at.asc(),
+                IndeedEmailResumeTask.id.asc(),
+            )
+            .first()
+        )
+    if active is not None:
+        return {
+            "reactivated": False,
+            "task_id": str(active.id),
+            "status": str(active.status),
+            "candidate_name": active.candidate_name,
+            "job_title": active.job_title,
+            "last_error_code": active.last_error_code,
+        }
+
+    task = (
+        db.query(IndeedEmailResumeTask)
+        .filter(
+            IndeedEmailResumeTask.owner_sub == owner_sub,
+            IndeedEmailResumeTask.status == "IGNORED",
+            IndeedEmailResumeTask.last_error_code == "HISTORICAL_BOOTSTRAP_SKIPPED",
+        )
+        .order_by(
+            IndeedEmailResumeTask.created_at.desc(),
+            IndeedEmailResumeTask.id.desc(),
+        )
+        .first()
+    )
+    if task is None:
+        return {
+            "reactivated": False,
+            "task_id": None,
+            "status": None,
+            "candidate_name": None,
+            "job_title": None,
+            "last_error_code": None,
+        }
+
+    task.status = "WAITING_DOWNLOAD"
+    task.available_at = None
+    task.lease_token = None
+    task.lease_expires_at = None
+    task.claimed_at = None
+    task.attempt_count = 0
+    task.last_error_code = None
+    task.last_error_message = None
+    db.commit()
+    db.refresh(task)
+    return {
+        "reactivated": True,
+        "task_id": str(task.id),
+        "status": str(task.status),
+        "candidate_name": task.candidate_name,
+        "job_title": task.job_title,
+        "last_error_code": None,
+    }
+
+
+def retry_active_needs_human_task(
+    db: Session,
+    *,
+    owner_sub: str,
+) -> dict:
+    """Retry the current owner-scoped smoke-test task in place.
+
+    NEEDS_HUMAN, RETRY, and terminal FAILED tasks are eligible. FAILED retries
+    reset the attempt budget so the diagnostic build can observe the real UI.
+    """
+    retryable_statuses = ("NEEDS_HUMAN", "RETRY", "FAILED")
+    task = (
+        db.query(IndeedEmailResumeTask)
+        .filter(
+            IndeedEmailResumeTask.owner_sub == owner_sub,
+            IndeedEmailResumeTask.status.in_(retryable_statuses),
+        )
+        .order_by(
+            IndeedEmailResumeTask.created_at.asc(),
+            IndeedEmailResumeTask.id.asc(),
+        )
+        .first()
+    )
+    if task is None:
+        return {
+            "retried": False,
+            "task_id": None,
+            "status": None,
+            "candidate_name": None,
+            "job_title": None,
+        }
+
+    task.status = "WAITING_DOWNLOAD"
+    task.available_at = None
+    task.attempt_count = 0
+    task.completed_at = None
+    task.last_error_code = None
+    task.last_error_message = None
+    _clear_lease(task)
+    db.commit()
+    db.refresh(task)
+    return {
+        "retried": True,
+        "task_id": str(task.id),
+        "status": str(task.status),
+        "candidate_name": task.candidate_name,
+        "job_title": task.job_title,
+    }
 
 
 def requeue_failed_tasks(
