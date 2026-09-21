@@ -74,7 +74,7 @@ describe("Jobs AI enrichment", () => {
     api.put.mockResolvedValue({ data: {} });
   });
 
-  it("shows optional enrichment only when creating a vacancy", async () => {
+  it("shows enrichment when creating and editing a vacancy", async () => {
     renderJobs();
     await screen.findByText("Existing Cloud Engineer");
 
@@ -83,7 +83,8 @@ describe("Jobs AI enrichment", () => {
 
     fireEvent.click(screen.getByRole("button", { name: /cerrar formulario/i }));
     fireEvent.click(screen.getByText("Editar"));
-    expect(screen.queryByRole("button", { name: /enriquecer con ia/i })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /enriquecer con ia/i })).toBeInTheDocument();
+    expect(screen.getByText(/nada se guarda hasta que pulses guardar cambios/i)).toBeInTheDocument();
   });
 
   it("enriches the current draft and previews before applying", async () => {
@@ -146,6 +147,46 @@ describe("Jobs AI enrichment", () => {
             required_technologies: ["AWS"],
             preferred_technologies: ["Terraform"],
             assumptions_to_validate: ["Confirmar si EKS forma parte del stack"],
+          }),
+        })
+      );
+    });
+  });
+
+  it("can enrich an existing vacancy and only persists after Guardar cambios", async () => {
+    renderJobs();
+    await screen.findByText("Existing Cloud Engineer");
+
+    fireEvent.click(screen.getByText("Editar"));
+    fireEvent.click(screen.getByRole("button", { name: /enriquecer con ia/i }));
+
+    await waitFor(() => {
+      expect(api.post).toHaveBeenCalledWith("/jobs/enrich", {
+        title: "Existing Cloud Engineer",
+        description: "Existing description",
+        country_code: null,
+        city: null,
+        employment_type: null,
+        evaluation_profile: {},
+      });
+    });
+
+    await screen.findByText("Propuesta de IA");
+    fireEvent.click(screen.getByRole("button", { name: /aplicar propuesta/i }));
+
+    expect(screen.getByLabelText("Descripción y requisitos")).toHaveValue(PROPOSAL.improved_description);
+    expect(api.put).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole("button", { name: /guardar cambios/i }));
+
+    await waitFor(() => {
+      expect(api.put).toHaveBeenCalledWith(
+        "/jobs/job-1",
+        expect.objectContaining({
+          description: PROPOSAL.improved_description,
+          evaluation_profile: expect.objectContaining({
+            required_technologies: ["AWS"],
+            preferred_technologies: ["Terraform"],
           }),
         })
       );
