@@ -38,6 +38,12 @@ class InvalidResumePdf(ValueError):
         super().__init__(self.code)
 
 
+class BrowserFetchStageError(RuntimeError):
+    def __init__(self, code: str):
+        self.code = str(code)
+        super().__init__(self.code)
+
+
 def validate_pdf(data: bytes, *, max_bytes: int) -> None:
     payload = bytes(data or b"")
     if not payload.startswith(b"%PDF-"):
@@ -984,7 +990,10 @@ class IndeedBrowser:
             return None
 
     def fetch_resume(self, url: str) -> BrowserResult:
-        self.start()
+        try:
+            self.start()
+        except Exception as exc:
+            raise BrowserFetchStageError("RESUME_BROWSER_START_FAILED") from exc
         resume_url = str(url or "").strip()
         if not resume_url.lower().startswith("https://"):
             return BrowserResult(BrowserOutcome.NEEDS_HUMAN, human_code="INDEED_UI_REQUIRES_REVIEW")
@@ -1004,13 +1013,28 @@ class IndeedBrowser:
         except Exception:
             pass
 
-        page = self._page()
-        navigation = page.goto(
-            resume_url,
-            wait_until="domcontentloaded",
-            timeout=int(self._config.request_timeout_seconds * 1000),
-        )
-        navigated_pdf = self._response_pdf(navigation)
+        try:
+            page = self._page()
+        except Exception as exc:
+            raise BrowserFetchStageError("RESUME_BROWSER_PAGE_FAILED") from exc
+
+        try:
+            navigation = page.goto(
+                resume_url,
+                wait_until="domcontentloaded",
+                timeout=int(self._config.request_timeout_seconds * 1000),
+            )
+        except Exception as exc:
+            raise BrowserFetchStageError("RESUME_BROWSER_NAVIGATION_FAILED") from exc
+
+        try:
+            navigated_pdf = self._response_pdf(navigation)
+        except InvalidResumePdf:
+            raise
+        except Exception as exc:
+            raise BrowserFetchStageError(
+                "RESUME_BROWSER_NAVIGATION_RESPONSE_FAILED"
+            ) from exc
         if navigated_pdf is not None:
             validate_pdf(navigated_pdf, max_bytes=self._config.max_pdf_bytes)
             return BrowserResult(
