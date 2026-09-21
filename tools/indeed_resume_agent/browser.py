@@ -569,29 +569,90 @@ class IndeedBrowser:
                 continue
         return None
 
-    def _open_candidates_workspace(self, page) -> bool:
-        control = self._candidate_navigation_control(page)
-        if control is not None:
-            try:
-                control.click()
-                page.wait_for_timeout(750)
-                if not self._is_generic_recruiting_landing(page):
-                    return True
-            except Exception:
-                pass
+    @staticmethod
+    def _is_candidates_workspace(page) -> bool:
+        try:
+            parsed = urlsplit(str(getattr(page, "url", "") or ""))
+        except Exception:
+            return False
+        host = str(parsed.hostname or "").casefold()
+        path = str(parsed.path or "")
+        return host == "employers.indeed.com" and path.startswith("/candidates")
 
-        # Keep the old direct URL as a final fallback. Some accounts expose the
-        # classic candidates workspace here, while others redirect it back to
-        # Smart Recruiting.
+    @staticmethod
+    def _candidate_manage_tab(page):
+        name = re.compile(
+            r"^(?:gestionar candidatos|manage candidates)$",
+            re.IGNORECASE,
+        )
+        for role in ("tab", "link", "button"):
+            try:
+                locator = page.get_by_role(role, name=name)
+                if locator.count() > 0:
+                    return locator.first
+            except Exception:
+                continue
+        try:
+            locator = page.get_by_text(name)
+            if locator.count() > 0:
+                return locator.first
+        except Exception:
+            pass
+        return None
+
+    def _open_candidates_workspace(self, page) -> bool:
+        # Prefer the canonical Candidates URL. The live employer UI exposes the
+        # application list at /candidates, with the Manage candidates tab and a
+        # Search candidates textbox. This avoids depending on icon-only left-nav
+        # accessibility labels that vary between Indeed experiments.
         try:
             page.goto(
                 _INDEED_CANDIDATES_HOME,
                 wait_until="domcontentloaded",
                 timeout=int(self._config.request_timeout_seconds * 1000),
             )
-            return not self._is_generic_recruiting_landing(page)
         except Exception:
-            return False
+            pass
+
+        interval_ms = 500
+        attempts = max(
+            1,
+            min(
+                20,
+                int(max(1.0, float(self._config.request_timeout_seconds)) * 1000)
+                // interval_ms,
+            ),
+        )
+        for _ in range(attempts):
+            if self._is_candidates_workspace(page):
+                manage_tab = self._candidate_manage_tab(page)
+                if manage_tab is not None:
+                    try:
+                        manage_tab.click()
+                        page.wait_for_timeout(500)
+                    except Exception:
+                        pass
+                return True
+
+            if self._requires_human(page):
+                return False
+
+            try:
+                page.wait_for_timeout(interval_ms)
+            except Exception:
+                time.sleep(interval_ms / 1000.0)
+
+        # Some Indeed experiments route /candidates back through Smart
+        # Recruiting. In that case retain the semantic left-rail fallback.
+        control = self._candidate_navigation_control(page)
+        if control is not None:
+            try:
+                control.click()
+                page.wait_for_timeout(750)
+                return self._is_candidates_workspace(page)
+            except Exception:
+                pass
+        return False
 
     @staticmethod
     def _candidate_search_box(page):
@@ -696,6 +757,10 @@ class IndeedBrowser:
                 if search_box is not None:
                     try:
                         search_box.fill(name)
+                        try:
+                            search_box.press("Enter")
+                        except Exception:
+                            pass
                         search_filled = True
                     except Exception:
                         pass
