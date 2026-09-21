@@ -201,7 +201,7 @@ describe("Gmail corporate integration", () => {
 
     expect(
       await screen.findByText(
-        /La tarea activa necesita revisión: Ana Perez · Country Manager Chile · INDEED_APPLICATION_FIELDS_MISSING/,
+        /La tarea activa puede reintentarse: Ana Perez · Country Manager Chile · INDEED_APPLICATION_FIELDS_MISSING/,
       ),
     ).toBeInTheDocument();
   });
@@ -299,6 +299,40 @@ describe("Gmail corporate integration", () => {
     expect(api.get).toHaveBeenCalledWith(
       "/integrations/gmail/active-archived-test",
     );
+  });
+
+
+
+  it("restores retry action for a terminal failed smoke task", async () => {
+    api.get
+      .mockResolvedValueOnce({
+        data: {
+          enabled: true,
+          configured: true,
+          oauth_configured: true,
+          connected: true,
+          connected_email: "recruiting@asiaticorp.com",
+          provider: "INDEED",
+          safe_filter: true,
+          redirect_uri: "https://abc.execute-api.us-east-2.amazonaws.com/prod/api/integrations/gmail/oauth/callback",
+        },
+      })
+      .mockResolvedValueOnce({
+        data: {
+          task_id: "task-failed",
+          status: "FAILED",
+          candidate_name: "CESAR ARCILA",
+          job_title: "Líder de Contact Center Comercial",
+          last_error_code: "RESUME_DOWNLOAD_FAILED",
+        },
+      });
+
+    renderPage();
+
+    expect(await screen.findByText("recruiting@asiaticorp.com")).toBeInTheDocument();
+    expect(
+      await screen.findByRole("button", { name: "Reintentar prueba" }),
+    ).toBeInTheDocument();
   });
 
   it("disconnects the corporate mailbox and refreshes status", async () => {
