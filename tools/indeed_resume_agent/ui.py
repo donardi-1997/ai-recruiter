@@ -34,7 +34,7 @@ def build_ui_state(snapshot: WorkerSnapshot, stats: QueueStats) -> UiState:
         "COMPLETED": "CV cargado correctamente",
         "PAUSED": "En pausa",
         "MANUAL_BROWSER_OPEN": "Cierra el navegador manual para continuar",
-        "MANUAL_LOGIN_REQUIRED": "Indeed mostró CAPTCHA/verificación. Resuélvelo en Chrome normal, cierra Chrome y vuelve a intentar",
+        "MANUAL_LOGIN_REQUIRED": "Indeed requiere verificación. Pulsa Open Indeed (Google Chrome), inicia sesión o resuelve el CAPTCHA, cierra Chrome y vuelve a intentar",
         "MANUAL_OPEN_FAILED": "No se pudo abrir Google Chrome con el perfil del agente",
         "DIAGNOSTIC_ANCHOR_FAILED": "Chrome no creó la pestaña de respaldo. Cierra Chrome y vuelve a abrir Diagnostic mode",
         "DIAGNOSTIC_MODE": "Modo diagnóstico activo: usa Indeed normalmente y luego pulsa Guardar diagnóstico",
