@@ -298,6 +298,37 @@ describe("Jobs page", () => {
     confirmSpy.mockRestore();
   });
 
+  it("vacante without description offers Editar y enriquecer from detail", async () => {
+    api.get.mockImplementation((url) => {
+      if (url === "/jobs") {
+        return Promise.resolve({
+          data: [
+            {
+              job_id: "job-empty",
+              title: "Líder de Marketing y Crecimiento",
+              description: null,
+              candidate_count: 0,
+              created_at: "2026-09-21T10:00:00Z",
+            },
+          ],
+        });
+      }
+      if (url === "/jobs/job-empty/candidates") return Promise.resolve({ data: [] });
+      return Promise.resolve({ data: [] });
+    });
+
+    renderJobs();
+    await screen.findByText("Líder de Marketing y Crecimiento");
+    fireEvent.click(screen.getByRole("button", { name: /^ver$/i }));
+
+    expect(await screen.findByText("Sin descripción.")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /editar y enriquecer/i }));
+
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /enriquecer con ia/i })).toBeInTheDocument();
+    expect(screen.getByLabelText("Título de la vacante")).toHaveValue("Líder de Marketing y Crecimiento");
+  });
+
   it("detail modal closes with X button", async () => {
     renderJobs();
     await screen.findByText("Backend Developer");
