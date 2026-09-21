@@ -29,6 +29,7 @@ def build_ui_state(snapshot: WorkerSnapshot, stats: QueueStats) -> UiState:
         "DOWNLOADING": "Descargando CV...",
         "COMPLETED": "CV cargado correctamente",
         "PAUSED": "En pausa",
+        "MANUAL_BROWSER_OPEN": "Cierra Indeed manual para continuar",
         "WAITING_FOR_HUMAN": "Indeed requiere intervención manual",
         "LEASE_LOST": "La tarea será reclamada de forma segura",
         "RETRY": "Reintento programado",
@@ -138,10 +139,21 @@ def run_ui(*, worker, api, browser) -> None:
                     if command == "pause":
                         worker.pause()
                     elif command == "resume":
-                        try:
-                            worker.resume()
-                        except Exception:
-                            pass
+                        if browser.manual_session_open:
+                            publish(
+                                WorkerSnapshot(
+                                    "MANUAL_BROWSER_OPEN",
+                                    worker.snapshot.active_candidate,
+                                    worker.snapshot.processed_session,
+                                    None,
+                                ),
+                                last_stats,
+                            )
+                        else:
+                            try:
+                                worker.resume()
+                            except Exception:
+                                pass
                     elif command == "open":
                         worker.pause()
                         publish(worker.snapshot, last_stats)
@@ -150,13 +162,26 @@ def run_ui(*, worker, api, browser) -> None:
                         except Exception:
                             pass
 
-                try:
-                    snapshot = worker.run_once()
-                    last_stats = api.stats()
+                if browser.manual_session_open:
+                    snapshot = WorkerSnapshot(
+                        "MANUAL_BROWSER_OPEN",
+                        worker.snapshot.active_candidate,
+                        worker.snapshot.processed_session,
+                        None,
+                    )
+                    try:
+                        last_stats = api.stats()
+                    except Exception:
+                        pass
                     publish(snapshot, last_stats)
-                except Exception:
-                    publish(WorkerSnapshot("ERROR", None, worker.snapshot.processed_session, None), last_stats)
-                    snapshot = worker.snapshot
+                else:
+                    try:
+                        snapshot = worker.run_once()
+                        last_stats = api.stats()
+                        publish(snapshot, last_stats)
+                    except Exception:
+                        publish(WorkerSnapshot("ERROR", None, worker.snapshot.processed_session, None), last_stats)
+                        snapshot = worker.snapshot
 
                 delay = 0.5 if snapshot.state not in {"IDLE", "PAUSED", "WAITING_FOR_HUMAN"} else 2.0
                 stop_event.wait(delay)
