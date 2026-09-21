@@ -42,6 +42,12 @@ def test_manual_login_required_has_explicit_instruction():
     assert "Inicia sesión" in ui.status_label
 
 
+def test_diagnostic_anchor_failure_is_explicit():
+    ui=build_ui_state(snap("DIAGNOSTIC_ANCHOR_FAILED"), stats())
+    assert "pestaña de respaldo" in ui.status_label
+    assert "Diagnostic mode" in ui.status_label
+
+
 def test_diagnostic_mode_and_saved_path_are_explicit():
     active=build_ui_state(snap("DIAGNOSTIC_MODE","Ada"), stats())
     saved=build_ui_state(
