@@ -167,10 +167,7 @@ class ResumeWorker:
                 self._human_resume_url = task.resume_url
                 detail = code
                 if result.diagnostic_path:
-                    detail = (
-                        "Indeed mostró una interfaz no reconocida. "
-                        f"Diagnóstico local: {result.diagnostic_path}"
-                    )
+                    detail = f"{code} — Diagnóstico local: {result.diagnostic_path}"
                 return self._set(
                     "WAITING_FOR_HUMAN",
                     candidate=task.candidate_name,
