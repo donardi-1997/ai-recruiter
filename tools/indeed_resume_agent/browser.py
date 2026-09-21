@@ -124,13 +124,33 @@ class IndeedBrowser:
         self._config = config
         self._playwright_factory = playwright_factory or _default_playwright_factory
         self._edge_executable_resolver = edge_executable_resolver or _resolve_edge_executable
-        self._process_runner = process_runner or subprocess.run
+        self._process_runner = process_runner or subprocess.Popen
+        self._manual_process = None
         self._playwright = None
         self._context = None
+
+    @property
+    def manual_session_open(self) -> bool:
+        process = self._manual_process
+        if process is None:
+            return False
+        poll = getattr(process, "poll", None)
+        if not callable(poll):
+            self._manual_process = None
+            return False
+        try:
+            running = poll() is None
+        except Exception:
+            return True
+        if not running:
+            self._manual_process = None
+        return running
 
     def start(self) -> None:
         if self._context is not None:
             return
+        if self.manual_session_open:
+            raise RuntimeError("INDEED_MANUAL_BROWSER_OPEN")
         self._config.browser_profile_dir.mkdir(parents=True, exist_ok=True)
         self._playwright = self._playwright_factory().start()
         self._context = self._playwright.chromium.launch_persistent_context(
@@ -182,6 +202,8 @@ class IndeedBrowser:
         The same dedicated user-data directory is reused later by Playwright, so
         cookies/session state survive without automating login, MFA, or CAPTCHA.
         """
+        if self.manual_session_open:
+            return
         self.close()
         self._config.browser_profile_dir.mkdir(parents=True, exist_ok=True)
         edge = self._edge_executable_resolver()
@@ -193,7 +215,7 @@ class IndeedBrowser:
             "--no-default-browser-check",
             self._safe_manual_url(url),
         ]
-        self._process_runner(command, check=False)
+        self._manual_process = self._process_runner(command)
 
     @staticmethod
     def _response_pdf(response) -> bytes | None:
