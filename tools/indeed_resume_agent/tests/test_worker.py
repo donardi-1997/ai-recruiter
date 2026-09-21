@@ -194,5 +194,5 @@ def test_needs_human_surfaces_only_local_diagnostic_path(tmp_path):
     snap=worker.run_once()
 
     assert snap.state == "WAITING_FOR_HUMAN"
-    assert diagnostic in (snap.last_error or "")
+    assert snap.last_error == f"INDEED_UI_REQUIRES_REVIEW — Diagnóstico local: {diagnostic}"
     assert api.human == [("t1","INDEED_UI_REQUIRES_REVIEW")]
