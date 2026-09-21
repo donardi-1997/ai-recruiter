@@ -17,11 +17,13 @@ def test_primary_ci_installs_chromium_for_golden_browser_fixtures():
     assert "test_browser_live_fixtures.py" not in text  # discovered by the test directory run
 
 
-def test_agent_build_workflow_is_manual_only():
+def test_agent_build_workflow_runs_only_after_main_changes_or_manual_dispatch():
     text = WORKFLOW.read_text(encoding="utf-8")
     assert "workflow_dispatch:" in text
     assert "pull_request:" not in text
-    assert "\n  push:" not in text
+    assert "push:" in text
+    assert "branches: [main]" in text
+    assert 'tools/indeed_resume_agent/**' in text
 
 
 def test_agent_workflow_builds_windows_onedir_and_uploads_artifact():
