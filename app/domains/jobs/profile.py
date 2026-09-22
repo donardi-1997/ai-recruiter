@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 
@@ -20,11 +21,26 @@ PROFILE_LIST_FIELDS = (
 )
 
 
+_NON_SCORING_VALIDATION_SECTION = re.compile(
+    r"(?:\r?\n){2,}Preguntas por validar \(no son requisitos de evaluación\)\s*:?(?:\r?\n|$)",
+    re.IGNORECASE,
+)
+
+
 def normalize_text(value: Any) -> str:
     """Collapse whitespace without changing recruiter-authored word order."""
     if value is None:
         return ""
     return " ".join(str(value).split())
+
+
+def evaluation_description_text(value: Any) -> str:
+    """Exclude generated validation questions from candidate scoring input."""
+    raw = "" if value is None else str(value)
+    marker = _NON_SCORING_VALIDATION_SECTION.search(raw)
+    if marker is not None:
+        raw = raw[: marker.start()]
+    return normalize_text(raw)
 
 
 def normalize_evaluation_profile(profile: dict | None) -> dict:
@@ -105,9 +121,9 @@ def build_evaluation_text(job) -> str:
     cannot silently become candidate filters.
     """
     profile = normalize_evaluation_profile(getattr(job, "evaluation_profile", None))
-    base = normalize_text(getattr(job, "description", None)) or normalize_text(
-        getattr(job, "title", None)
-    )
+    base = evaluation_description_text(
+        getattr(job, "description", None)
+    ) or normalize_text(getattr(job, "title", None))
 
     sections: list[str] = []
     for label, field, preferred in (
