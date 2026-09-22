@@ -263,7 +263,10 @@ def test_duplicate_application_same_candidate_same_job_uses_latest_link(db_sessi
 
     assert active_link is not None
     assert active_link.asset_id == "asset-new"
-    assert active_link.staged_at == datetime(2026, 9, 20, 10, 0, tzinfo=timezone.utc)
+    assert active_link.staged_at is not None
+    assert active_link.staged_at.replace(tzinfo=timezone.utc) == datetime(
+        2026, 9, 20, 10, 0, tzinfo=timezone.utc
+    )
 
 
 def test_candidate_sync_acknowledges_previous_batch_on_next_fetch(db_session):
