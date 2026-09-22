@@ -10,7 +10,7 @@ import app.models  # noqa: F401
 from app.db import Base
 from app.domains.jobs.company_context import ASIATI_CONTEXT_V1
 from app.domains.jobs.company_context_model import CompanyContext
-from app.domains.jobs.enrichment import JobEnrichmentError, enrich_job_draft
+from app.domains.jobs.enrichment import SYSTEM_PROMPT, JobEnrichmentError, enrich_job_draft
 from app.domains.jobs.schemas import JobEnrichmentRequest
 from app.models import Job
 
@@ -90,6 +90,9 @@ def test_enrichment_uses_active_tenant_context_and_returns_version():
         assert "COMPANY_CONTEXT" in prompts[0]
         assert "JOB_DRAFT" in prompts[0]
         assert "OUTPUT_CONTRACT" in prompts[0]
+        assert "OUTPUT_LANGUAGE" in prompts[0]
+        assert "es-CO" in prompts[0]
+        assert "español" in prompts[0]
         assert "Contexto exclusivo owner-1" in prompts[0]
         assert "SECRET OTHER TENANT" not in prompts[0]
     finally:
@@ -189,3 +192,12 @@ def test_enrichment_prompt_contains_no_candidate_data():
     finally:
         db.close()
         engine.dispose()
+
+
+
+def test_enrichment_system_prompt_requires_spanish_values_and_preserves_official_names():
+    prompt = SYSTEM_PROMPT
+    assert "EN ESPAÑOL" in prompt
+    assert "claves JSON" in prompt
+    assert "AWS" in prompt
+    assert "Terraform" in prompt
