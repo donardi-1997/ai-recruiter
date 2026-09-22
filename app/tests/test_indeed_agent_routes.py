@@ -191,9 +191,18 @@ def test_resume_upload_route_preserves_docx_filename_and_mime(api, monkeypatch):
             id="document-1",
             filename=filename,
             document_sha256="abc123",
+            ingestion_event_id="event-1",
         )
 
     monkeypatch.setattr(service, "store_resume_document", fake_store)
+    dispatched = []
+    monkeypatch.setattr(
+        service,
+        "dispatch_stored_resume_ingestion",
+        lambda db, *, owner_sub, document: dispatched.append(
+            (owner_sub, document.id)
+        ) or True,
+    )
 
     mime = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
     response = client.post(
@@ -204,6 +213,8 @@ def test_resume_upload_route_preserves_docx_filename_and_mime(api, monkeypatch):
 
     assert response.status_code == 200
     assert response.json()["filename"] == "CVAlejandracamachosaenz.docx"
+    assert response.json()["ingestion_queued"] is True
+    assert dispatched == [("owner-a", "document-1")]
     assert seen == {
         "owner_sub": "owner-a",
         "task_id": task.id,
