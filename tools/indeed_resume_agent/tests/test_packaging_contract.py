@@ -60,3 +60,11 @@ def test_readme_documents_chrome_credential_setup_and_single_task_cutover():
     assert "Open Indeed" in text
     assert "Browser Use" in text
     assert "una sola" in text.lower() or "un solo" in text.lower()
+
+
+def test_production_ui_starts_paused_before_agent_thread():
+    text = read("ui.py")
+    pause_at = text.index("worker.pause()", text.index("def run_ui"))
+    thread_at = text.index("threading.Thread", text.index("def run_ui"))
+    assert pause_at < thread_at
+    assert "Ciérralo completamente antes de pulsar Resume" in text
