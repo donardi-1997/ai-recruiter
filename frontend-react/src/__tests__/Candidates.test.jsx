@@ -40,14 +40,20 @@ describe("Candidates evaluation", () => {
     vi.clearAllMocks();
 
     api.get.mockImplementation((url) => {
-      if (url === "/candidates") {
+      if (url === "/candidates?page=1&page_size=20") {
         return Promise.resolve({
-          data: [
-            {
-              candidate_id: "candidate-1",
-              name: "Ana Test",
-            },
-          ],
+          data: {
+            items: [
+              {
+                candidate_id: "candidate-1",
+                name: "Ana Test",
+              },
+            ],
+            total: 1,
+            page: 1,
+            page_size: 20,
+            pages: 1,
+          },
         });
       }
 

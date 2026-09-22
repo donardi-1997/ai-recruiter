@@ -1,8 +1,8 @@
-"""Owner-scoped full synchronization orchestration for ASIATI Resume Agent."""
+"""Owner-scoped incremental synchronization orchestration for ASIATI Resume Agent."""
 
 from __future__ import annotations
 
-from app.domains.candidate_ingestion import gmail_integration, repository
+from app.domains.candidate_ingestion import gmail_integration, indeed_job_sync, repository
 from app.domains.candidate_ingestion.models import (
     CandidateIngestionEvent,
     IndeedEmailResumeTask,
@@ -47,29 +47,14 @@ def _application_sort_key(task: IndeedEmailResumeTask, event: CandidateIngestion
 def compact_duplicate_application_tasks(db, *, owner_sub: str) -> dict[str, int]:
     """Keep the newest active application only when canonical identity is known.
 
+    Historical candidate-level attention is deliberately left untouched. A normal
+    incremental sync must never turn an old review case back into browser work;
+    only the explicit Retry attention action is allowed to do that.
+
     Names are deliberately not used as identity: two people can share the same
     name. Different vacancies remain independent associations for the same
     candidate.
     """
-    ambiguous = (
-        db.query(IndeedEmailResumeTask)
-        .filter(
-            IndeedEmailResumeTask.owner_sub == owner_sub,
-            IndeedEmailResumeTask.status == "NEEDS_HUMAN",
-            IndeedEmailResumeTask.last_error_code == "INDEED_CANDIDATE_AMBIGUOUS",
-        )
-        .all()
-    )
-    for task in ambiguous:
-        task.status = "WAITING_DOWNLOAD"
-        task.available_at = None
-        task.attempt_count = 0
-        task.last_error_code = None
-        task.last_error_message = None
-        task.lease_token = None
-        task.lease_expires_at = None
-        task.claimed_at = None
-
     rows = (
         db.query(IndeedEmailResumeTask, CandidateIngestionEvent)
         .join(
@@ -115,11 +100,11 @@ def compact_duplicate_application_tasks(db, *, owner_sub: str) -> dict[str, int]
                 event.last_error_message = task.last_error_message
             superseded += 1
 
-    if superseded or ambiguous:
+    if superseded:
         db.commit()
     return {
         "superseded": superseded,
-        "requeued_ambiguity": len(ambiguous),
+        "requeued_ambiguity": 0,
     }
 
 
@@ -146,9 +131,8 @@ def _has_existing_agent_task(
 def reconcile_existing_indeed_candidates(db, *, owner_sub: str) -> dict[str, int]:
     """Queue browser fallbacks only when current Indeed resume retrieval is unavailable.
 
-    Completed canonical resumes are left untouched. Provider resume ingestions that
-    are still active are also left alone so the local agent never duplicates work.
-    Failed/missing provider resume ingestions get one idempotent lookup-only task.
+    This owner-wide reconciliation is reserved for first bootstrap/backlog repair.
+    Normal incremental syncs do not call it.
     """
     rows = (
         db.query(IndeedCandidateLink, Candidate, Job, IndeedResumeIngestion)
@@ -206,9 +190,6 @@ def reconcile_existing_indeed_candidates(db, *, owner_sub: str) -> dict[str, int
             counts["provider_pending"] += 1
             continue
 
-        # A canonical document processed by any ingestion path leaves filename
-        # metadata on the candidate. Do not redownload it just because a provider
-        # resume task failed historically.
         metadata = dict(candidate.metadata_ or {})
         if str(metadata.get("filename") or "").strip():
             counts["ready"] += 1
@@ -277,6 +258,17 @@ def reconcile_existing_indeed_candidates(db, *, owner_sub: str) -> dict[str, int
     return counts
 
 
+def _empty_reconciliation() -> dict[str, int]:
+    return {
+        "jobs_scanned": 0,
+        "scanned": 0,
+        "ready": 0,
+        "provider_pending": 0,
+        "covered": 0,
+        "queued": 0,
+    }
+
+
 def sync_one_page(
     db,
     *,
@@ -284,29 +276,47 @@ def sync_one_page(
     mailbox_client=None,
     max_results: int = 20,
 ) -> dict:
-    """Synchronize one bounded Gmail page and reconcile existing Indeed candidates.
+    """Synchronize one bounded Gmail page without re-traversing completed people.
 
-    Keep each HTTP request comfortably below the desktop agent's 30-second timeout.
-    The client exhausts the durable Gmail bootstrap cursor by calling this endpoint
-    repeatedly, so smaller pages preserve correctness while avoiding long requests.
+    Gmail's durable cursor is the source of incremental truth. Applications that
+    were previously parked until their vacancy existed are repaired first. The
+    expensive owner-wide provider reconciliation runs once on the initial FULL
+    bootstrap; subsequent FULL_CONTINUE and INCREMENTAL pages operate only on
+    newly created or explicitly recovered durable queue work.
     """
+    applications_recovered = indeed_job_sync.recover_waiting_applications(
+        db,
+        owner_sub=owner_sub,
+    )
     gmail = gmail_integration.sync_mailbox(
         db,
         owner_sub=owner_sub,
         mailbox_client=mailbox_client,
         max_results=max_results,
     )
-    compact = compact_duplicate_application_tasks(db, owner_sub=owner_sub)
-    reconcile = reconcile_existing_indeed_candidates(db, owner_sub=owner_sub)
+    mode = str(gmail.get("mode") or "")
+    created = int(gmail.get("created") or 0)
+
+    compact = (
+        compact_duplicate_application_tasks(db, owner_sub=owner_sub)
+        if created > 0 or applications_recovered > 0
+        else {"superseded": 0, "requeued_ambiguity": 0}
+    )
+    reconcile = (
+        reconcile_existing_indeed_candidates(db, owner_sub=owner_sub)
+        if mode == "FULL"
+        else _empty_reconciliation()
+    )
     cursor = str(gmail.get("cursor_value") or "")
     return {
-        "mode": str(gmail.get("mode") or ""),
+        "mode": mode,
         "discovered": int(gmail.get("discovered") or 0),
-        "created": int(gmail.get("created") or 0),
+        "created": created,
         "existing": int(gmail.get("existing") or 0),
         "needs_review": int(gmail.get("needs_review") or 0),
         "skipped": int(gmail.get("skipped") or 0),
         "has_more": cursor.startswith(BOOTSTRAP_CURSOR_PREFIX),
+        "applications_recovered": applications_recovered,
         "reconcile_jobs": reconcile["jobs_scanned"],
         "reconcile_scanned": reconcile["scanned"],
         "reconcile_ready": reconcile["ready"],

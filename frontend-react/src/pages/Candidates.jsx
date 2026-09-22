@@ -5,6 +5,8 @@ import { useSearchParams } from "react-router-dom";
 import api from "../api/client";
 import CandidateImportModal from "../features/candidate-import/CandidateImportModal.jsx";
 
+const PAGE_SIZE = 20;
+
 function Candidates() {
   const [candidates, setCandidates] = useState([]);
   const [jobs, setJobs] = useState([]);
@@ -13,37 +15,43 @@ function Candidates() {
   const [selectedEvaluation, setSelectedEvaluation] = useState(null);
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [loadError, setLoadError] = useState("");
+  const [page, setPage] = useState(1);
+  const [total, setTotal] = useState(0);
+  const [pages, setPages] = useState(0);
   const [searchParams] = useSearchParams();
 
   const requestedJobId = searchParams.get("job_id") || "";
 
-  const loadData = useCallback(async () => {
+  const loadData = useCallback(async (targetPage = page) => {
     setLoadError("");
     try {
       const [candidatesResponse, jobsResponse] = await Promise.all([
-        api.get("/candidates"),
+        api.get(`/candidates?page=${targetPage}&page_size=${PAGE_SIZE}`),
         api.get("/jobs"),
       ]);
 
-      const candidatesData = candidatesResponse.data;
+      const candidatesData = candidatesResponse.data || {};
       const jobsData = jobsResponse.data;
+      const items = Array.isArray(candidatesData.items)
+        ? candidatesData.items
+        : [];
+      const responseTotal = Number(candidatesData.total || 0);
+      const responsePages = Number(candidatesData.pages || 0);
 
-      setCandidates(
-        Array.isArray(candidatesData)
-          ? candidatesData
-          : candidatesData.candidates || [],
-      );
+      setCandidates(items);
+      setTotal(responseTotal);
+      setPages(responsePages);
       setJobs(Array.isArray(jobsData) ? jobsData : jobsData.jobs || []);
     } catch {
       setLoadError("No fue posible cargar los candidatos y las vacantes.");
     }
-  }, []);
+  }, [page]);
 
   useEffect(() => {
     // The initial request synchronizes this view with the API.
     // eslint-disable-next-line react-hooks/set-state-in-effect
-    loadData();
-  }, [loadData]);
+    loadData(page);
+  }, [loadData, page]);
 
   useEffect(() => {
     if (!requestedJobId) return;
@@ -58,7 +66,11 @@ function Candidates() {
 
   function closeCreateCandidateModal() {
     setShowCreateModal(false);
-    void loadData();
+    if (page !== 1) {
+      setPage(1);
+      return;
+    }
+    void loadData(1);
   }
 
   async function evaluate(candidateId) {
@@ -103,7 +115,7 @@ function Candidates() {
         candidate_ids: [candidateId],
       });
       alert("Candidato asignado a la vacante.");
-      await loadData();
+      await loadData(page);
     } catch (error) {
       alert(
         error.response?.data?.detail ||
@@ -146,11 +158,6 @@ function Candidates() {
 
     try {
       await api.delete(`/candidates/${candidate.candidate_id}`);
-      setCandidates((current) =>
-        current.filter(
-          (item) => item.candidate_id !== candidate.candidate_id,
-        ),
-      );
 
       if (selectedEvaluation?.candidateId === candidate.candidate_id) {
         setSelectedEvaluation(null);
@@ -161,6 +168,15 @@ function Candidates() {
         delete updated[candidate.candidate_id];
         return updated;
       });
+
+      const nextTotal = Math.max(total - 1, 0);
+      const nextPages = Math.ceil(nextTotal / PAGE_SIZE);
+      const lastValidPage = Math.max(nextPages, 1);
+      if (page > lastValidPage) {
+        setPage(lastValidPage);
+      } else {
+        await loadData(page);
+      }
     } catch (error) {
       alert(
         error.response?.data?.detail ||
@@ -171,7 +187,7 @@ function Candidates() {
 
   async function deleteAllCandidates() {
     const confirmed = window.confirm(
-      `¿Seguro que deseas eliminar los ${candidates.length} candidatos? Esta acción no se puede deshacer. También se eliminarán sus evaluaciones y CVs.`,
+      `¿Seguro que deseas eliminar los ${total} candidatos? Esta acción no se puede deshacer. También se eliminarán sus evaluaciones y CVs.`,
     );
     if (!confirmed) return;
 
@@ -179,9 +195,10 @@ function Candidates() {
       setLoading(true);
       const response = await api.delete("/candidates");
       const result = response.data;
-      await loadData();
       setSelectedJob({});
       setSelectedEvaluation(null);
+      if (page !== 1) setPage(1);
+      await loadData(1);
       if (result.failed) {
         window.alert(
           `${result.deleted} candidatos eliminados. ${result.failed} no pudieron eliminarse.`,
@@ -250,6 +267,9 @@ function Candidates() {
   const initialImportJobId =
     requestedJobId || (jobs.length === 1 ? jobs[0].job_id : "");
 
+  const visibleStart = total > 0 ? (page - 1) * PAGE_SIZE + 1 : 0;
+  const visibleEnd = total > 0 ? Math.min(page * PAGE_SIZE, total) : 0;
+
   return (
     <div className="page candidate-page">
       <div
@@ -281,7 +301,7 @@ function Candidates() {
         <div className="empty-state" role="alert">
           <strong>No se pudo cargar la información</strong>
           <p>{loadError}</p>
-          <button type="button" className="btn btn-secondary" onClick={() => void loadData()}>
+          <button type="button" className="btn btn-secondary" onClick={() => void loadData(page)}>
             Reintentar
           </button>
         </div>
@@ -291,13 +311,13 @@ function Candidates() {
         <div>
           <h2>Candidatos registrados</h2>
           <p>
-            {candidates.length}{" "}
-            {candidates.length === 1
+            {total}{" "}
+            {total === 1
               ? "perfil disponible"
               : "perfiles disponibles"}
           </p>
         </div>
-        {candidates.length > 0 && (
+        {total > 0 && (
           <button
             className="btn btn-danger"
             onClick={deleteAllCandidates}
@@ -411,6 +431,41 @@ function Candidates() {
             </div>
           </div>
         ))
+      )}
+
+      {total > 0 && (
+        <div
+          className="candidate-pagination"
+          style={{
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            gap: "12px",
+            flexWrap: "wrap",
+            marginTop: "20px",
+          }}
+        >
+          <span className="muted">Mostrando {visibleStart}–{visibleEnd}</span>
+          <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+            <button
+              type="button"
+              className="btn btn-secondary"
+              onClick={() => setPage((current) => Math.max(1, current - 1))}
+              disabled={page <= 1}
+            >
+              Anterior
+            </button>
+            <strong>Página {page} de {Math.max(pages, 1)}</strong>
+            <button
+              type="button"
+              className="btn btn-secondary"
+              onClick={() => setPage((current) => Math.min(Math.max(pages, 1), current + 1))}
+              disabled={page >= Math.max(pages, 1)}
+            >
+              Siguiente
+            </button>
+          </div>
+        </div>
       )}
 
       {showCreateModal && (

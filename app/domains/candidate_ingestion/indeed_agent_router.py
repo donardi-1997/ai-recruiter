@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session
 
 from app.deps import get_db
 from app.domains.candidate_ingestion import indeed_email_agent_service as service
-from app.domains.candidate_ingestion import indeed_agent_sync
+from app.domains.candidate_ingestion import indeed_agent_sync, indeed_job_sync
 from app.domains.candidate_ingestion.indeed_agent_auth import (
     AgentPrincipal,
     get_indeed_resume_agent_principal,
@@ -45,6 +45,19 @@ class UploadResponse(BaseModel):
     document_id: str
     filename: str
     document_sha256: str | None = None
+
+
+class VacancySnapshotRequest(BaseModel):
+    external_job_key: str = Field(min_length=1, max_length=500)
+    title: str = Field(min_length=1, max_length=1000)
+    description: str = Field(default="", max_length=200000)
+    status: str | None = Field(default=None, max_length=100)
+    location: str | None = Field(default=None, max_length=1000)
+    posted_at: str | None = Field(default=None, max_length=200)
+
+
+class VacancySyncRequest(BaseModel):
+    snapshots: list[VacancySnapshotRequest] = Field(default_factory=list, max_length=500)
 
 
 def _translate(exc: Exception) -> HTTPException:
@@ -97,6 +110,26 @@ def claim_resume_task(
         lease_token=claimed.lease_token,
         lease_expires_at=claimed.lease_expires_at,
     )
+
+
+@router.post("/jobs/sync")
+def synchronize_indeed_jobs(
+    payload: VacancySyncRequest,
+    db: Session = Depends(get_db),
+    principal: AgentPrincipal = Depends(get_indeed_resume_agent_principal),
+):
+    """Idempotently reconcile normalized vacancy snapshots from Indeed Employers."""
+    try:
+        return indeed_job_sync.sync_vacancy_snapshots(
+            db,
+            owner_sub=principal.owner_sub,
+            snapshots=[item.model_dump() for item in payload.snapshots],
+        )
+    except HTTPException:
+        raise
+    except Exception:
+        db.rollback()
+        raise HTTPException(status_code=502, detail="RESUME_JOB_SYNC_FAILED")
 
 
 @router.post("/{task_id}/heartbeat", response_model=HeartbeatResponse)
@@ -242,7 +275,7 @@ def synchronize_resume_sources(
     db: Session = Depends(get_db),
     principal: AgentPrincipal = Depends(get_indeed_resume_agent_principal),
 ):
-    """Synchronize one bounded discovery page and reconcile existing Indeed candidates."""
+    """Synchronize one bounded discovery page using the durable Gmail cursor."""
     try:
         return indeed_agent_sync.sync_one_page(
             db,

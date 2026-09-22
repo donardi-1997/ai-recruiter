@@ -183,35 +183,24 @@ def test_subject_never_resolves_other_tenants_job():
         engine.dispose()
 
 
-def test_indeed_auto_creates_job_once_by_normalized_title():
+def test_indeed_email_does_not_create_unknown_vacancy():
     engine, db = _db()
     try:
-        first = job_resolution.resolve_or_create_indeed_job(
+        resolved = job_resolution.resolve_or_create_indeed_job(
             db,
             owner_sub="owner-1",
             metadata={"job_title": "Líder de Contact Center Comercial"},
         )
-        second = job_resolution.resolve_or_create_indeed_job(
-            db,
-            owner_sub="owner-1",
-            metadata={"job_title": "  lider de contact center comercial  "},
-        )
 
-        assert first is not None
-        assert second is not None
-        assert first.id == second.id
-        assert db.query(Job).filter(Job.owner_sub == "owner-1").count() == 1
-
-        link = db.query(IndeedJobLink).filter(IndeedJobLink.job_id == first.id).one()
-        assert link.discovery_key == "title:lider de contact center comercial"
-        assert link.external_status["auto_created"] is True
-        assert link.external_status["origin"] == "EMAIL_AUTO_DISCOVERY"
+        assert resolved is None
+        assert db.query(Job).count() == 0
+        assert db.query(IndeedJobLink).count() == 0
     finally:
         db.close()
         engine.dispose()
 
 
-def test_indeed_auto_creation_is_tenant_scoped():
+def test_unknown_email_vacancy_is_tenant_safe_and_creates_nothing():
     engine, db = _db()
     try:
         owner_a = job_resolution.resolve_or_create_indeed_job(
@@ -225,56 +214,62 @@ def test_indeed_auto_creation_is_tenant_scoped():
             metadata={"job_title": "Country Manager Chile"},
         )
 
-        assert owner_a.id != owner_b.id
+        assert owner_a is None
+        assert owner_b is None
+        assert db.query(Job).count() == 0
+    finally:
+        db.close()
+        engine.dispose()
+
+
+def test_external_indeed_posting_id_resolves_preexisting_synced_vacancies():
+    engine, db = _db()
+    try:
+        first = Job(title="Sales Manager", description="A", owner_sub="owner-1")
+        second = Job(title="Sales Manager", description="B", owner_sub="owner-1")
+        db.add_all([first, second])
+        db.flush()
+        db.add_all([
+            IndeedJobLink(
+                job_id=first.id,
+                owner_sub="owner-1",
+                discovery_key="employer-ui:A",
+                sourced_posting_id="posting-A",
+            ),
+            IndeedJobLink(
+                job_id=second.id,
+                owner_sub="owner-1",
+                discovery_key="employer-ui:B",
+                sourced_posting_id="posting-B",
+            ),
+        ])
+        db.commit()
+
+        first_resolved = job_resolution.resolve_or_create_indeed_job(
+            db,
+            owner_sub="owner-1",
+            metadata={"job_title": "Sales Manager renamed in email", "external_job_id": "posting-A"},
+        )
+        second_resolved = job_resolution.resolve_or_create_indeed_job(
+            db,
+            owner_sub="owner-1",
+            metadata={"job_title": "Sales Manager", "external_job_id": "posting-B"},
+        )
+
+        assert first_resolved.id == first.id
+        assert second_resolved.id == second.id
         assert db.query(Job).count() == 2
     finally:
         db.close()
         engine.dispose()
 
 
-def test_external_indeed_posting_id_wins_over_equal_visible_titles():
-    engine, db = _db()
-    try:
-        first = job_resolution.resolve_or_create_indeed_job(
-            db,
-            owner_sub="owner-1",
-            metadata={
-                "job_title": "Sales Manager",
-                "external_job_id": "posting-A",
-            },
-        )
-        second = job_resolution.resolve_or_create_indeed_job(
-            db,
-            owner_sub="owner-1",
-            metadata={
-                "job_title": "Sales Manager",
-                "external_job_id": "posting-B",
-            },
-        )
-        first_again = job_resolution.resolve_or_create_indeed_job(
-            db,
-            owner_sub="owner-1",
-            metadata={
-                "job_title": "Sales Manager renamed in email",
-                "external_job_id": "posting-A",
-            },
-        )
-
-        assert first.id != second.id
-        assert first_again.id == first.id
-        assert db.query(Job).filter(Job.owner_sub == "owner-1").count() == 2
-    finally:
-        db.close()
-        engine.dispose()
-
-
-def test_title_fallback_reuses_one_existing_manual_job():
+def test_title_fallback_does_not_reuse_unlinked_manual_job():
     engine, db = _db()
     try:
         manual = Job(title="Analista de Automatización e IA", owner_sub="owner-1")
         db.add(manual)
         db.commit()
-        db.refresh(manual)
 
         resolved = job_resolution.resolve_or_create_indeed_job(
             db,
@@ -282,10 +277,9 @@ def test_title_fallback_reuses_one_existing_manual_job():
             metadata={"job_title": "Analista de Automatización e IA"},
         )
 
-        assert resolved.id == manual.id
+        assert resolved is None
         assert db.query(Job).count() == 1
-        link = db.query(IndeedJobLink).filter(IndeedJobLink.job_id == manual.id).one()
-        assert link.external_status["auto_created"] is False
+        assert db.query(IndeedJobLink).count() == 0
     finally:
         db.close()
         engine.dispose()
@@ -359,9 +353,21 @@ def test_same_indeed_discovery_key_is_allowed_for_different_owners():
         engine.dispose()
 
 
-def test_title_discovered_job_is_enriched_when_posting_id_appears_later():
+def test_existing_indeed_link_is_enriched_when_posting_id_appears_later():
     engine, db = _db()
     try:
+        job = Job(title="Country Manager Chile", owner_sub="owner-1")
+        db.add(job)
+        db.flush()
+        link = IndeedJobLink(
+            job_id=job.id,
+            owner_sub="owner-1",
+            discovery_key="employer-ui:country-manager-chile",
+            external_status={"origin": "EMPLOYER_UI"},
+        )
+        db.add(link)
+        db.commit()
+
         first = job_resolution.resolve_or_create_indeed_job(
             db,
             owner_sub="owner-1",
@@ -370,24 +376,18 @@ def test_title_discovered_job_is_enriched_when_posting_id_appears_later():
         second = job_resolution.resolve_or_create_indeed_job(
             db,
             owner_sub="owner-1",
-            metadata={
-                "job_title": "Country Manager Chile",
-                "external_job_id": "JK123456",
-            },
+            metadata={"job_title": "Country Manager Chile", "external_job_id": "JK123456"},
         )
         third = job_resolution.resolve_or_create_indeed_job(
             db,
             owner_sub="owner-1",
-            metadata={
-                "job_title": "Country Manager Chile updated",
-                "external_job_id": "JK123456",
-            },
+            metadata={"job_title": "Country Manager Chile updated", "external_job_id": "JK123456"},
         )
 
-        assert first.id == second.id == third.id
+        assert first.id == second.id == third.id == job.id
         assert db.query(Job).count() == 1
-        link = db.query(IndeedJobLink).filter(IndeedJobLink.job_id == first.id).one()
-        assert link.discovery_key == "title:country manager chile"
+        db.refresh(link)
+        assert link.discovery_key == "employer-ui:country-manager-chile"
         assert link.sourced_posting_id == "JK123456"
     finally:
         db.close()

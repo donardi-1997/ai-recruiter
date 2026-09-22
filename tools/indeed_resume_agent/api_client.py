@@ -39,6 +39,20 @@ class FullSyncResult:
 
 
 @dataclass(frozen=True)
+class VacancySyncResult:
+    discovered: int
+    created: int
+    updated: int
+    reconciled: int
+    unchanged: int
+    missing_identity: int
+    missing_description: int
+    ambiguous: int
+    descriptions_recovered: int
+    applications_recovered: int = 0
+
+
+@dataclass(frozen=True)
 class QueueStats:
     pending: int
     claimed: int
@@ -175,6 +189,27 @@ class AgentApiClient:
         response = self._request("POST", f"{BASE_PATH}/retry-attention")
         return int(response.json().get("requeued", 0))
 
+    def sync_jobs(self, snapshots: list[dict]) -> VacancySyncResult:
+        payload = dict(
+            self._request(
+                "POST",
+                f"{BASE_PATH}/jobs/sync",
+                json={"snapshots": list(snapshots or [])},
+            ).json()
+        )
+        return VacancySyncResult(
+            discovered=int(payload.get("discovered") or 0),
+            created=int(payload.get("created") or 0),
+            updated=int(payload.get("updated") or 0),
+            reconciled=int(payload.get("reconciled") or 0),
+            unchanged=int(payload.get("unchanged") or 0),
+            missing_identity=int(payload.get("missing_identity") or 0),
+            missing_description=int(payload.get("missing_description") or 0),
+            ambiguous=int(payload.get("ambiguous") or 0),
+            descriptions_recovered=int(payload.get("descriptions_recovered") or 0),
+            applications_recovered=int(payload.get("applications_recovered") or 0),
+        )
+
     def sync_all(self, *, max_pages: int = 200) -> FullSyncResult:
         """Exhaust bounded historical discovery, then perform one incremental catch-up."""
         limit = max(1, min(int(max_pages), 500))
@@ -200,10 +235,7 @@ class AgentApiClient:
             payload = dict(self._request("POST", f"{BASE_PATH}/sync").json())
             pages += 1
             for key in totals:
-                if key == "reconcile_queued":
-                    totals[key] += int(payload.get(key) or 0)
-                else:
-                    totals[key] += int(payload.get(key) or 0)
+                totals[key] += int(payload.get(key) or 0)
             for key in latest:
                 latest[key] = int(payload.get(key) or 0)
 
@@ -213,8 +245,6 @@ class AgentApiClient:
                 continue
 
             if mode in {"FULL", "FULL_CONTINUE", "FULL_RECOVERY"} and not catchup_required:
-                # The next call uses the captured baseline history id and catches
-                # messages that arrived while the historical pages were scanned.
                 catchup_required = True
                 continue
             break

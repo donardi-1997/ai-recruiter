@@ -197,11 +197,25 @@ def get_candidate_requirements(
 
 @router.get("")
 def list_candidates(
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=20, le=20),
     db: Session = Depends(get_db),
     _user: dict = Depends(get_current_user),
 ):
-    candidates = service.list_candidates(db, _user["sub"])
-    return [presenter.candidate_to_dict(candidate) for candidate in candidates]
+    candidates, total = service.list_candidates_page(
+        db,
+        _user["sub"],
+        page=page,
+        page_size=page_size,
+    )
+    pages = (total + page_size - 1) // page_size if total else 0
+    return {
+        "items": [presenter.candidate_to_dict(candidate) for candidate in candidates],
+        "total": total,
+        "page": page,
+        "page_size": page_size,
+        "pages": pages,
+    }
 
 
 @router.get("/{candidate_id}")

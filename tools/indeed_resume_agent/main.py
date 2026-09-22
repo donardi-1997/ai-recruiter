@@ -10,7 +10,7 @@ from .credential_store import (
     read_agent_token,
     write_agent_token,
 )
-from .ui import run_ui
+from .ui_v2 import run_ui
 from .worker import ResumeWorker
 
 

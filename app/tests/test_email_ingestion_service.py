@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 
 import app.models  # noqa: F401 - register shared tables in Base metadata
 from app.db import Base
+from app.models import IndeedJobLink, Job
 
 
 class FakeMailboxClient:
@@ -105,6 +106,29 @@ def _db():
     engine = create_engine("sqlite:///:memory:")
     Base.metadata.create_all(engine)
     return engine, Session(engine)
+
+
+def _seed_synced_job(db, *, owner_sub="owner-1"):
+    job = Job(
+        title="Country Manager Chile",
+        description="Descripción original de Indeed",
+        indeed_description="Descripción original de Indeed",
+        active_description_source="indeed",
+        owner_sub=owner_sub,
+        evaluation_profile={},
+    )
+    db.add(job)
+    db.flush()
+    db.add(
+        IndeedJobLink(
+            job_id=job.id,
+            owner_sub=owner_sub,
+            discovery_key=f"employer-ui:seed-{job.id}",
+            external_status={"origin": "EMPLOYER_UI"},
+        )
+    )
+    db.commit()
+    return job
 
 
 def test_ingest_gmail_message_persists_event_document_hash_and_source_key():
@@ -212,6 +236,7 @@ def test_indeed_notification_without_attachment_creates_download_task():
     mailbox = FakeMailboxClient(_indeed_link_message(), {})
     storage = FakeStorage()
     try:
+        _seed_synced_job(db)
         result = service.ingest_gmail_message(
             db,
             owner_sub="owner-1",
@@ -275,6 +300,7 @@ def test_existing_indeed_event_without_task_is_backfilled_idempotently():
     engine, db = _db()
     mailbox = FakeMailboxClient(_indeed_link_message(), {})
     try:
+        _seed_synced_job(db)
         event = repository.create_event(
             db,
             owner_sub="owner-1",
@@ -372,6 +398,7 @@ def test_sender_domain_filter_allows_subdomains_of_configured_domain():
     }
     mailbox = FakeMailboxClient(message, {})
     try:
+        _seed_synced_job(db)
         result = service.ingest_gmail_message(
             db,
             owner_sub="owner-1",

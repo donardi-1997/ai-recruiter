@@ -258,7 +258,7 @@ def test_same_candidate_name_in_different_jobs_is_not_collapsed():
         engine.dispose()
 
 
-def test_candidate_ambiguity_is_requeued_after_latest_application_logic():
+def test_candidate_ambiguity_stays_attention_during_normal_incremental_sync():
     engine, db = _db()
     try:
         job = Job(title="Operations Coordinator", description="Ops", owner_sub="owner-1")
@@ -295,10 +295,10 @@ def test_candidate_ambiguity_is_requeued_after_latest_application_logic():
         )
 
         db.refresh(task)
-        assert result["requeued_ambiguity"] == 1
-        assert task.status == "WAITING_DOWNLOAD"
-        assert task.attempt_count == 0
-        assert task.last_error_code is None
+        assert result["requeued_ambiguity"] == 0
+        assert task.status == "NEEDS_HUMAN"
+        assert task.attempt_count == 2
+        assert task.last_error_code == "INDEED_CANDIDATE_AMBIGUOUS"
     finally:
         db.close()
         engine.dispose()
@@ -360,6 +360,7 @@ def test_reconciliation_prefers_latest_indeed_application_link():
 def test_sync_one_page_uses_small_default_page_to_avoid_agent_timeout(monkeypatch):
     engine, db = _db()
     seen = {}
+    reconciled = {"calls": 0}
     try:
         def fake_sync_mailbox(*args, **kwargs):
             seen["max_results"] = kwargs.get("max_results")
@@ -378,17 +379,15 @@ def test_sync_one_page_uses_small_default_page_to_avoid_agent_timeout(monkeypatc
             "sync_mailbox",
             fake_sync_mailbox,
         )
+
+        def unexpected_reconciliation(*args, **kwargs):
+            reconciled["calls"] += 1
+            raise AssertionError("incremental no-op must not scan every candidate")
+
         monkeypatch.setattr(
             indeed_agent_sync,
             "reconcile_existing_indeed_candidates",
-            lambda *args, **kwargs: {
-                "jobs_scanned": 0,
-                "scanned": 0,
-                "ready": 0,
-                "provider_pending": 0,
-                "covered": 0,
-                "queued": 0,
-            },
+            unexpected_reconciliation,
         )
 
         result = indeed_agent_sync.sync_one_page(
@@ -398,7 +397,9 @@ def test_sync_one_page_uses_small_default_page_to_avoid_agent_timeout(monkeypatc
         )
 
         assert seen["max_results"] == 20
+        assert reconciled["calls"] == 0
         assert result["has_more"] is False
+        assert result["reconcile_scanned"] == 0
     finally:
         db.close()
         engine.dispose()

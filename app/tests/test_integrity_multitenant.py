@@ -197,13 +197,16 @@ def test_lists_are_isolated_by_owner(
     assert job_b.id not in job_ids
 
     candidates = client.get(
-        "/api/candidates"
+        "/api/candidates",
+        params={"page": 1, "page_size": 20},
     )
     assert candidates.status_code == 200
+    candidate_payload = candidates.json()
+    assert candidate_payload["total"] == 1
 
     candidate_ids = {
         item["candidate_id"]
-        for item in candidates.json()
+        for item in candidate_payload["items"]
     }
 
     assert candidate_a.id in candidate_ids

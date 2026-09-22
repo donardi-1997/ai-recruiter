@@ -11,7 +11,7 @@ from sqlalchemy.orm import Session
 import app.models  # noqa: F401
 from app.db import Base
 from app.domains.candidate_ingestion.models import IndeedEmailResumeTask
-from app.models import Job
+from app.models import IndeedJobLink, Job
 
 
 def _b64url(value: str) -> str:
@@ -63,14 +63,39 @@ def _db():
     return engine, Session(engine)
 
 
+def _seed_job(db, *, title="Country Manager Chile", owner_sub="owner-1", sourced_posting_id=None):
+    job = Job(
+        title=title,
+        description=f"Descripción de {title}",
+        indeed_description=f"Descripción de {title}",
+        active_description_source="indeed",
+        owner_sub=owner_sub,
+    )
+    db.add(job)
+    db.flush()
+    db.add(
+        IndeedJobLink(
+            job_id=job.id,
+            owner_sub=owner_sub,
+            discovery_key=(
+                f"employer-ui:{sourced_posting_id}"
+                if sourced_posting_id
+                else f"employer-ui:seed-{job.id}"
+            ),
+            sourced_posting_id=sourced_posting_id,
+            external_status={"origin": "EMPLOYER_UI"},
+        )
+    )
+    db.commit()
+    return job
+
+
 def test_valid_indeed_email_creates_download_task_without_persisting_resume_url():
     from app.domains.candidate_ingestion.indeed_email_service import discover_indeed_email
 
     engine, db = _db()
     try:
-        job = Job(title="Country Manager Chile", owner_sub="owner-1")
-        db.add(job)
-        db.commit()
+        job = _seed_job(db)
 
         result = discover_indeed_email(
             db,
@@ -102,9 +127,8 @@ def test_valid_indeed_email_creates_download_task_without_persisting_resume_url(
         engine.dispose()
 
 
-def test_ambiguous_manual_jobs_create_one_dedicated_indeed_job():
+def test_ambiguous_manual_jobs_wait_for_indeed_vacancy_sync_without_creating_job():
     from app.domains.candidate_ingestion.indeed_email_service import discover_indeed_email
-    from app.models import IndeedJobLink
 
     engine, db = _db()
     try:
@@ -121,20 +145,12 @@ def test_ambiguous_manual_jobs_create_one_dedicated_indeed_job():
         )
 
         assert result is not None
-        assert result.task is not None
-        assert result.event.job_id is not None
-        assert result.task.job_id == result.event.job_id
-        assert result.event.job_id not in {manual_a.id, manual_b.id}
-        assert result.task.status == "WAITING_DOWNLOAD"
-        assert db.query(Job).filter(Job.owner_sub == "owner-1").count() == 3
-
-        link = (
-            db.query(IndeedJobLink)
-            .filter(IndeedJobLink.job_id == result.event.job_id)
-            .one()
-        )
-        assert link.discovery_key == "title:sales manager"
-        assert link.external_status["auto_created"] is True
+        assert result.task is None
+        assert result.event.job_id is None
+        assert result.event.status == "NEEDS_REVIEW"
+        assert result.event.last_error_code == "INDEED_JOB_NOT_SYNCED_YET"
+        assert db.query(Job).filter(Job.owner_sub == "owner-1").count() == 2
+        assert db.query(IndeedJobLink).count() == 0
     finally:
         db.close()
         engine.dispose()
@@ -192,6 +208,7 @@ def test_repeated_message_reuses_same_event_and_task():
 
     engine, db = _db()
     try:
+        _seed_job(db)
         message = _message()
         first = discover_indeed_email(
             db,
@@ -237,7 +254,7 @@ def test_non_indeed_sender_falls_through_without_creating_event():
         engine.dispose()
 
 
-def test_new_indeed_title_auto_creates_job_and_other_messages_reuse_it():
+def test_new_indeed_title_waits_for_vacancy_sync_and_creates_no_job_or_task():
     from app.domains.candidate_ingestion.indeed_email_service import discover_indeed_email
 
     engine, db = _db()
@@ -263,21 +280,34 @@ def test_new_indeed_title_auto_creates_job_and_other_messages_reuse_it():
             ),
         )
 
-        assert first.event.job_id is not None
-        assert second.event.job_id == first.event.job_id
-        assert first.task.job_id == first.event.job_id
-        assert second.task.job_id == first.event.job_id
-        assert db.query(Job).filter(Job.owner_sub == "owner-1").count() == 1
+        assert first.event.job_id is None
+        assert second.event.job_id is None
+        assert first.task is None
+        assert second.task is None
+        assert first.event.last_error_code == "INDEED_JOB_NOT_SYNCED_YET"
+        assert second.event.last_error_code == "INDEED_JOB_NOT_SYNCED_YET"
+        assert db.query(Job).filter(Job.owner_sub == "owner-1").count() == 0
     finally:
         db.close()
         engine.dispose()
 
 
-def test_distinct_external_posting_ids_create_distinct_jobs_even_with_same_title():
+def test_distinct_external_posting_ids_resolve_distinct_preexisting_jobs():
     from app.domains.candidate_ingestion.indeed_email_service import discover_indeed_email
 
     engine, db = _db()
     try:
+        first_job = _seed_job(
+            db,
+            title="Sales Manager",
+            sourced_posting_id="POSTING_A_123",
+        )
+        second_job = _seed_job(
+            db,
+            title="Sales Manager",
+            sourced_posting_id="POSTING_B_456",
+        )
+
         first = discover_indeed_email(
             db,
             owner_sub="owner-1",
@@ -301,10 +331,58 @@ def test_distinct_external_posting_ids_create_distinct_jobs_even_with_same_title
             ),
         )
 
+        assert first.event.job_id == first_job.id
+        assert second.event.job_id == second_job.id
         assert first.event.job_id != second.event.job_id
+        assert first.task is not None
+        assert second.task is not None
         assert db.query(Job).filter(Job.owner_sub == "owner-1").count() == 2
         assert first.event.raw_metadata["external_job_id"] == "POSTING_A_123"
         assert second.event.raw_metadata["external_job_id"] == "POSTING_B_456"
+    finally:
+        db.close()
+        engine.dispose()
+
+
+def test_waiting_email_recovers_after_vacancy_is_synchronized():
+    from app.domains.candidate_ingestion.indeed_email_service import discover_indeed_email
+
+    engine, db = _db()
+    try:
+        message = _message(
+            message_id="gmail-recover",
+            external_job_id="POSTING_RECOVER",
+        )
+        first = discover_indeed_email(
+            db,
+            owner_sub="owner-1",
+            source_account="katherine@example.com",
+            raw_message=message,
+        )
+        assert first.task is None
+        assert first.event.status == "NEEDS_REVIEW"
+        assert first.event.last_error_code == "INDEED_JOB_NOT_SYNCED_YET"
+
+        job = _seed_job(
+            db,
+            title="Country Manager Chile",
+            sourced_posting_id="POSTING_RECOVER",
+        )
+        second = discover_indeed_email(
+            db,
+            owner_sub="owner-1",
+            source_account="katherine@example.com",
+            raw_message=message,
+        )
+
+        assert second.created is False
+        assert second.event.id == first.event.id
+        assert second.event.status == "RECEIVED"
+        assert second.event.job_id == job.id
+        assert second.event.last_error_code == "RESUME_DOWNLOAD_PENDING"
+        assert second.task is not None
+        assert second.task.status == "WAITING_DOWNLOAD"
+        assert second.task.job_id == job.id
     finally:
         db.close()
         engine.dispose()
