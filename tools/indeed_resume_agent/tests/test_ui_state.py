@@ -58,7 +58,7 @@ def test_browser_ready_keeps_same_chrome_open_for_manual_login():
     assert "Chrome está abierto" in ui.status_label
     assert "mantén Chrome abierto" in ui.status_label
     assert "pulsa Resume" in ui.status_label
-    assert "cierra Chrome" not in ui.status_label.casefold()
+    assert "cierra chrome" not in ui.status_label.casefold()
     assert ui.session_label == "Ready"
 
 
