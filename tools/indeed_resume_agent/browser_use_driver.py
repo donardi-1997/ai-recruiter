@@ -266,7 +266,19 @@ class IndeedBrowserUse:
             future.cancel()
             raise TimeoutError("BROWSER_USE_OPERATION_TIMEOUT") from exc
 
-    async def _ensure_started(self):
+    async def _discard_browser_session(self) -> None:
+        browser = self._browser
+        self._browser = None
+        self._network_registered = False
+        self._download_future = None
+        self._resume_response_meta.clear()
+        if browser is not None:
+            try:
+                await browser.stop()
+            except Exception:
+                pass
+
+    async def _ensure_started_once(self):
         if self._browser is None:
             session_class = self._browser_session_class or _load_browser_session_class()
             self._config.browser_profile_dir.mkdir(parents=True, exist_ok=True)
@@ -309,21 +321,25 @@ class IndeedBrowserUse:
             self._network_registered = True
         return cdp
 
+    async def _ensure_started(self):
+        had_existing_session = self._browser is not None
+        try:
+            return await self._ensure_started_once()
+        except Exception:
+            if not had_existing_session:
+                raise
+            # The user may have closed the Browser Use-owned Chrome window.
+            # Recreate the stale CDP session once using the same persistent
+            # profile instead of leaving the agent poisoned until restart.
+            await self._discard_browser_session()
+            return await self._ensure_started_once()
+
     def start(self) -> None:
         self._call(self._ensure_started())
 
     async def _async_close(self) -> None:
         self._diagnostic_active = False
-        self._download_future = None
-        browser = self._browser
-        self._browser = None
-        self._network_registered = False
-        self._resume_response_meta.clear()
-        if browser is not None:
-            try:
-                await browser.stop()
-            except Exception:
-                pass
+        await self._discard_browser_session()
 
     def close(self) -> None:
         if self._closed:
