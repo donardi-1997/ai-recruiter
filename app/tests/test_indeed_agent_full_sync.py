@@ -142,6 +142,53 @@ def test_reconciliation_is_owner_scoped():
         engine.dispose()
 
 
+def test_sync_one_page_uses_small_default_page_to_avoid_agent_timeout(monkeypatch):
+    engine, db = _db()
+    seen = {}
+    try:
+        def fake_sync_mailbox(*args, **kwargs):
+            seen["max_results"] = kwargs.get("max_results")
+            return {
+                "mode": "INCREMENTAL",
+                "discovered": 0,
+                "created": 0,
+                "existing": 0,
+                "needs_review": 0,
+                "skipped": 0,
+                "cursor_value": "123",
+            }
+
+        monkeypatch.setattr(
+            indeed_agent_sync.gmail_integration,
+            "sync_mailbox",
+            fake_sync_mailbox,
+        )
+        monkeypatch.setattr(
+            indeed_agent_sync,
+            "reconcile_existing_indeed_candidates",
+            lambda *args, **kwargs: {
+                "jobs_scanned": 0,
+                "scanned": 0,
+                "ready": 0,
+                "provider_pending": 0,
+                "covered": 0,
+                "queued": 0,
+            },
+        )
+
+        result = indeed_agent_sync.sync_one_page(
+            db,
+            owner_sub="owner-1",
+            mailbox_client=object(),
+        )
+
+        assert seen["max_results"] == 20
+        assert result["has_more"] is False
+    finally:
+        db.close()
+        engine.dispose()
+
+
 def test_sync_one_page_reports_bootstrap_continuation(monkeypatch):
     engine, db = _db()
     try:
