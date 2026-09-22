@@ -3,13 +3,14 @@ from __future__ import annotations
 from collections.abc import Callable
 
 from .api_client import AgentApiClient
-from .auth_aware_browser import IndeedBrowserUse
+from .browser_use_driver import IndeedBrowserUse
 from .config import load_config
 from .credential_store import (
     AgentCredentialMissing,
     read_agent_token,
     write_agent_token,
 )
+from .runtime_compat import install_runtime_compat
 from .ui_v2 import run_ui
 from .worker import ResumeWorker
 
@@ -72,6 +73,7 @@ def main() -> None:
 
     api = AgentApiClient(config, token)
     browser = IndeedBrowserUse(config)
+    install_runtime_compat(browser)
     worker = ResumeWorker(config=config, api=api, browser=browser)
     try:
         run_ui(worker=worker, api=api, browser=browser)
