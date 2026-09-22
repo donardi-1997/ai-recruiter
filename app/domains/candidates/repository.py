@@ -1,6 +1,7 @@
 """Candidates repository."""
 
 from datetime import datetime, timezone
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.models import Candidate, Evaluation, JobCandidate, RankingItem
@@ -90,9 +91,25 @@ def ensure_candidate_assigned_to_job(
     if existing is not None:
         return existing
     link = JobCandidate(job_id=job_id, candidate_id=candidate_id)
-    db.add(link)
-    db.flush()
-    return link
+    savepoint = db.begin_nested()
+    try:
+        db.add(link)
+        db.flush()
+        savepoint.commit()
+        return link
+    except IntegrityError:
+        savepoint.rollback()
+        existing = (
+            db.query(JobCandidate)
+            .filter(
+                JobCandidate.job_id == job_id,
+                JobCandidate.candidate_id == candidate_id,
+            )
+            .first()
+        )
+        if existing is not None:
+            return existing
+        raise
 
 
 def get_job_candidate(
@@ -201,8 +218,15 @@ def assign_candidates_to_job(
             skipped += 1
             continue
 
-        db.add(JobCandidate(job_id=job_id, candidate_id=cid))
-        assigned += 1
+        savepoint = db.begin_nested()
+        try:
+            db.add(JobCandidate(job_id=job_id, candidate_id=cid))
+            db.flush()
+            savepoint.commit()
+            assigned += 1
+        except IntegrityError:
+            savepoint.rollback()
+            skipped += 1
 
     db.commit()
     return assigned, skipped
