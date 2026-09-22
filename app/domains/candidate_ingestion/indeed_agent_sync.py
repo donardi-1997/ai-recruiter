@@ -15,7 +15,14 @@ LOOKUP_SOURCE = "AGENT"
 LOOKUP_PROVIDER = "INDEED"
 LOOKUP_ACCOUNT = "resume-agent"
 LOOKUP_URL = "https://employers.indeed.com/candidates"
-ACTIVE_RESUME_STATUSES = {"PENDING", "PROCESSING", "INGESTING"}
+ACTIVE_RESUME_STATUSES = {
+    "PENDING",
+    "DOWNLOADING",
+    "STORED",
+    "INGESTING",
+    "EVALUATING",
+    "RANKING",
+}
 
 
 def _normalized_name(value: str | None) -> str:
