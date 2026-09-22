@@ -38,12 +38,10 @@ def clean_json(content: str) -> str:
         content = content[:-3].strip()
     start = content.find("{")
     if start == -1:
-        raise ValueError(
-            f"No se encontró un objeto JSON en la respuesta: {content}"
-        )
+        raise ValueError("MODEL_JSON_OBJECT_NOT_FOUND")
     end = content.rfind("}")
     if end == -1 or end < start:
-        raise ValueError(f"El JSON está incompleto: {content}")
+        raise ValueError("MODEL_JSON_INCOMPLETE")
     return content[start : end + 1].strip()
 
 
@@ -71,8 +69,12 @@ def invoke_json_prompt(chain, payload: dict, description: str):
     try:
         return json.loads(cleaned_content)
     except json.JSONDecodeError as first_error:
-        logger.error("JSON inválido en %s: %s", description, first_error)
-        logger.error("Respuesta recibida: %s", raw_content)
+        logger.error(
+            "JSON invalido en %s: %s (response_chars=%d)",
+            description,
+            first_error,
+            len(str(raw_content or "")),
+        )
     retry_payload = dict(payload)
     retry_payload["_retry_instruction"] = """
 La respuesta anterior NO fue JSON válido.
