@@ -24,17 +24,32 @@ def test_run_launches_module_from_repo_root():
     assert "Set-Location" in text
 
 
-def test_build_is_onedir_collects_playwright_and_does_not_install_chromium():
+def test_build_is_onedir_and_packages_browser_use_cdp_runtime():
     text=read("build.ps1")
     lower=text.lower()
     assert "--onedir" in lower
     assert "--onefile" not in lower
-    assert "--collect-all" in lower and "playwright" in lower
+    assert "browser_use.browser" in text
+    assert "cdp_use" in text
+    assert "browser_harness" in text
     assert "--paths" in lower
     assert "playwright install chromium" not in lower
-    browser = read("browser.py")
-    assert 'self._playwright_channel = "chrome"' in browser
-    assert 'channel=self._playwright_channel' in browser
+
+    requirements = read("requirements.txt")
+    assert 'browser-use==0.13.10' in requirements
+
+    main = read("main.py")
+    assert "IndeedBrowserUse" in main
+    assert "browser = IndeedBrowserUse(config)" in main
+
+
+def test_browser_use_driver_is_deterministic_and_has_no_llm_agent():
+    text=read("browser_use_driver.py")
+    assert "get_or_create_cdp_session" in text
+    assert "Network.getResponseBody" in text
+    assert "_INDEED_RESUME_DOWNLOAD_PATH" in text
+    assert "Agent(" not in text
+    assert "ChatBrowserUse" not in text
 
 
 def test_readme_documents_chrome_credential_setup_and_single_task_cutover():
@@ -43,4 +58,5 @@ def test_readme_documents_chrome_credential_setup_and_single_task_cutover():
     assert "browser-profile-chrome" in text
     assert "Windows Credential Manager" in text
     assert "Open Indeed" in text
+    assert "Browser Use" in text
     assert "una sola" in text.lower() or "un solo" in text.lower()
