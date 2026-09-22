@@ -21,6 +21,25 @@ def list_candidates(db: Session, owner_sub: str | None = None) -> list[Candidate
     return query.order_by(Candidate.created_at.desc()).all()
 
 
+def list_candidates_page(
+    db: Session,
+    *,
+    owner_sub: str,
+    page: int = 1,
+    page_size: int = 20,
+) -> tuple[list[Candidate], int]:
+    """Return one stable owner-scoped candidate page and its total count."""
+    query = db.query(Candidate).filter(Candidate.owner_sub == owner_sub)
+    total = query.count() or 0
+    items = (
+        query.order_by(Candidate.created_at.desc(), Candidate.id.desc())
+        .offset((page - 1) * page_size)
+        .limit(page_size)
+        .all()
+    )
+    return items, total
+
+
 def create_candidate(
     db: Session,
     *,
