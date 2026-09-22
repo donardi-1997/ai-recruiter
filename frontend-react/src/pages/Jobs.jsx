@@ -729,10 +729,13 @@ function Jobs() {
                 const original = viewJob.indeed_description ?? (source === "indeed" ? viewJob.description : null);
                 const generated = viewJob.ai_description ?? (source === "ai" ? viewJob.description : null);
                 const visibleDescription = detailDescriptionTab === "ai" ? generated : original;
+                const hasAnyDescription = Boolean(String(original || generated || "").trim());
                 const canActivate = Boolean(String(visibleDescription || "").trim()) && detailDescriptionTab !== source;
                 return (
                   <>
-                    <p className="job-detail-description">{visibleDescription || "Esta versión aún no tiene contenido."}</p>
+                    <p className="job-detail-description">
+                      {visibleDescription || (hasAnyDescription ? "Esta versión aún no tiene contenido." : "Sin descripción.")}
+                    </p>
                     <div className="job-description-detail-actions">
                       {canActivate && (
                         <button type="button" className="btn btn-secondary" disabled={descriptionSourceBusy} onClick={() => activateDescriptionSource(detailDescriptionTab)}>
@@ -749,7 +752,7 @@ function Jobs() {
                           setDescriptionTab(detailDescriptionTab);
                         }}
                       >
-                        Editar versiones
+                        {hasAnyDescription ? "Editar versiones" : "Editar y enriquecer"}
                       </button>
                     </div>
                   </>
