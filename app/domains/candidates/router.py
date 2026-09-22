@@ -338,8 +338,32 @@ def download_candidate_cv(
     db: Session = Depends(get_db),
     _user: dict = Depends(get_current_user),
 ):
-    _require_candidate(db, candidate_id, _user["sub"])
-    return {"download_url": None, "detail": "CV storage not configured."}
+    try:
+        download = service.get_candidate_download(
+            db,
+            candidate_id,
+            _user["sub"],
+        )
+    except CandidateNotFound:
+        raise HTTPException(status_code=404, detail="Candidato no encontrado.")
+    except Exception as exc:
+        logger.error(
+            "Candidate CV download failed candidate=%s error=%s",
+            candidate_id,
+            type(exc).__name__,
+        )
+        raise HTTPException(
+            status_code=503,
+            detail="No fue posible preparar la descarga del CV.",
+        ) from exc
+
+    if download is None:
+        raise HTTPException(status_code=404, detail="CV no disponible.")
+
+    return {
+        "download_url": download["url"],
+        "expires_in": download["expires_in"],
+    }
 
 
 @router.get("/{candidate_id}/evaluations")
