@@ -10,6 +10,7 @@ def test_default_profile_is_isolated_under_localappdata(tmp_path, monkeypatch):
     assert cfg.browser_name == "chrome"
     assert cfg.browser_profile_dir == tmp_path / "ASIATI" / "ResumeAgent" / "browser-profile-chrome"
     assert cfg.api_base_url == "https://dzcwl3yhv133t.cloudfront.net"
+    assert cfg.diagnostic_screenshots is False
 
 
 def test_api_base_url_is_https_and_has_no_trailing_slash(tmp_path, monkeypatch):
@@ -53,4 +54,19 @@ def test_rejects_unknown_browser(tmp_path, monkeypatch):
     monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
     monkeypatch.setenv("ASIATI_RESUME_AGENT_BROWSER", "firefox")
     with pytest.raises(ValueError, match="chrome, edge"):
+        load_config()
+
+
+def test_diagnostic_screenshots_require_explicit_opt_in(tmp_path, monkeypatch):
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
+    monkeypatch.setenv("ASIATI_RESUME_AGENT_DIAGNOSTIC_SCREENSHOTS", "true")
+
+    assert load_config().diagnostic_screenshots is True
+
+
+def test_rejects_invalid_diagnostic_screenshot_flag(tmp_path, monkeypatch):
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
+    monkeypatch.setenv("ASIATI_RESUME_AGENT_DIAGNOSTIC_SCREENSHOTS", "maybe")
+
+    with pytest.raises(ValueError, match="boolean"):
         load_config()
