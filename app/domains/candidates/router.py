@@ -236,10 +236,14 @@ async def upload_candidates_bulk(
                 )
                 continue
 
+            safe_filename = service.validate_legacy_candidate_pdf(
+                original_filename=public_filename,
+                file_content=file_content,
+            )
             candidate, indexing = service.create_and_index_candidate(
                 db,
                 owner_sub=_user["sub"],
-                original_filename=public_filename,
+                original_filename=safe_filename,
                 file_content=file_content,
             )
 
