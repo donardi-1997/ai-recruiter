@@ -214,6 +214,24 @@ def test_resume_upload_route_preserves_docx_filename_and_mime(api, monkeypatch):
     }
 
 
+def test_failure_code_rejects_unbounded_or_freeform_agent_input(api):
+    client, db = api
+    task = _task(db, owner_sub="owner-a", status="CLAIMED")
+    task.lease_token = "lease-1"
+    task.lease_expires_at = datetime(2099, 1, 1, tzinfo=timezone.utc)
+    db.commit()
+
+    response = client.post(
+        f"/api/agents/indeed-resume/{task.id}/fail",
+        headers={"X-ASIATI-Lease-Token": "lease-1"},
+        json={"code": "bad code with spaces"},
+    )
+
+    assert response.status_code == 422
+    db.refresh(task)
+    assert task.status == "CLAIMED"
+
+
 def test_retry_failed_requeues_only_current_owner_and_resets_terminal_fields(api):
     client, db = api
     owned = _task(db, owner_sub="owner-a", status="FAILED")
