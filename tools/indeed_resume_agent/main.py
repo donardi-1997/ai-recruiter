@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections.abc import Callable
 
 from .api_client import AgentApiClient
-from .browser_use_driver import IndeedBrowserUse
+from .auth_aware_browser import IndeedBrowserUse
 from .config import load_config
 from .credential_store import (
     AgentCredentialMissing,
