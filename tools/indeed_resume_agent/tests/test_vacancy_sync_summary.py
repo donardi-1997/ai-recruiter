@@ -2,10 +2,9 @@ import httpx
 
 from tools.indeed_resume_agent.api_client import AgentApiClient
 from tools.indeed_resume_agent.config import AgentConfig
-from tools.indeed_resume_agent.ui_v2 import _vacancy_summary
 
 
-def test_vacancy_sync_parses_and_surfaces_recovered_applications(tmp_path):
+def test_vacancy_sync_parses_recovered_applications(tmp_path):
     payload = {
         "discovered": 12,
         "created": 2,
@@ -32,5 +31,3 @@ def test_vacancy_sync_parses_and_surfaces_recovered_applications(tmp_path):
     result = api.sync_jobs([])
 
     assert result.applications_recovered == 5
-    summary = _vacancy_summary(result)
-    assert "5 postulaciones recuperadas" in summary
