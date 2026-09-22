@@ -11,6 +11,7 @@ from app.db import Base
 from app.domains.candidate_ingestion import repository
 from app.domains.candidate_ingestion.mailbox_sync import sync_gmail_mailbox
 from app.domains.candidate_ingestion.models import IndeedEmailResumeTask
+from app.models import Job
 
 
 class FakeStorage:
@@ -41,10 +42,7 @@ class FakeMailboxClient:
         self.list_history_calls = []
 
     def get_profile(self):
-        return SimpleNamespace(
-            email_address=self.email_address,
-            history_id=self.profile_history_id,
-        )
+        return SimpleNamespace(email_address=self.email_address, history_id=self.profile_history_id)
 
     def list_messages(self, *, page_token=None, max_results=100):
         self.list_messages_calls += 1
@@ -76,10 +74,7 @@ class FakeMailboxClient:
                     {
                         "filename": f"{message_id}.pdf",
                         "mimeType": "application/pdf",
-                        "body": {
-                            "attachmentId": f"attachment-{message_id}",
-                            "size": 7,
-                        },
+                        "body": {"attachmentId": f"attachment-{message_id}", "size": 7},
                     }
                 ],
             },
@@ -105,10 +100,7 @@ class FakeIndeedLinkMailbox(FakeMailboxClient):
             "payload": {
                 "mimeType": "text/html",
                 "headers": [
-                    {
-                        "name": "From",
-                        "value": "Indeed <conversation-abc@indeedemail.com>",
-                    },
+                    {"name": "From", "value": "Indeed <conversation-abc@indeedemail.com>"},
                     {"name": "Subject", "value": "Ana Perez se postulo"},
                 ],
                 "body": {"data": data},
@@ -139,7 +131,6 @@ def test_first_sync_uses_discovered_mailbox_identity_and_persists_baseline_curso
             allowed_senders=("alerts@indeed.com",),
             storage=storage,
         )
-
         assert result.mode == "FULL"
         assert result.source_account == "personal@example.com"
         assert result.discovered == 1
@@ -169,7 +160,7 @@ def test_first_sync_uses_discovered_mailbox_identity_and_persists_baseline_curso
         engine.dispose()
 
 
-def test_indeed_link_notification_advances_cursor_and_creates_download_task():
+def test_indeed_link_notification_advances_cursor_and_creates_download_task_for_synced_job():
     engine, db = _db()
     client = FakeIndeedLinkMailbox(
         email_address="katherine@example.com",
@@ -177,13 +168,22 @@ def test_indeed_link_notification_advances_cursor_and_creates_download_task():
         full_message_ids=("gmail-indeed-1",),
     )
     try:
+        db.add(
+            Job(
+                title="Country Manager Chile",
+                description="Descripción completa",
+                indeed_description="Descripción completa",
+                active_description_source="indeed",
+                owner_sub="owner-1",
+            )
+        )
+        db.commit()
         result = sync_gmail_mailbox(
             db,
             owner_sub="owner-1",
             provider="INDEED",
             mailbox_client=client,
         )
-
         assert result.mode == "FULL"
         assert result.discovered == 1
         assert result.created == 1
@@ -194,6 +194,7 @@ def test_indeed_link_notification_advances_cursor_and_creates_download_task():
         task = db.query(IndeedEmailResumeTask).one()
         assert task.status == "WAITING_DOWNLOAD"
         assert task.candidate_name == "Ana Perez"
+        assert task.job_id is not None
     finally:
         db.close()
         engine.dispose()
@@ -216,7 +217,6 @@ def test_next_sync_uses_history_cursor_instead_of_rescanning_mailbox():
             allowed_senders=("alerts@indeed.com",),
             storage=storage,
         )
-
         incremental = FakeMailboxClient(
             email_address="personal@example.com",
             profile_history_id="120",
@@ -231,7 +231,6 @@ def test_next_sync_uses_history_cursor_instead_of_rescanning_mailbox():
             allowed_senders=("alerts@indeed.com",),
             storage=storage,
         )
-
         assert result.mode == "INCREMENTAL"
         assert incremental.list_messages_calls == 0
         assert incremental.list_history_calls == ["100"]
@@ -272,7 +271,6 @@ def test_authorizing_corporate_mailbox_gets_independent_full_sync_and_cursor():
             allowed_senders=("alerts@indeed.com",),
             storage=storage,
         )
-
         assert result.mode == "FULL"
         assert result.source_account == "talent@asiati.example"
         assert corporate.list_messages_calls == 1
@@ -285,10 +283,7 @@ def test_authorizing_corporate_mailbox_gets_independent_full_sync_and_cursor():
 
 class PagedMailboxClient(FakeMailboxClient):
     def __init__(self, *, email_address, profile_history_id, pages):
-        super().__init__(
-            email_address=email_address,
-            profile_history_id=profile_history_id,
-        )
+        super().__init__(email_address=email_address, profile_history_id=profile_history_id)
         self.pages = dict(pages)
         self.page_tokens = []
 
@@ -323,7 +318,6 @@ def test_full_sync_bootstrap_is_batched_and_resumes_from_saved_page_token():
             storage=storage,
             max_results=2,
         )
-
         assert first.mode == "FULL"
         assert first.discovered == 2
         assert first.created == 2
@@ -339,13 +333,11 @@ def test_full_sync_bootstrap_is_batched_and_resumes_from_saved_page_token():
             storage=storage,
             max_results=2,
         )
-
         assert second.mode == "FULL_CONTINUE"
         assert second.discovered == 1
         assert second.created == 1
         assert second.cursor_value == "100"
         assert client.page_tokens == [None, "page-2"]
-
         cursor = repository.get_cursor(
             db,
             owner_sub="owner-1",
@@ -380,8 +372,6 @@ def test_bootstrap_finishes_on_original_history_baseline_then_incremental_catche
             storage=storage,
             max_results=1,
         )
-
-        # Simulate mail arriving while historical bootstrap is still running.
         paged.profile_history_id = "120"
         second = sync_gmail_mailbox(
             db,
@@ -409,7 +399,6 @@ def test_bootstrap_finishes_on_original_history_baseline_then_incremental_catche
             storage=storage,
             max_results=20,
         )
-
         assert third.mode == "INCREMENTAL"
         assert incremental.list_history_calls == ["100"]
         assert third.created == 1
