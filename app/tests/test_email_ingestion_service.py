@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 
 import app.models  # noqa: F401 - register shared tables in Base metadata
 from app.db import Base
-from app.models import Job
+from app.models import IndeedJobLink, Job
 
 
 class FakeMailboxClient:
@@ -118,6 +118,15 @@ def _seed_synced_job(db, *, owner_sub="owner-1"):
         evaluation_profile={},
     )
     db.add(job)
+    db.flush()
+    db.add(
+        IndeedJobLink(
+            job_id=job.id,
+            owner_sub=owner_sub,
+            discovery_key=f"employer-ui:seed-{job.id}",
+            external_status={"origin": "EMPLOYER_UI"},
+        )
+    )
     db.commit()
     return job
 
