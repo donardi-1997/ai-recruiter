@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { NavLink, useNavigate } from "react-router-dom";
-import api from "../api/client";
+import api, { clearAccessToken } from "../api/client";
 import BrandMark from "./BrandMark";
 import ThemeToggle from "./ThemeToggle";
 
@@ -34,9 +34,7 @@ function Navbar() {
 
   async function logout() {
     await api.post("/auth/logout").catch(() => {});
-    localStorage.removeItem("access_token");
-    localStorage.removeItem("id_token");
-    localStorage.removeItem("refresh_token");
+    clearAccessToken();
     navigate("/login");
   }
 
