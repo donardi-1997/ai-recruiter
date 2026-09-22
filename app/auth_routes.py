@@ -205,7 +205,7 @@ def me(request: Request):
         response = cognito_client.get_user(AccessToken=token)
         attrs = {a["Name"]: a["Value"] for a in response.get("UserAttributes", [])}
         return {
-            "sub": response.get("Username"),
+            "sub": attrs.get("sub") or response.get("Username"),
             "email": attrs.get("email"),
             "email_verified": attrs.get("email_verified"),
         }
