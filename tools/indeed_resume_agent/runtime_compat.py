@@ -12,7 +12,8 @@ SAFE_LISTING_STATE_SCRIPT = r"""
   const lower = (v) => clean(v).toLowerCase();
   const ignoredLabels = new Set([
     '', 'todos', 'nuevos', 'all', 'new', 'abierto', 'pausado', 'open', 'paused',
-    'patrocinar empleo', 'sponsor job', 'ver empleos', 'view jobs'
+    'patrocinar empleo', 'sponsor job', 'ver empleos', 'view jobs',
+    'más opciones', 'mas opciones', 'more options'
   ]);
 
   const jobKeyFromHref = (href) => {
@@ -98,6 +99,14 @@ SAFE_LISTING_STATE_SCRIPT = r"""
     return null;
   };
 
+  const looksLikeJobContainer = (node) => {
+    if (!node || !isVisible(node)) return false;
+    const text = lower(node.innerText || node.textContent || '');
+    const hasStatus = /\b(abierto|pausado|open|paused)\b/i.test(text);
+    const hasCandidateCounts = /\b(candidatos|todos|nuevos|candidates|all|new)\b/i.test(text);
+    return hasStatus && hasCandidateCounts && Boolean(chooseClickable(node));
+  };
+
   const roots = [];
   const seenRoots = new Set();
   const addRoot = (node) => {
@@ -106,15 +115,17 @@ SAFE_LISTING_STATE_SCRIPT = r"""
     roots.push(node);
   };
 
-  // Current Indeed Employers renders vacancies as table/ARIA rows or
-  // job-labelled containers. Generic <li>/<article> nodes are deliberately
-  // excluded unless they expose a stable job identity; otherwise footer/legal
-  // navigation can be mistaken for a vacancy and clicked by the agent.
+  // Current Indeed Employers renders vacancies as table/ARIA rows, job-labelled
+  // containers, or list/article cards. List/article nodes without a stable
+  // provider id are accepted only when they expose both vacancy-status and
+  // candidate-count signals plus a safe clickable title. This keeps footer,
+  // legal and navigation entries out while allowing SPA cards whose id only
+  // appears after opening the detail panel.
   for (const selector of ['tr', '[role="row"]', '[data-testid*="job" i]']) {
     for (const node of document.querySelectorAll(selector)) addRoot(node);
   }
   for (const node of document.querySelectorAll('article, li')) {
-    if (jobKeyFromElement(node)) addRoot(node);
+    if (jobKeyFromElement(node) || looksLikeJobContainer(node)) addRoot(node);
   }
 
   const rows = [];
@@ -140,9 +151,9 @@ SAFE_LISTING_STATE_SCRIPT = r"""
 
     if (!externalJobKey) {
       const text = rowText.toLowerCase();
-      const looksLikeJobRow = /\b(abierto|pausado|open|paused)\b/i.test(text)
-        || /\b(candidatos|todos|nuevos|candidates|all|new)\b/i.test(text);
-      if (!looksLikeJobRow) continue;
+      const hasStatus = /\b(abierto|pausado|open|paused)\b/i.test(text);
+      const hasCandidateCounts = /\b(candidatos|todos|nuevos|candidates|all|new)\b/i.test(text);
+      if (!(hasStatus && hasCandidateCounts)) continue;
     }
 
     const dedupeKey = externalJobKey
