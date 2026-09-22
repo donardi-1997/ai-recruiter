@@ -96,6 +96,7 @@ def oauth_secret():
         "refresh_token": "",
         "connected_email": "",
         "state_secret": "state-signing-secret",
+        "authorized_owner_sub": "owner-a",
     }
 
 
@@ -143,6 +144,7 @@ def test_oauth_redirect_uri_can_be_managed_in_secret_without_container_restart()
     )
     query = parse_qs(urlparse(result["authorization_url"]).query)
     status = gmail_integration.integration_status(
+        owner_sub="owner-a",
         settings=gmail_settings(),
         oauth_settings=settings_without_redirect,
         oauth_store=store,
@@ -182,6 +184,7 @@ def test_oauth_callback_validates_state_and_persists_refresh_token_and_mailbox()
     assert store.payload["refresh_token"] == "refresh-token"
     assert store.payload["connected_email"] == "recruiting@asiaticorp.com"
     assert store.payload["state_secret"] == "state-signing-secret"
+    assert store.payload["connected_by_sub"] == "owner-a"
 
     token_url, token_data, _ = http.posts[0]
     assert token_url == "https://oauth2.googleapis.com/token"
@@ -214,6 +217,7 @@ def test_status_exposes_connection_metadata_but_never_oauth_secrets():
     store = FakeStore(connected)
 
     status = gmail_integration.integration_status(
+        owner_sub="owner-a",
         settings=gmail_settings(),
         oauth_settings=oauth_settings(),
         oauth_store=store,
@@ -225,6 +229,7 @@ def test_status_exposes_connection_metadata_but_never_oauth_secrets():
         "oauth_configured": True,
         "connected": True,
         "connected_email": "recruiting@asiaticorp.com",
+        "manageable": True,
         "provider": "INDEED",
         "safe_filter": True,
         "redirect_uri": oauth_settings().redirect_uri,
@@ -240,7 +245,10 @@ def test_disconnect_clears_mailbox_tokens_but_preserves_oauth_client():
     connected["connected_email"] = "recruiting@asiaticorp.com"
     store = FakeStore(connected)
 
-    result = gmail_integration.disconnect_oauth(oauth_store=store)
+    result = gmail_integration.disconnect_oauth(
+        owner_sub="owner-a",
+        oauth_store=store,
+    )
 
     assert result == {"connected": False}
     assert store.payload["client_id"] == "google-client-id"
@@ -258,3 +266,73 @@ def test_oauth_frontend_return_defaults_to_cloudfront(monkeypatch):
     assert settings.frontend_return_url == (
         "https://dzcwl3yhv133t.cloudfront.net/integrations"
     )
+
+
+def test_oauth_start_rejects_non_owner():
+    store = FakeStore(oauth_secret())
+
+    with pytest.raises(gmail_integration.GmailOAuthOwnershipError):
+        gmail_integration.oauth_start(
+            owner_sub="owner-b",
+            settings=gmail_settings(),
+            oauth_settings=oauth_settings(),
+            oauth_store=store,
+        )
+
+
+def test_disconnect_rejects_non_owner():
+    connected = oauth_secret()
+    connected["refresh_token"] = "refresh-token"
+    connected["connected_email"] = "recruiting@asiaticorp.com"
+    connected["connected_by_sub"] = "owner-a"
+    store = FakeStore(connected)
+
+    with pytest.raises(gmail_integration.GmailOAuthOwnershipError):
+        gmail_integration.disconnect_oauth(
+            owner_sub="owner-b",
+            oauth_store=store,
+        )
+
+    assert store.payload["refresh_token"] == "refresh-token"
+
+
+def test_unowned_existing_mailbox_can_only_be_claimed_with_same_google_account():
+    payload = oauth_secret()
+    payload.pop("authorized_owner_sub")
+    payload["refresh_token"] = "legacy-refresh"
+    payload["connected_email"] = "recruiting@asiaticorp.com"
+    store = FakeStore(payload)
+    http = FakeHttp()
+
+    start = gmail_integration.oauth_start(
+        owner_sub="owner-a",
+        settings=gmail_settings(),
+        oauth_settings=oauth_settings(),
+        oauth_store=store,
+    )
+    state = parse_qs(urlparse(start["authorization_url"]).query)["state"][0]
+
+    gmail_integration.oauth_callback(
+        code="authorization-code",
+        state=state,
+        settings=gmail_settings(),
+        oauth_settings=oauth_settings(),
+        oauth_store=store,
+        http_client=http,
+    )
+
+    assert store.payload["connected_by_sub"] == "owner-a"
+
+
+def test_new_unowned_oauth_configuration_cannot_be_claimed_by_arbitrary_user():
+    payload = oauth_secret()
+    payload.pop("authorized_owner_sub")
+    store = FakeStore(payload)
+
+    with pytest.raises(gmail_integration.GmailOAuthOwnershipError):
+        gmail_integration.oauth_start(
+            owner_sub="owner-a",
+            settings=gmail_settings(),
+            oauth_settings=oauth_settings(),
+            oauth_store=store,
+        )
