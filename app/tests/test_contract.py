@@ -388,7 +388,8 @@ def test_evaluate_candidate_failure_does_not_expose_aws_error(
 
     assert stored is not None
     assert stored.status == "FAILED"
-    assert raw_error in stored.error_message
+    assert stored.error_message == "EVALUATION_INTERNAL_ERROR"
+    assert raw_error not in stored.error_message
 
 
 def test_evaluate_candidate_rejects_short_completed_summary(
