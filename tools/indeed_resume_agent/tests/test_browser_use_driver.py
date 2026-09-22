@@ -1,4 +1,5 @@
 import asyncio
+import os
 import base64
 import io
 import zipfile
@@ -15,6 +16,7 @@ from tools.indeed_resume_agent.browser_use_driver import (
     _is_resume_download_url,
     _normalize_lookup_text,
     _safe_indeed_url,
+    _configure_browser_use_environment,
 )
 from tools.indeed_resume_agent.config import AgentConfig
 
@@ -168,6 +170,18 @@ def test_download_label_normalization_collapses_whitespace():
     source = inspect.getsource(IndeedBrowserUse._click_download_control)
     assert r".replace(/\s+/g, ' ')" in source
     assert ".replace(/s+/g, ' ')" not in source
+
+
+def test_browser_use_environment_disables_telemetry_and_cloud_sync(monkeypatch):
+    monkeypatch.setenv("BROWSER_USE_SETUP_LOGGING", "true")
+    monkeypatch.setenv("ANONYMIZED_TELEMETRY", "true")
+    monkeypatch.setenv("BROWSER_USE_CLOUD_SYNC", "true")
+
+    _configure_browser_use_environment()
+
+    assert os.environ["BROWSER_USE_SETUP_LOGGING"] == "false"
+    assert os.environ["ANONYMIZED_TELEMETRY"] == "false"
+    assert os.environ["BROWSER_USE_CLOUD_SYNC"] == "false"
 
 
 def test_browser_use_driver_uses_single_managed_chrome_semantics(tmp_path):
