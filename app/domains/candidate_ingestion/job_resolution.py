@@ -185,10 +185,12 @@ def resolve_or_create_indeed_job(
     owner_sub: str,
     metadata: dict | None,
 ) -> Job | None:
-    """Resolve or create one owner-scoped Indeed vacancy idempotently.
+    """Resolve an Indeed vacancy that already exists locally; never create one.
 
-    Strong external posting identifiers win. When Indeed does not expose one,
-    a canonicalized title is used as a deterministic fallback discovery key.
+    Indeed Employers vacancy synchronization is the canonical creation path.
+    Gmail only discovers applications. Strong posting identifiers win, followed
+    by a controlled unambiguous title fallback for already-synchronized or
+    historical local vacancies.
     """
     metadata = metadata or {}
     raw_title = " ".join(str(metadata.get("job_title") or "").split()).strip()
@@ -224,91 +226,20 @@ def resolve_or_create_indeed_job(
                 auto_created=False,
             )
 
-        # A previous notification may have exposed only the title. If that
-        # fallback link still has no posting id, enrich it instead of creating
-        # a duplicate when Indeed later reveals the strong identifier.
-        title_key = f"title:{_canonical_title_key(raw_title)}"
-        title_linked = _job_by_discovery_key(
-            db,
-            owner_sub=owner_sub,
-            discovery_key=title_key,
-        )
-        if title_linked is not None:
-            title_link = (
-                db.query(IndeedJobLink)
-                .filter(IndeedJobLink.job_id == title_linked.id)
-                .with_for_update()
-                .one_or_none()
-            )
-            if title_link is not None:
-                if title_link.sourced_posting_id == external_job_id:
-                    return title_linked
-                if not title_link.sourced_posting_id:
-                    savepoint = db.begin_nested()
-                    try:
-                        title_link.sourced_posting_id = external_job_id
-                        db.flush()
-                        savepoint.commit()
-                        return title_linked
-                    except IntegrityError:
-                        savepoint.rollback()
-                        linked = _job_by_sourced_posting_id(
-                            db,
-                            owner_sub=owner_sub,
-                            sourced_posting_id=external_job_id,
-                        )
-                        if linked is not None:
-                            return linked
-                        raise
+    resolved = resolve_job(
+        db,
+        owner_sub=owner_sub,
+        explicit_job_id=None,
+        metadata=metadata,
+    )
+    if resolved is None:
+        return None
 
-        # A stable posting id represents a distinct Indeed vacancy. Do not merge
-        # it with another posting merely because the visible titles are equal.
-        resolved = None
-    else:
-        resolved = resolve_job(
-            db,
-            owner_sub=owner_sub,
-            explicit_job_id=None,
-            metadata=metadata,
-        )
-        if resolved is not None:
-            return _ensure_discovery_link(
-                db,
-                job=resolved,
-                owner_sub=owner_sub,
-                discovery_key=discovery_key,
-                external_job_id=None,
-                auto_created=False,
-            )
-
-    savepoint = db.begin_nested()
-    try:
-        job = Job(
-            title=raw_title,
-            description=None,
-            owner_sub=owner_sub,
-            evaluation_version=1,
-            evaluation_profile={},
-        )
-        db.add(job)
-        db.flush()
-        _ensure_discovery_link(
-            db,
-            job=job,
-            owner_sub=owner_sub,
-            discovery_key=discovery_key,
-            external_job_id=external_job_id,
-            auto_created=True,
-        )
-        savepoint.commit()
-        return job
-    except IntegrityError:
-        savepoint.rollback()
-        winner = _job_by_discovery_key(
-            db,
-            owner_sub=owner_sub,
-            discovery_key=discovery_key,
-        )
-        if winner is not None:
-            return winner
-        raise
+    return _ensure_discovery_link(
+        db,
+        job=resolved,
+        owner_sub=owner_sub,
+        discovery_key=discovery_key,
+        external_job_id=external_job_id,
+        auto_created=False,
+    )
