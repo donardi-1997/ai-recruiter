@@ -373,6 +373,7 @@ def oauth_callback(
     elif not str(payload.get("connected_email") or "").strip():
         raise GmailOAuthOwnershipError("GMAIL_OAUTH_OWNER_REQUIRED")
 
+    owns_client = http_client is None
     client = http_client or httpx.Client(timeout=current.request_timeout_seconds)
     try:
         token_response = client.post(
@@ -422,11 +423,15 @@ def oauth_callback(
             "connected_at": datetime.now(timezone.utc).isoformat(),
         }
     )
-    store.write(updated)
-    return {
-        "connected": True,
-        "connected_email": connected_email,
-    }
+    try:
+        store.write(updated)
+        return {
+            "connected": True,
+            "connected_email": connected_email,
+        }
+    finally:
+        if owns_client:
+            client.close()
 
 
 def disconnect_oauth(*, owner_sub: str, oauth_store=None) -> dict:
