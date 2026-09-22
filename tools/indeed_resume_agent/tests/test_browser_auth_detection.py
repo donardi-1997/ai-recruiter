@@ -1,5 +1,6 @@
 from tools.indeed_resume_agent.browser_use_driver import IndeedBrowserUse
 from tools.indeed_resume_agent.config import AgentConfig
+from tools.indeed_resume_agent.runtime_compat import install_runtime_compat
 
 
 def _config(tmp_path):
@@ -16,6 +17,7 @@ def test_hidden_challenge_iframe_does_not_block_authenticated_jobs(tmp_path):
         browser_session_class=object,
         browser_executable_resolver=lambda: "chrome.exe",
     )
+    install_runtime_compat(driver)
 
     async def authenticated_jobs_state(_cdp):
         return {
@@ -46,6 +48,7 @@ def test_visible_challenge_iframe_still_requires_human(tmp_path):
         browser_session_class=object,
         browser_executable_resolver=lambda: "chrome.exe",
     )
+    install_runtime_compat(driver)
 
     async def challenged_state(_cdp):
         return {
