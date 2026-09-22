@@ -1,4 +1,4 @@
-from tools.indeed_resume_agent.browser_use_driver import IndeedBrowserUse
+from tools.indeed_resume_agent.auth_aware_browser import IndeedBrowserUse
 from tools.indeed_resume_agent.config import AgentConfig
 
 
