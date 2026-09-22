@@ -39,6 +39,9 @@ def create_job(
     title: str,
     description: str | None,
     owner_sub: str,
+    indeed_description: str | None = None,
+    ai_description: str | None = None,
+    active_description_source: str | None = None,
     evaluation_profile: dict | None = None,
     **publication_fields,
 ):
@@ -48,6 +51,29 @@ def create_job(
         owner_sub=owner_sub,
         **publication_fields,
     )
+
+    source_fields_supplied = any(
+        value is not None
+        for value in (
+            indeed_description,
+            ai_description,
+            active_description_source,
+        )
+    )
+    if source_fields_supplied:
+        source = active_description_source or "indeed"
+        original = indeed_description if indeed_description is not None else description
+        ai_value = ai_description
+        effective = ai_value if source == "ai" else original
+        if effective is None:
+            effective = description
+        kwargs.update(
+            description=effective,
+            indeed_description=original,
+            ai_description=ai_value,
+            active_description_source=source,
+        )
+
     if evaluation_profile is not None:
         kwargs["evaluation_profile"] = normalize_evaluation_profile(evaluation_profile)
     return repository.create_job(db, **kwargs)
@@ -60,6 +86,9 @@ def update_job(
     owner_sub: str,
     title: str | None = None,
     description: str | None = None,
+    indeed_description: str | None = None,
+    ai_description: str | None = None,
+    active_description_source: str | None = None,
     evaluation_profile: dict | None = None,
     **publication_fields,
 ):
@@ -80,7 +109,51 @@ def update_job(
         getattr(job, "evaluation_profile", None)
     )
     next_title = job.title if title is None else title
-    next_description = job.description if description is None else description
+
+    current_source = getattr(job, "active_description_source", None) or "indeed"
+    current_indeed_description = getattr(job, "indeed_description", None)
+    current_ai_description = getattr(job, "ai_description", None)
+    if current_indeed_description is None and current_source == "indeed":
+        current_indeed_description = job.description
+    if current_ai_description is None and current_source == "ai":
+        current_ai_description = job.description
+
+    source_fields_supplied = any(
+        value is not None
+        for value in (
+            indeed_description,
+            ai_description,
+            active_description_source,
+        )
+    )
+    next_source = current_source if active_description_source is None else active_description_source
+    next_indeed_description = (
+        current_indeed_description
+        if indeed_description is None
+        else indeed_description
+    )
+    next_ai_description = (
+        current_ai_description
+        if ai_description is None
+        else ai_description
+    )
+
+    # Compatibility for clients that still update only `description`: mutate
+    # the currently active source instead of discarding the source model.
+    if not source_fields_supplied and description is not None:
+        if current_source == "ai":
+            next_ai_description = description
+        else:
+            next_indeed_description = description
+
+    next_description = (
+        next_ai_description
+        if next_source == "ai"
+        else next_indeed_description
+    )
+    if next_description is None:
+        next_description = job.description if description is None else description
+
     next_profile = (
         current_profile
         if evaluation_profile is None
@@ -107,7 +180,10 @@ def update_job(
             db,
             job,
             title=title,
-            description=description,
+            description=next_description,
+            indeed_description=next_indeed_description,
+            ai_description=next_ai_description,
+            active_description_source=next_source,
             evaluation_profile=(next_profile if evaluation_profile is not None else None),
             evaluation_version=next_version,
             commit=False,
