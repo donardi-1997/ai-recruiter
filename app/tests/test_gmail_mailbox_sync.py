@@ -11,7 +11,7 @@ from app.db import Base
 from app.domains.candidate_ingestion import repository
 from app.domains.candidate_ingestion.mailbox_sync import sync_gmail_mailbox
 from app.domains.candidate_ingestion.models import IndeedEmailResumeTask
-from app.models import Job
+from app.models import IndeedJobLink, Job
 
 
 class FakeStorage:
@@ -168,13 +168,21 @@ def test_indeed_link_notification_advances_cursor_and_creates_download_task_for_
         full_message_ids=("gmail-indeed-1",),
     )
     try:
+        job = Job(
+            title="Country Manager Chile",
+            description="Descripción completa",
+            indeed_description="Descripción completa",
+            active_description_source="indeed",
+            owner_sub="owner-1",
+        )
+        db.add(job)
+        db.flush()
         db.add(
-            Job(
-                title="Country Manager Chile",
-                description="Descripción completa",
-                indeed_description="Descripción completa",
-                active_description_source="indeed",
+            IndeedJobLink(
+                job_id=job.id,
                 owner_sub="owner-1",
+                discovery_key=f"employer-ui:seed-{job.id}",
+                external_status={"origin": "EMPLOYER_UI"},
             )
         )
         db.commit()
