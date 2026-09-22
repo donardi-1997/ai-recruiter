@@ -134,6 +134,154 @@
 }
 
 /* =====================================================
+   JOBS — Description sources
+   ===================================================== */
+.job-description-editor {
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: var(--surface-soft);
+}
+
+.job-description-source-header,
+.job-detail-description-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.job-description-source-header > div:first-child,
+.job-detail-description-heading > div:first-child {
+  min-width: 0;
+}
+
+.job-description-source-header strong {
+  display: block;
+  margin-bottom: 4px;
+  color: var(--ink);
+  font-size: 0.88rem;
+}
+
+.job-description-source-header p,
+.job-detail-description-heading p {
+  margin: 0;
+  font-size: 0.76rem;
+  line-height: 1.5;
+}
+
+.job-description-source-picker {
+  display: inline-flex;
+  flex: 0 0 auto;
+  gap: 4px;
+  padding: 4px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface);
+}
+
+.job-source-option {
+  border: 0;
+  border-radius: 7px;
+  padding: 8px 11px;
+  background: transparent;
+  color: var(--ink-soft);
+  cursor: pointer;
+  font: inherit;
+  font-size: 0.76rem;
+  font-weight: 700;
+  transition: background 120ms ease, color 120ms ease, box-shadow 120ms ease;
+}
+
+.job-source-option:hover:not(:disabled) {
+  background: var(--surface-soft);
+  color: var(--ink);
+}
+
+.job-source-option.is-active {
+  background: var(--surface);
+  color: var(--ink);
+  box-shadow: 0 0 0 1px var(--border);
+}
+
+.job-source-option:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
+.job-description-tabs {
+  display: flex;
+  gap: 4px;
+  margin: 16px 0 12px;
+  border-bottom: 1px solid var(--border);
+}
+
+.job-description-tabs button {
+  position: relative;
+  border: 0;
+  padding: 9px 12px 10px;
+  background: transparent;
+  color: var(--ink-soft);
+  cursor: pointer;
+  font: inherit;
+  font-size: 0.8rem;
+  font-weight: 700;
+}
+
+.job-description-tabs button.is-active {
+  color: var(--ink);
+}
+
+.job-description-tabs button.is-active::after {
+  content: "";
+  position: absolute;
+  right: 10px;
+  bottom: -1px;
+  left: 10px;
+  height: 2px;
+  border-radius: 999px;
+  background: currentColor;
+}
+
+.job-description-field {
+  margin-bottom: 0;
+}
+
+.job-description-field-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.job-description-source-help {
+  margin: 7px 0 0;
+  font-size: 0.74rem;
+  line-height: 1.45;
+}
+
+.job-description-source-meta {
+  margin: -4px 0 10px;
+  color: var(--ink-faint);
+  font-size: 0.72rem;
+}
+
+.job-description-source-meta strong {
+  color: var(--ink-soft);
+}
+
+.job-detail-description-heading h3 {
+  margin-bottom: 4px;
+}
+
+.job-description-detail-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 14px;
+}
+
+/* =====================================================
    JOBS — Detail modal
    ===================================================== */
 .job-detail-modal {
@@ -480,6 +628,23 @@
 
   .job-enrichment-heading {
     flex-direction: column;
+  }
+
+  .job-description-source-header,
+  .job-detail-description-heading {
+    flex-direction: column;
+  }
+
+  .job-description-source-picker {
+    width: 100%;
+  }
+
+  .job-source-option {
+    flex: 1 1 0;
+  }
+
+  .job-description-tabs {
+    overflow-x: auto;
   }
 
   .indeed-actions {

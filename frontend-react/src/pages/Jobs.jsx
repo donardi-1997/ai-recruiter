@@ -99,7 +99,12 @@ async function loadAllJobCandidates(jobId) {
 function Jobs() {
   const [jobs, setJobs] = useState([]);
   const [title, setTitle] = useState("");
-  const [description, setDescription] = useState("");
+  const [indeedDescription, setIndeedDescription] = useState("");
+  const [aiDescription, setAiDescription] = useState("");
+  const [activeDescriptionSource, setActiveDescriptionSource] = useState("indeed");
+  const [descriptionTab, setDescriptionTab] = useState("indeed");
+  const [detailDescriptionTab, setDetailDescriptionTab] = useState("indeed");
+  const [descriptionSourceBusy, setDescriptionSourceBusy] = useState(false);
   const [countryCode, setCountryCode] = useState("");
   const [city, setCity] = useState("");
   const [employmentType, setEmploymentType] = useState("");
@@ -216,6 +221,7 @@ function Jobs() {
       setDeleteError("");
     }
     setViewJob(job);
+    setDetailDescriptionTab(job.active_description_source || (job.ai_description ? "ai" : "indeed"));
     setJobCandidates([]);
     setJobCandidatesError("");
     setIndeedJobStatus(null);
@@ -343,7 +349,7 @@ function Jobs() {
     try {
       const { data } = await api.post("/jobs/enrich", {
         title,
-        description: description || null,
+        description: activeDescription || null,
         country_code: countryCode || null,
         city: city || null,
         employment_type: employmentType || null,
@@ -364,10 +370,13 @@ function Jobs() {
     if (!enrichmentProposal) return;
     const profile = { ...enrichmentProposal };
     delete profile.improved_description;
-    setDescription(
-      formatEnrichmentProposalDescription(enrichmentProposal, description)
-      || description
+    const generatedDescription = (
+      formatEnrichmentProposalDescription(enrichmentProposal, activeDescription)
+      || activeDescription
     );
+    setAiDescription(generatedDescription);
+    setActiveDescriptionSource("ai");
+    setDescriptionTab("ai");
     setEvaluationProfile(profile);
     setEnrichmentProposal(null);
     setEnrichmentError("");
@@ -381,10 +390,17 @@ function Jobs() {
   async function saveJob(event) {
     event.preventDefault();
     setError("");
+    if (!String(activeDescription || "").trim()) {
+      setError("La descripción activa debe tener contenido antes de guardar.");
+      return;
+    }
     setSaving(true);
     const payload = {
       title,
-      description,
+      description: activeDescription,
+      indeed_description: indeedDescription,
+      ai_description: aiDescription,
+      active_description_source: activeDescriptionSource,
       country_code: countryCode,
       city,
       employment_type: employmentType,
@@ -418,7 +434,19 @@ function Jobs() {
   function editJob(job) {
     setEditingJob(job.job_id);
     setTitle(job.title);
-    setDescription(job.description || "");
+    const source = job.active_description_source || (job.ai_description ? "ai" : "indeed");
+    const originalDescription = (
+      job.indeed_description
+      ?? (source === "indeed" ? (job.description || "") : "")
+    );
+    const generatedDescription = (
+      job.ai_description
+      ?? (source === "ai" ? (job.description || "") : "")
+    );
+    setIndeedDescription(originalDescription);
+    setAiDescription(generatedDescription);
+    setActiveDescriptionSource(source);
+    setDescriptionTab(source);
     setCountryCode(job.country_code || "");
     setCity(job.city || "");
     setEmploymentType(job.employment_type || "");
@@ -433,7 +461,11 @@ function Jobs() {
 
   function resetJobFields() {
     setTitle("");
-    setDescription("");
+    setIndeedDescription("");
+    setAiDescription("");
+    setActiveDescriptionSource("indeed");
+    setDescriptionTab("indeed");
+    setDetailDescriptionTab("indeed");
     setCountryCode("");
     setCity("");
     setEmploymentType("");
@@ -453,6 +485,51 @@ function Jobs() {
   function toggleForm() {
     if (showForm) cancelForm();
     else { setEditingJob(null); resetJobFields(); setError(""); setShowForm(true); }
+  }
+
+  const description = descriptionTab === "ai" ? aiDescription : indeedDescription;
+  const activeDescription = activeDescriptionSource === "ai" ? aiDescription : indeedDescription;
+
+  function updateVisibleDescription(value) {
+    if (descriptionTab === "ai") setAiDescription(value);
+    else setIndeedDescription(value);
+  }
+
+  async function activateDescriptionSource(source) {
+    if (!viewJob || descriptionSourceBusy) return;
+    const sourceDescription = source === "ai"
+      ? (viewJob.ai_description ?? (viewJob.active_description_source === "ai" ? viewJob.description : null))
+      : (viewJob.indeed_description ?? (viewJob.active_description_source !== "ai" ? viewJob.description : null));
+    if (!String(sourceDescription || "").trim()) return;
+
+    setDescriptionSourceBusy(true);
+    setError("");
+    try {
+      const { data } = await api.put(`/jobs/${viewJob.job_id}`, {
+        active_description_source: source,
+      });
+      const merged = {
+        ...viewJob,
+        ...data,
+        candidate_count: viewJob.candidate_count,
+      };
+      setViewJob(merged);
+      setJobs((current) => current.map((job) => (
+        job.job_id === merged.job_id ? { ...job, ...merged } : job
+      )));
+      if (data?.reevaluation_scheduled) {
+        setSuccessMessage(
+          `Descripción activa actualizada · reevaluación de ${data.reevaluation_candidate_count || 0} candidatos pendiente`
+        );
+      } else {
+        setSuccessMessage(`Descripción activa: ${source === "ai" ? "Optimizada por IA" : "Original de Indeed"}.`);
+      }
+      setTimeout(() => setSuccessMessage(""), 5000);
+    } catch (requestError) {
+      setError(requestError.response?.data?.detail || "No fue posible cambiar la descripción activa.");
+    } finally {
+      setDescriptionSourceBusy(false);
+    }
   }
 
   const indeedReady = !!(indeedIntegration?.enabled && indeedIntegration?.configured);
@@ -475,7 +552,62 @@ function Jobs() {
           <div className="panel-heading"><div><span className="eyebrow">{editingJob ? "Edición" : "Nueva posición"}</span><h2>{editingJob ? "Actualizar vacante" : "Define la vacante"}</h2></div><span className="step-badge">6 datos</span></div>
           <form onSubmit={saveJob} className="job-form">
             <div className="form-group"><label htmlFor="job-title">Título de la vacante</label><input id="job-title" maxLength={75} placeholder="Ej. Cloud Engineer" value={title} onChange={(e) => setTitle(e.target.value)} required /></div>
-            <div className="form-group"><label htmlFor="job-description">Descripción y requisitos</label><textarea id="job-description" placeholder="Responsabilidades, experiencia, habilidades y criterios de éxito…" value={description} onChange={(e) => setDescription(e.target.value)} required /></div>
+            <section className="job-description-editor" aria-label="Versiones de la descripción">
+              <div className="job-description-source-header">
+                <div>
+                  <strong>Descripción utilizada por AI Recruiter</strong>
+                  <p className="muted">Elige qué versión usa el ranking y la evaluación. Ver una pestaña no cambia la versión activa.</p>
+                </div>
+                <div className="job-description-source-picker" role="radiogroup" aria-label="Descripción activa">
+                  <button
+                    type="button"
+                    role="radio"
+                    aria-checked={activeDescriptionSource === "indeed"}
+                    className={`job-source-option ${activeDescriptionSource === "indeed" ? "is-active" : ""}`}
+                    onClick={() => setActiveDescriptionSource("indeed")}
+                    disabled={!indeedDescription.trim() && activeDescriptionSource !== "indeed"}
+                    title={!indeedDescription.trim() && activeDescriptionSource !== "indeed" ? "Escribe primero una descripción original" : undefined}
+                  >
+                    Original · Indeed
+                  </button>
+                  <button
+                    type="button"
+                    role="radio"
+                    aria-checked={activeDescriptionSource === "ai"}
+                    className={`job-source-option ${activeDescriptionSource === "ai" ? "is-active" : ""}`}
+                    onClick={() => setActiveDescriptionSource("ai")}
+                    disabled={!aiDescription.trim()}
+                    title={!aiDescription.trim() ? "Genera o escribe primero una versión IA" : undefined}
+                  >
+                    Optimizada · IA
+                  </button>
+                </div>
+              </div>
+
+              <div className="job-description-tabs" role="tablist" aria-label="Ver descripción">
+                <button type="button" role="tab" aria-selected={descriptionTab === "indeed"} className={descriptionTab === "indeed" ? "is-active" : ""} onClick={() => setDescriptionTab("indeed")}>Original · Indeed</button>
+                <button type="button" role="tab" aria-selected={descriptionTab === "ai"} className={descriptionTab === "ai" ? "is-active" : ""} onClick={() => setDescriptionTab("ai")}>Optimizada · IA</button>
+              </div>
+
+              <div className="form-group job-description-field">
+                <div className="job-description-field-heading">
+                  <label htmlFor="job-description">Descripción y requisitos</label>
+                  {descriptionTab === activeDescriptionSource && <span className="badge badge-success">ACTIVA</span>}
+                </div>
+                <textarea
+                  id="job-description"
+                  placeholder={descriptionTab === "ai" ? "Genera una propuesta con IA o escribe una versión optimizada…" : "Responsabilidades, experiencia, habilidades y criterios de éxito…"}
+                  value={description}
+                  onChange={(e) => updateVisibleDescription(e.target.value)}
+                  required={descriptionTab === activeDescriptionSource}
+                />
+                <p className="muted job-description-source-help">
+                  {descriptionTab === "indeed"
+                    ? "La ingesta actualiza únicamente esta versión. La descripción IA se conserva."
+                    : "Esta versión es independiente y no se sobrescribe durante nuevas ingestas de Indeed."}
+                </p>
+              </div>
+            </section>
 
             <div className="job-enrichment-actions">
               <div>
@@ -503,7 +635,7 @@ function Jobs() {
                   <div><strong>Responsabilidades</strong><ul>{(enrichmentProposal.responsibilities || []).map((item) => <li key={`responsibility-${item}`}>{item}</li>)}</ul></div>
                   <div><strong>Preguntas por validar</strong><ul>{(enrichmentProposal.assumptions_to_validate || []).map((item) => <li key={`assumption-${item}`}>{item}</li>)}</ul></div>
                 </div>
-                <div className="form-actions"><button type="button" className="btn btn-ghost" onClick={discardEnrichmentProposal}>Descartar</button><button type="button" className="btn btn-secondary" onClick={applyEnrichmentProposal}>Aplicar propuesta</button></div>
+                <div className="form-actions"><button type="button" className="btn btn-ghost" onClick={discardEnrichmentProposal}>Descartar</button><button type="button" className="btn btn-secondary" aria-label="Aplicar propuesta · Guardar como versión IA" onClick={applyEnrichmentProposal}>Guardar como versión IA</button></div>
               </section>
             )}
 
@@ -537,6 +669,9 @@ function Jobs() {
               <article className="job-card" key={job.job_id}>
                 <div className="job-card-top"><span className="job-card-icon" aria-hidden="true">▤</span><span className="status-pill"><i /> Activa</span></div>
                 <h3>{job.title}</h3><p>{job.description}</p>
+                <p className="job-description-source-meta">
+                  Descripción activa: <strong>{job.active_description_source === "ai" ? "IA" : "Indeed"}</strong>
+                </p>
                 {(job.city || job.country_code) && <p className="muted">{[job.city, job.country_code].filter(Boolean).join(" · ")}</p>}
                 <p className="muted">{job.candidate_count || 0} candidato{job.candidate_count === 1 ? "" : "s"} asignado{job.candidate_count === 1 ? "" : "s"}</p>
                 <div className="job-card-actions">
@@ -574,21 +709,55 @@ function Jobs() {
             </div>
 
             <div className="job-detail-section">
-              <h3>Descripción y requisitos</h3>
-              <p className="job-detail-description">{viewJob.description || "Sin descripción."}</p>
-              {!viewJob.description && (
-                <button
-                  type="button"
-                  className="btn btn-secondary"
-                  onClick={() => {
-                    const job = viewJob;
-                    closeJobDetails();
-                    editJob(job);
-                  }}
-                >
-                  Editar y enriquecer
-                </button>
-              )}
+              <div className="job-detail-description-heading">
+                <div>
+                  <h3>Descripción y requisitos</h3>
+                  <p className="muted">La pestaña visible y la descripción usada por el sistema son controles independientes.</p>
+                </div>
+                <span className="badge badge-success">
+                  Activa: {viewJob.active_description_source === "ai" ? "IA" : "Indeed"}
+                </span>
+              </div>
+
+              <div className="job-description-tabs" role="tablist" aria-label="Versiones de la descripción de la vacante">
+                <button type="button" role="tab" aria-selected={detailDescriptionTab === "indeed"} className={detailDescriptionTab === "indeed" ? "is-active" : ""} onClick={() => setDetailDescriptionTab("indeed")}>Original · Indeed</button>
+                <button type="button" role="tab" aria-selected={detailDescriptionTab === "ai"} className={detailDescriptionTab === "ai" ? "is-active" : ""} onClick={() => setDetailDescriptionTab("ai")}>Optimizada · IA</button>
+              </div>
+
+              {(() => {
+                const source = viewJob.active_description_source || (viewJob.ai_description ? "ai" : "indeed");
+                const original = viewJob.indeed_description ?? (source === "indeed" ? viewJob.description : null);
+                const generated = viewJob.ai_description ?? (source === "ai" ? viewJob.description : null);
+                const visibleDescription = detailDescriptionTab === "ai" ? generated : original;
+                const hasAnyDescription = Boolean(String(original || generated || "").trim());
+                const canActivate = Boolean(String(visibleDescription || "").trim()) && detailDescriptionTab !== source;
+                return (
+                  <>
+                    <p className="job-detail-description">
+                      {visibleDescription || (hasAnyDescription ? "Esta versión aún no tiene contenido." : "Sin descripción.")}
+                    </p>
+                    <div className="job-description-detail-actions">
+                      {canActivate && (
+                        <button type="button" className="btn btn-secondary" disabled={descriptionSourceBusy} onClick={() => activateDescriptionSource(detailDescriptionTab)}>
+                          {descriptionSourceBusy ? "Actualizando…" : "Usar esta descripción"}
+                        </button>
+                      )}
+                      <button
+                        type="button"
+                        className="btn btn-ghost"
+                        onClick={() => {
+                          const job = viewJob;
+                          closeJobDetails();
+                          editJob(job);
+                          setDescriptionTab(detailDescriptionTab);
+                        }}
+                      >
+                        {hasAnyDescription ? "Editar versiones" : "Editar y enriquecer"}
+                      </button>
+                    </div>
+                  </>
+                );
+              })()}
             </div>
 
             <div className="job-detail-section indeed-panel">

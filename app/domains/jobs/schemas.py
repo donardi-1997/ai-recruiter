@@ -1,6 +1,7 @@
 """Jobs schemas."""
 
 from datetime import datetime
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
@@ -68,6 +69,9 @@ class JobEnrichmentProposal(EvaluationProfile):
 class CreateJobRequest(BaseModel):
     title: str = Field(min_length=1, max_length=MAX_JOB_TITLE_CHARS)
     description: str | None = Field(default=None, max_length=MAX_JOB_DESCRIPTION_CHARS)
+    indeed_description: str | None = Field(default=None, max_length=MAX_JOB_DESCRIPTION_CHARS)
+    ai_description: str | None = Field(default=None, max_length=MAX_JOB_DESCRIPTION_CHARS)
+    active_description_source: Literal["indeed", "ai"] = "indeed"
     country_code: str | None = None
     city: str | None = None
     employment_type: str | None = None
@@ -79,6 +83,9 @@ class CreateJobRequest(BaseModel):
 class UpdateJobRequest(BaseModel):
     title: str | None = Field(default=None, min_length=1, max_length=MAX_JOB_TITLE_CHARS)
     description: str | None = Field(default=None, max_length=MAX_JOB_DESCRIPTION_CHARS)
+    indeed_description: str | None = Field(default=None, max_length=MAX_JOB_DESCRIPTION_CHARS)
+    ai_description: str | None = Field(default=None, max_length=MAX_JOB_DESCRIPTION_CHARS)
+    active_description_source: Literal["indeed", "ai"] | None = None
     country_code: str | None = None
     city: str | None = None
     employment_type: str | None = None
@@ -92,6 +99,9 @@ class JobResponse(BaseModel):
     id: str
     title: str
     description: str | None = None
+    indeed_description: str | None = None
+    ai_description: str | None = None
+    active_description_source: Literal["indeed", "ai"] = "indeed"
     country_code: str | None = None
     city: str | None = None
     employment_type: str | None = None

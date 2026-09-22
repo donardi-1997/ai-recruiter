@@ -226,6 +226,110 @@ def test_version_change_without_assigned_candidates_does_not_schedule_task():
         engine.dispose()
 
 
+def test_ai_description_is_saved_without_overwriting_indeed_description():
+    engine, db = _db()
+    try:
+        job = Job(
+            title="Cloud Engineer",
+            description="Original Indeed description",
+            indeed_description="Original Indeed description",
+            ai_description=None,
+            active_description_source="indeed",
+            owner_sub="owner-1",
+            evaluation_version=1,
+            evaluation_profile={},
+        )
+        db.add(job)
+        db.commit()
+        db.refresh(job)
+
+        updated = service.update_job(
+            db,
+            job_id=job.id,
+            owner_sub="owner-1",
+            ai_description="AI optimized description",
+            active_description_source="ai",
+        )
+
+        assert updated.indeed_description == "Original Indeed description"
+        assert updated.ai_description == "AI optimized description"
+        assert updated.active_description_source == "ai"
+        assert updated.description == "AI optimized description"
+        assert updated.evaluation_version == 2
+    finally:
+        db.close()
+        engine.dispose()
+
+
+def test_indeed_ingestion_preserves_active_ai_description_and_evaluation_version():
+    engine, db = _db()
+    try:
+        job = Job(
+            title="Cloud Engineer",
+            description="AI optimized description",
+            indeed_description="Indeed description v1",
+            ai_description="AI optimized description",
+            active_description_source="ai",
+            owner_sub="owner-1",
+            evaluation_version=4,
+            evaluation_profile={"required_technologies": ["AWS"]},
+        )
+        db.add(job)
+        db.commit()
+        db.refresh(job)
+
+        updated = service.update_job(
+            db,
+            job_id=job.id,
+            owner_sub="owner-1",
+            indeed_description="Indeed description v2",
+        )
+
+        assert updated.indeed_description == "Indeed description v2"
+        assert updated.ai_description == "AI optimized description"
+        assert updated.active_description_source == "ai"
+        assert updated.description == "AI optimized description"
+        assert updated.evaluation_version == 4
+        assert updated._evaluation_changed is False
+    finally:
+        db.close()
+        engine.dispose()
+
+
+def test_switching_description_source_changes_effective_evaluation_description():
+    engine, db = _db()
+    try:
+        job = Job(
+            title="Cloud Engineer",
+            description="AI optimized description",
+            indeed_description="Original Indeed description",
+            ai_description="AI optimized description",
+            active_description_source="ai",
+            owner_sub="owner-1",
+            evaluation_version=2,
+            evaluation_profile={},
+        )
+        db.add(job)
+        db.commit()
+        db.refresh(job)
+
+        updated = service.update_job(
+            db,
+            job_id=job.id,
+            owner_sub="owner-1",
+            active_description_source="indeed",
+        )
+
+        assert updated.description == "Original Indeed description"
+        assert updated.active_description_source == "indeed"
+        assert updated.ai_description == "AI optimized description"
+        assert updated.evaluation_version == 3
+        assert updated._evaluation_changed is True
+    finally:
+        db.close()
+        engine.dispose()
+
+
 def test_schedule_reevaluation_is_idempotent_for_same_job_version():
     from app.domains.jobs.reevaluation import schedule_reevaluation
 
