@@ -33,7 +33,6 @@ function Candidates() {
       );
       setJobs(Array.isArray(jobsData) ? jobsData : jobsData.jobs || []);
     } catch (error) {
-      console.error("ERROR LOADING DATA:", error);
     }
   }, []);
 
@@ -74,13 +73,11 @@ function Candidates() {
         { job_id: jobId },
       );
 
-      console.log("EVALUATION RESPONSE:", response.data);
       setSelectedEvaluation({
         candidateId,
         evaluation: response.data,
       });
     } catch (error) {
-      console.error("EVALUATION ERROR:", error.response?.data || error);
       alert("Error evaluando candidato");
     } finally {
       setLoading(false);
@@ -120,7 +117,6 @@ function Candidates() {
       if (!downloadUrl) throw new Error("No se recibió URL de descarga");
       window.location.assign(downloadUrl);
     } catch (error) {
-      console.error("DOWNLOAD ERROR:", error.response?.data || error);
       alert("No fue posible descargar el CV");
     }
   }
@@ -149,7 +145,6 @@ function Candidates() {
         return updated;
       });
     } catch (error) {
-      console.error("DELETE CANDIDATE ERROR:", error.response?.data || error);
       alert(
         error.response?.data?.detail ||
           "No fue posible eliminar el candidato",
@@ -176,7 +171,6 @@ function Candidates() {
         );
       }
     } catch (error) {
-      console.error("DELETE ALL CANDIDATES ERROR:", error.response?.data || error);
       window.alert(
         error.response?.data?.detail ||
           "No fue posible eliminar los candidatos.",
