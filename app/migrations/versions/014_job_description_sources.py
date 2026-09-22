@@ -48,7 +48,7 @@ def upgrade() -> None:
             active_description_source = 'ai'
         WHERE description IS NOT NULL
           AND evaluation_profile IS NOT NULL
-          AND evaluation_profile <> '{}'::json
+          AND evaluation_profile::jsonb <> '{}'::jsonb
         """
     )
 
