@@ -33,6 +33,19 @@ const PROPOSAL = {
   assumptions_to_validate: ["Confirmar si EKS forma parte del stack"],
 };
 
+const EXPECTED_APPLIED_DESCRIPTION = [
+  PROPOSAL.improved_description,
+  "Tecnologías requeridas\n- AWS",
+  "Tecnologías deseables\n- Terraform",
+  "Certificaciones sugeridas\n- AWS Solutions Architect",
+  "Experiencia específica\n- Experiencia mínima de 3 años.\n- Infraestructura como código",
+  "Responsabilidades\n- Operar infraestructura cloud",
+  "Conocimiento de dominio\n- Cloud operations",
+  "Idiomas\n- Inglés deseable",
+  "Competencias técnicas\n- Observabilidad",
+  "Preguntas por validar (no son requisitos de evaluación)\n- Confirmar si EKS forma parte del stack",
+].join("\n\n");
+
 function renderJobs() {
   return render(
     <MemoryRouter>
@@ -132,7 +145,7 @@ describe("Jobs AI enrichment", () => {
     await screen.findByText("Propuesta de IA");
     fireEvent.click(screen.getByRole("button", { name: /aplicar propuesta/i }));
 
-    expect(screen.getByLabelText("Descripción y requisitos")).toHaveValue(PROPOSAL.improved_description);
+    expect(screen.getByLabelText("Descripción y requisitos")).toHaveValue(EXPECTED_APPLIED_DESCRIPTION);
     expect(api.post).not.toHaveBeenCalledWith("/jobs", expect.anything());
 
     fireEvent.click(screen.getByRole("button", { name: /crear vacante/i }));
@@ -142,7 +155,7 @@ describe("Jobs AI enrichment", () => {
         "/jobs",
         expect.objectContaining({
           title: "Cloud Engineer",
-          description: PROPOSAL.improved_description,
+          description: EXPECTED_APPLIED_DESCRIPTION,
           evaluation_profile: expect.objectContaining({
             required_technologies: ["AWS"],
             preferred_technologies: ["Terraform"],
@@ -174,7 +187,7 @@ describe("Jobs AI enrichment", () => {
     await screen.findByText("Propuesta de IA");
     fireEvent.click(screen.getByRole("button", { name: /aplicar propuesta/i }));
 
-    expect(screen.getByLabelText("Descripción y requisitos")).toHaveValue(PROPOSAL.improved_description);
+    expect(screen.getByLabelText("Descripción y requisitos")).toHaveValue(EXPECTED_APPLIED_DESCRIPTION);
     expect(api.put).not.toHaveBeenCalled();
 
     fireEvent.click(screen.getByRole("button", { name: /guardar cambios/i }));
@@ -183,7 +196,7 @@ describe("Jobs AI enrichment", () => {
       expect(api.put).toHaveBeenCalledWith(
         "/jobs/job-1",
         expect.objectContaining({
-          description: PROPOSAL.improved_description,
+          description: EXPECTED_APPLIED_DESCRIPTION,
           evaluation_profile: expect.objectContaining({
             required_technologies: ["AWS"],
             preferred_technologies: ["Terraform"],
