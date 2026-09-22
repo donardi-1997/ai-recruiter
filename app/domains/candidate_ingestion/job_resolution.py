@@ -5,7 +5,6 @@ from __future__ import annotations
 import re
 import unicodedata
 
-from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.domains.jobs import repository as jobs_repository
@@ -29,7 +28,6 @@ def indeed_discovery_key(metadata: dict | None) -> str | None:
     external_job_id = str(metadata.get("external_job_id") or "").strip()
     if external_job_id:
         return f"posting:{external_job_id.casefold()}"
-
     title_key = _canonical_title_key(metadata.get("job_title"))
     if title_key:
         return f"title:{title_key}"
@@ -73,69 +71,6 @@ def _job_by_sourced_posting_id(
     )
 
 
-def _ensure_discovery_link(
-    db: Session,
-    *,
-    job: Job,
-    owner_sub: str,
-    discovery_key: str,
-    external_job_id: str | None,
-    auto_created: bool,
-) -> Job:
-    existing = (
-        db.query(IndeedJobLink)
-        .filter(IndeedJobLink.job_id == job.id)
-        .one_or_none()
-    )
-    if existing is not None:
-        winner = _job_by_discovery_key(
-            db,
-            owner_sub=owner_sub,
-            discovery_key=discovery_key,
-        )
-        if winner is not None and winner.id != job.id:
-            return winner
-
-        set_discovery_key = existing.discovery_key is None
-        set_external_id = bool(external_job_id and not existing.sourced_posting_id)
-        if not set_discovery_key and not set_external_id:
-            return job
-
-        savepoint = db.begin_nested()
-        try:
-            if set_discovery_key:
-                existing.discovery_key = discovery_key
-            if set_external_id:
-                existing.sourced_posting_id = external_job_id
-            db.flush()
-            savepoint.commit()
-            return job
-        except IntegrityError:
-            savepoint.rollback()
-            winner = _job_by_discovery_key(
-                db,
-                owner_sub=owner_sub,
-                discovery_key=discovery_key,
-            )
-            if winner is not None:
-                return winner
-            raise
-
-    link = IndeedJobLink(
-        job_id=job.id,
-        owner_sub=owner_sub,
-        discovery_key=discovery_key,
-        sourced_posting_id=external_job_id,
-        external_status={
-            "origin": "EMAIL_AUTO_DISCOVERY" if auto_created else "EMAIL_DISCOVERY_LINKED",
-            "auto_created": bool(auto_created),
-        },
-    )
-    db.add(link)
-    db.flush()
-    return job
-
-
 def resolve_job(
     db: Session,
     *,
@@ -145,20 +80,13 @@ def resolve_job(
 ) -> Job | None:
     """Resolve only an explicit owned job or one unambiguous owned title."""
     if explicit_job_id:
-        return jobs_repository.get_job(
-            db,
-            explicit_job_id,
-            owner_sub=owner_sub,
-        )
+        return jobs_repository.get_job(db, explicit_job_id, owner_sub=owner_sub)
 
     metadata = metadata or {}
     jobs = jobs_repository.list_jobs(db, owner_sub=owner_sub)
-
     extracted_title = _normalize(metadata.get("job_title"))
     if extracted_title:
-        exact_matches = [
-            job for job in jobs if _normalize(job.title) == extracted_title
-        ]
+        exact_matches = [job for job in jobs if _normalize(job.title) == extracted_title]
         if len(exact_matches) == 1:
             return exact_matches[0]
         if len(exact_matches) > 1:
@@ -167,16 +95,12 @@ def resolve_job(
     subject = _normalize(metadata.get("subject"))
     if not subject:
         return None
-
-    matches: list[Job] = []
+    matches = []
     for job in jobs:
         normalized_title = _normalize(job.title)
         if normalized_title and normalized_title in subject:
             matches.append(job)
-
-    if len(matches) != 1:
-        return None
-    return matches[0]
+    return matches[0] if len(matches) == 1 else None
 
 
 def resolve_or_create_indeed_job(
@@ -187,10 +111,9 @@ def resolve_or_create_indeed_job(
 ) -> Job | None:
     """Resolve an Indeed vacancy that already exists locally; never create one.
 
-    Indeed Employers vacancy synchronization is the canonical creation path.
-    Gmail only discovers applications. Strong posting identifiers win, followed
-    by a controlled unambiguous title fallback for already-synchronized or
-    historical local vacancies.
+    Indeed Employers vacancy synchronization owns provider identity. Gmail may
+    use a strong already-linked posting id or a unique local title fallback, but
+    it never creates a Job or an IndeedJobLink.
     """
     metadata = metadata or {}
     raw_title = " ".join(str(metadata.get("job_title") or "").split()).strip()
@@ -198,16 +121,14 @@ def resolve_or_create_indeed_job(
         return None
 
     discovery_key = indeed_discovery_key(metadata)
-    if not discovery_key:
-        return None
-
-    winner = _job_by_discovery_key(
-        db,
-        owner_sub=owner_sub,
-        discovery_key=discovery_key,
-    )
-    if winner is not None:
-        return winner
+    if discovery_key:
+        winner = _job_by_discovery_key(
+            db,
+            owner_sub=owner_sub,
+            discovery_key=discovery_key,
+        )
+        if winner is not None:
+            return winner
 
     external_job_id = str(metadata.get("external_job_id") or "").strip() or None
     if external_job_id:
@@ -217,29 +138,11 @@ def resolve_or_create_indeed_job(
             sourced_posting_id=external_job_id,
         )
         if linked is not None:
-            return _ensure_discovery_link(
-                db,
-                job=linked,
-                owner_sub=owner_sub,
-                discovery_key=discovery_key,
-                external_job_id=external_job_id,
-                auto_created=False,
-            )
+            return linked
 
-    resolved = resolve_job(
+    return resolve_job(
         db,
         owner_sub=owner_sub,
         explicit_job_id=None,
         metadata=metadata,
-    )
-    if resolved is None:
-        return None
-
-    return _ensure_discovery_link(
-        db,
-        job=resolved,
-        owner_sub=owner_sub,
-        discovery_key=discovery_key,
-        external_job_id=external_job_id,
-        auto_created=False,
     )
