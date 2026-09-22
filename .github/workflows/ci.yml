@@ -58,6 +58,55 @@ jobs:
           python -m pytest -q tools/indeed_resume_agent/tests
 
   # ─────────────────────────────────────────────────────────
+  # WINDOWS RESUME AGENT PREFLIGHT
+  # Mirrors the production agent's Python/OS and verifies the
+  # real Chrome channel + Windows Credential Manager.
+  # ─────────────────────────────────────────────────────────
+  resume-agent-windows:
+    name: Resume Agent (Windows + Chrome)
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Create production-like agent environment
+        shell: powershell
+        run: |
+          python -m venv .agent-venv
+          .\\.agent-venv\\Scripts\\python.exe -m pip install --upgrade pip
+          .\\.agent-venv\\Scripts\\pip.exe install -r .\\tools\\indeed_resume_agent\\requirements.txt
+          .\\.agent-venv\\Scripts\\pip.exe install pytest
+
+      - name: Install Chromium for golden browser fixtures
+        shell: powershell
+        run: .\\.agent-venv\\Scripts\\python.exe -m playwright install chromium
+
+      - name: Run full Resume Agent suite on Windows
+        shell: powershell
+        run: .\\.agent-venv\\Scripts\\python.exe -m pytest -q tools\\indeed_resume_agent\\tests
+
+      - name: Build production Windows onedir
+        shell: powershell
+        run: .\\tools\\indeed_resume_agent\\build.ps1
+
+      - name: Execute packaged binary self-test
+        shell: powershell
+        run: |
+          $Exe = ".\\dist\\ASIATI Resume Agent\\ASIATI Resume Agent.exe"
+          if (-not (Test-Path $Exe)) { throw "Packaged Resume Agent executable is missing" }
+          $Process = Start-Process -FilePath $Exe -ArgumentList "--self-test" -Wait -PassThru
+          if ($Process.ExitCode -ne 0) {
+            throw "Packaged Resume Agent self-test failed with exit code $($Process.ExitCode)"
+          }
+
+  # ─────────────────────────────────────────────────────────
   # POSTGRESQL + ALEMBIC SMOKE TEST
   # Runs independently from SQLite to reduce wall-clock time.
   # ─────────────────────────────────────────────────────────
