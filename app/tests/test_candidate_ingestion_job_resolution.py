@@ -264,13 +264,12 @@ def test_external_indeed_posting_id_resolves_preexisting_synced_vacancies():
         engine.dispose()
 
 
-def test_title_fallback_reuses_one_existing_manual_job():
+def test_title_fallback_does_not_reuse_unlinked_manual_job():
     engine, db = _db()
     try:
         manual = Job(title="Analista de Automatización e IA", owner_sub="owner-1")
         db.add(manual)
         db.commit()
-        db.refresh(manual)
 
         resolved = job_resolution.resolve_or_create_indeed_job(
             db,
@@ -278,10 +277,9 @@ def test_title_fallback_reuses_one_existing_manual_job():
             metadata={"job_title": "Analista de Automatización e IA"},
         )
 
-        assert resolved.id == manual.id
+        assert resolved is None
         assert db.query(Job).count() == 1
-        link = db.query(IndeedJobLink).filter(IndeedJobLink.job_id == manual.id).one()
-        assert link.external_status["auto_created"] is False
+        assert db.query(IndeedJobLink).count() == 0
     finally:
         db.close()
         engine.dispose()
@@ -355,11 +353,19 @@ def test_same_indeed_discovery_key_is_allowed_for_different_owners():
         engine.dispose()
 
 
-def test_existing_title_link_is_enriched_when_posting_id_appears_later():
+def test_existing_indeed_link_is_enriched_when_posting_id_appears_later():
     engine, db = _db()
     try:
-        manual = Job(title="Country Manager Chile", owner_sub="owner-1")
-        db.add(manual)
+        job = Job(title="Country Manager Chile", owner_sub="owner-1")
+        db.add(job)
+        db.flush()
+        link = IndeedJobLink(
+            job_id=job.id,
+            owner_sub="owner-1",
+            discovery_key="employer-ui:country-manager-chile",
+            external_status={"origin": "EMPLOYER_UI"},
+        )
+        db.add(link)
         db.commit()
 
         first = job_resolution.resolve_or_create_indeed_job(
@@ -378,10 +384,10 @@ def test_existing_title_link_is_enriched_when_posting_id_appears_later():
             metadata={"job_title": "Country Manager Chile updated", "external_job_id": "JK123456"},
         )
 
-        assert first.id == second.id == third.id == manual.id
+        assert first.id == second.id == third.id == job.id
         assert db.query(Job).count() == 1
-        link = db.query(IndeedJobLink).filter(IndeedJobLink.job_id == manual.id).one()
-        assert link.discovery_key == "title:country manager chile"
+        db.refresh(link)
+        assert link.discovery_key == "employer-ui:country-manager-chile"
         assert link.sourced_posting_id == "JK123456"
     finally:
         db.close()
