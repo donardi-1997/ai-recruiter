@@ -465,7 +465,6 @@ def sync_mailbox(
         oauth_store,
         tolerate_unavailable=True,
     )
-    _require_oauth_owner(payload, owner_sub)
     resolved = _resolved_gmail_settings(current, payload)
     if not resolved.enabled:
         raise GmailDisabled("Gmail ingestion is disabled.")
@@ -475,6 +474,7 @@ def sync_mailbox(
         raise GmailUnsafeConfiguration(
             "Gmail ingestion requires GMAIL_ALLOWED_SENDERS or a restrictive from: query."
         )
+    _require_oauth_owner(payload, owner_sub)
 
     client = mailbox_client or GmailClient(resolved)
     try:
@@ -531,7 +531,6 @@ def reset_mailbox_to_current(
         oauth_store,
         tolerate_unavailable=True,
     )
-    _require_oauth_owner(payload, owner_sub)
     resolved = _resolved_gmail_settings(current, payload)
     if not resolved.enabled:
         raise GmailDisabled("Gmail ingestion is disabled.")
@@ -541,6 +540,7 @@ def reset_mailbox_to_current(
         raise GmailUnsafeConfiguration(
             "Gmail ingestion requires GMAIL_ALLOWED_SENDERS or a restrictive from: query."
         )
+    _require_oauth_owner(payload, owner_sub)
 
     client = mailbox_client or GmailClient(resolved)
     try:
