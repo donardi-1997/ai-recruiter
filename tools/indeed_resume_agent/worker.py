@@ -13,6 +13,8 @@ from .browser import (
 )
 from .config import AgentConfig
 
+GLOBAL_HUMAN_BLOCKING_CODES = {"INDEED_AUTH_REQUIRED"}
+
 
 @dataclass(frozen=True)
 class WorkerSnapshot:
@@ -164,13 +166,24 @@ class ResumeWorker:
             if result.outcome is BrowserOutcome.NEEDS_HUMAN:
                 code = result.human_code or "INDEED_HUMAN_REQUIRED"
                 self._api.needs_human(task, code=code)
-                self._human_task_id = task.task_id
-                self._human_resume_url = task.resume_url
                 detail = code
                 if result.diagnostic_path:
                     detail = f"{code} — Diagnóstico local: {result.diagnostic_path}"
+
+                if code in GLOBAL_HUMAN_BLOCKING_CODES:
+                    self._human_task_id = task.task_id
+                    self._human_resume_url = task.resume_url
+                    return self._set(
+                        "WAITING_FOR_HUMAN",
+                        candidate=task.candidate_name,
+                        error=detail,
+                    )
+
+                # Candidate-level ambiguity/not-found/UI mismatches must not
+                # stop a bulk run. The task stays NEEDS_HUMAN in the backend
+                # for later review while the worker advances to the next item.
                 return self._set(
-                    "WAITING_FOR_HUMAN",
+                    "NEEDS_REVIEW_CONTINUE",
                     candidate=task.candidate_name,
                     error=detail,
                 )
@@ -212,6 +225,10 @@ class ResumeWorker:
             )
         except BrowserFetchStageError as exc:
             status = self._api.fail(task, code=exc.code)
+            try:
+                self._browser.close()
+            except Exception:
+                pass
             return self._set(
                 status,
                 candidate=task.candidate_name,
@@ -245,6 +262,11 @@ class ResumeWorker:
                 "DOCUMENT_VALIDATE": "RESUME_DOCUMENT_VALIDATE_FAILED",
                 "UPLOAD": "RESUME_UPLOAD_FAILED",
             }.get(stage, "RESUME_DOWNLOAD_FAILED")
+            if stage == "BROWSER_FETCH":
+                try:
+                    self._browser.close()
+                except Exception:
+                    pass
             try:
                 status = self._api.fail(task, code=safe_code)
             except LeaseLost:
