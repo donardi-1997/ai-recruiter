@@ -1,5 +1,9 @@
+from playwright.sync_api import sync_playwright
+
 from tools.indeed_resume_agent.vacancy_sync import (
+    DETAIL_STATE_SCRIPT,
     INDEED_JOBS_URL,
+    LISTING_STATE_SCRIPT,
     _job_key_from_url,
 )
 
@@ -20,3 +24,62 @@ def test_job_key_parser_accepts_common_employer_url_shapes():
 def test_job_key_parser_fails_closed_without_stable_identity():
     assert _job_key_from_url("https://employers.indeed.com/jobs") == ""
     assert _job_key_from_url("https://evil.example/jobs/view?id=secret") == ""
+
+
+def test_spa_listing_discovers_clickable_job_without_job_href():
+    html = """
+    <table>
+      <tbody>
+        <tr data-job-id="job-abc-123">
+          <td><button type="button" role="link">AUXILIAR CONTABLE</button></td>
+          <td>2 Todos · 2 Nuevos</td>
+          <td>Bogotá, Cundinamarca</td>
+          <td>Abierto</td>
+        </tr>
+      </tbody>
+    </table>
+    """
+    with sync_playwright() as playwright:
+        browser = playwright.chromium.launch(headless=True)
+        page = browser.new_page()
+        page.set_content(html)
+        state = page.evaluate(LISTING_STATE_SCRIPT)
+        browser.close()
+
+    assert len(state["rows"]) == 1
+    row = state["rows"][0]
+    assert row["externalJobKey"] == "job-abc-123"
+    assert row["title"] == "AUXILIAR CONTABLE"
+    assert row["clickToken"]
+    assert row["href"] == ""
+
+
+def test_detail_state_reports_loading_until_spa_job_detail_is_hydrated():
+    loading_html = """
+    <main>
+      <h1>AUXILIAR CONTABLE</h1>
+      <div>Cargando los detalles del empleo...</div>
+    </main>
+    """
+    ready_html = """
+    <main>
+      <h1>AUXILIAR CONTABLE</h1>
+      <section data-testid="job-description">
+        Gestionar registros contables y conciliaciones bancarias.\n
+        Preparar informes financieros mensuales para el equipo.
+      </section>
+    </main>
+    """
+    with sync_playwright() as playwright:
+        browser = playwright.chromium.launch(headless=True)
+        page = browser.new_page()
+        page.set_content(loading_html)
+        loading_state = page.evaluate(DETAIL_STATE_SCRIPT)
+        page.set_content(ready_html)
+        ready_state = page.evaluate(DETAIL_STATE_SCRIPT)
+        browser.close()
+
+    assert loading_state["loading"] is True
+    assert ready_state["loading"] is False
+    assert ready_state["description"].startswith("Gestionar registros contables")
+    assert "Preparar informes financieros" in ready_state["description"]
