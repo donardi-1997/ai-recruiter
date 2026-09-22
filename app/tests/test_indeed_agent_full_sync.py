@@ -72,6 +72,7 @@ def test_failed_provider_resume_gets_one_lookup_only_agent_task():
             owner_sub="owner-1",
         )
 
+        assert first["jobs_scanned"] == 1
         assert first["scanned"] == 1
         assert first["queued"] == 1
         assert second["queued"] == 0
@@ -161,6 +162,7 @@ def test_sync_one_page_reports_bootstrap_continuation(monkeypatch):
             indeed_agent_sync,
             "reconcile_existing_indeed_candidates",
             lambda *args, **kwargs: {
+                "jobs_scanned": 4,
                 "scanned": 12,
                 "ready": 4,
                 "provider_pending": 3,
@@ -177,6 +179,7 @@ def test_sync_one_page_reports_bootstrap_continuation(monkeypatch):
 
         assert result["has_more"] is True
         assert result["discovered"] == 100
+        assert result["reconcile_jobs"] == 4
         assert result["reconcile_scanned"] == 12
         assert result["reconcile_queued"] == 3
     finally:
