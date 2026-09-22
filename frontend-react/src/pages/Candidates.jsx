@@ -114,18 +114,26 @@ function Candidates() {
     }
   }
 
-  async function downloadCV(candidate) {
+  async function viewCV(candidate) {
+    const viewer = window.open("about:blank", "_blank");
+    if (!viewer) {
+      alert("El navegador bloqueó la nueva pestaña. Permite ventanas emergentes para ver el CV.");
+      return;
+    }
+    viewer.opener = null;
+
     try {
       const response = await api.get(
         `/candidates/${candidate.candidate_id}/download`,
       );
-      const downloadUrl = response.data.download_url;
-      if (!downloadUrl) throw new Error("No se recibió URL de descarga");
-      window.location.assign(downloadUrl);
+      const viewUrl = response.data.download_url;
+      if (!viewUrl) throw new Error("No se recibió URL del CV");
+      viewer.location.replace(viewUrl);
     } catch (error) {
+      viewer.close();
       alert(
         error.response?.data?.detail ||
-          "No fue posible descargar el CV",
+          "No fue posible abrir el CV",
       );
     }
   }
@@ -330,9 +338,9 @@ function Candidates() {
               >
                 <button
                   className="btn btn-secondary"
-                  onClick={() => downloadCV(candidate)}
+                  onClick={() => viewCV(candidate)}
                 >
-                  📄 Descargar CV
+                  📄 Ver CV
                 </button>
                 <button
                   className="btn btn-danger"
