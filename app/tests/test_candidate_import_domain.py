@@ -173,6 +173,37 @@ def test_create_batch_rejects_empty_manifest_and_more_than_500_direct_documents(
         service.create_batch(db, owner_sub="owner-a", job_id=job.id, uploads=uploads)
 
 
+def test_create_batch_rejects_more_than_500_archives_too(db, monkeypatch):
+    service = _module("app.domains.candidate_imports.service")
+    exceptions = _module("app.domains.candidate_imports.exceptions")
+    job = _seed_job(db)
+    monkeypatch.setattr(
+        service.storage,
+        "create_staging_presigned_post",
+        _fake_presign,
+    )
+
+    uploads = [
+        {
+            "filename": f"batch-{index}.zip",
+            "size_bytes": 10,
+            "content_type": "application/zip",
+        }
+        for index in range(501)
+    ]
+
+    with pytest.raises(
+        exceptions.InvalidImportManifest,
+        match="UPLOAD_LIMIT_EXCEEDED",
+    ):
+        service.create_batch(
+            db,
+            owner_sub="owner-a",
+            job_id=job.id,
+            uploads=uploads,
+        )
+
+
 def test_create_batch_enforces_declared_file_limits(db, monkeypatch):
     service = _module("app.domains.candidate_imports.service")
     exceptions = _module("app.domains.candidate_imports.exceptions")
