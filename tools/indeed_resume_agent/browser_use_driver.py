@@ -575,10 +575,14 @@ class IndeedBrowserUse:
     '[data-testid="NameCell"]',
     'a[href*="/candidates/view"]'
   ];
-  let nodes = [];
+  const nodes = [];
+  const nodeSet = new Set();
   for (const selector of selectors) {
-    nodes = Array.from(document.querySelectorAll(selector));
-    if (nodes.length) break;
+    for (const node of document.querySelectorAll(selector)) {
+      if (nodeSet.has(node)) continue;
+      nodeSet.add(node);
+      nodes.push(node);
+    }
   }
   const seen = new Set();
   const out = [];
@@ -614,10 +618,14 @@ class IndeedBrowserUse:
     '[data-testid="NameCell"]',
     'a[href*="/candidates/view"]'
   ];
-  let nodes = [];
+  const nodes = [];
+  const nodeSet = new Set();
   for (const selector of selectors) {{
-    nodes = Array.from(document.querySelectorAll(selector));
-    if (nodes.length) break;
+    for (const node of document.querySelectorAll(selector)) {{
+      if (nodeSet.has(node)) continue;
+      nodeSet.add(node);
+      nodes.push(node);
+    }}
   }}
   const node = nodes[{int(index)}];
   if (!node) return false;
