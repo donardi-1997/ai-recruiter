@@ -32,7 +32,7 @@ def get_admin_cognito_client():
 
 class CredentialsRequest(BaseModel):
     email: str = Field(min_length=3, max_length=320)
-    password: str = Field(min_length=8, max_length=256)
+    password: str = Field(min_length=1, max_length=256)
 
     @field_validator("email")
     @classmethod
@@ -51,7 +51,7 @@ class LoginRequest(CredentialsRequest):
 
 
 class RegisterRequest(CredentialsRequest):
-    pass
+    password: str = Field(min_length=8, max_length=256)
 
 
 @router.post("/login")
