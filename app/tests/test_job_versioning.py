@@ -83,6 +83,22 @@ def test_evaluation_persists_source_job_version():
         engine.dispose()
 
 
+def test_job_candidate_and_evaluation_are_unique_per_logical_pair():
+    job_candidate_unique_sets = {
+        tuple(column.name for column in constraint.columns)
+        for constraint in JobCandidate.__table__.constraints
+        if constraint.__class__.__name__ == "UniqueConstraint"
+    }
+    evaluation_unique_sets = {
+        tuple(column.name for column in constraint.columns)
+        for constraint in Evaluation.__table__.constraints
+        if constraint.__class__.__name__ == "UniqueConstraint"
+    }
+
+    assert ("job_id", "candidate_id") in job_candidate_unique_sets
+    assert ("job_id", "candidate_id") in evaluation_unique_sets
+
+
 def test_reevaluation_task_is_unique_per_job_and_target_version():
     table = JobReevaluationTask.__table__
     unique_sets = {
