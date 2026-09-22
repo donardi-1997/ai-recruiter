@@ -582,7 +582,7 @@ class IndeedBrowserUse:
   }
   const seen = new Set();
   const out = [];
-  for (const node of nodes.slice(0, 120)) {
+  for (const [index, node] of nodes.slice(0, 120).entries()) {
     const link = node.matches?.('a[href]')
       ? node
       : node.querySelector?.('a[href*="/candidates/"]')
@@ -596,7 +596,7 @@ class IndeedBrowserUse:
     const key = name + '|' + href + '|' + rowText;
     if (!name || seen.has(key)) continue;
     seen.add(key);
-    out.push({name, rowText, href});
+    out.push({name, rowText, href, index});
   }
   return out;
 })()
@@ -605,6 +605,32 @@ class IndeedBrowserUse:
         if not isinstance(value, list):
             return []
         return [item for item in value if isinstance(item, dict)]
+
+    async def _click_candidate_index(self, cdp, index: int) -> bool:
+        script = f"""
+(() => {{
+  const selectors = [
+    'a[data-testid="NameCell"][href*="/candidates/view"]',
+    '[data-testid="NameCell"]',
+    'a[href*="/candidates/view"]'
+  ];
+  let nodes = [];
+  for (const selector of selectors) {{
+    nodes = Array.from(document.querySelectorAll(selector));
+    if (nodes.length) break;
+  }}
+  const node = nodes[{int(index)}];
+  if (!node) return false;
+  const link = node.matches?.('a[href]')
+    ? node
+    : node.querySelector?.('a[href*="/candidates/"]')
+      || node.closest?.('a[href*="/candidates/"]');
+  const target = link || node;
+  target.click();
+  return true;
+}})()
+"""
+        return (await self._evaluate(cdp, script)) is True
 
     async def _fill_candidate_search(self, cdp, query: str) -> bool:
         payload = json.dumps(str(query or ""))
@@ -648,7 +674,7 @@ class IndeedBrowserUse:
         rows: list[dict],
         candidate_name: str,
         job_title: str | None,
-    ) -> tuple[str | None, str | None]:
+    ) -> tuple[dict | None, str | None]:
         target_name = _normalize_lookup_text(candidate_name)
         target_job = _normalize_lookup_text(job_title)
         exact = [
@@ -665,15 +691,11 @@ class IndeedBrowserUse:
                 if target_job in _normalize_lookup_text(row.get("rowText"))
             ]
             if len(job_matches) == 1:
-                href = str(job_matches[0].get("href") or "")
-                return href or None, None
+                return job_matches[0], None
             if len(job_matches) > 1:
                 return None, "INDEED_CANDIDATE_AMBIGUOUS"
         if len(exact) == 1:
-            href = str(exact[0].get("href") or "")
-            if href:
-                return href, None
-            return None, "INDEED_CANDIDATE_OPEN_FAILED"
+            return exact[0], None
         return None, "INDEED_CANDIDATE_AMBIGUOUS"
 
     async def _open_candidate(
@@ -694,28 +716,48 @@ class IndeedBrowserUse:
             deadline = time.monotonic() + 5.0
             while time.monotonic() < deadline:
                 rows = await self._candidate_rows(cdp)
-                href, error = self._select_candidate(rows, name, job_title)
+                target, error = self._select_candidate(rows, name, job_title)
                 if error:
                     return error
-                if href:
-                    await self._navigate(
-                        cdp,
-                        urljoin("https://employers.indeed.com/", href),
-                    )
+                if target:
+                    href = str(target.get("href") or "")
+                    if href:
+                        await self._navigate(
+                            cdp,
+                            urljoin("https://employers.indeed.com/", href),
+                        )
+                    else:
+                        try:
+                            index = int(target.get("index"))
+                        except (TypeError, ValueError):
+                            return "INDEED_CANDIDATE_OPEN_FAILED"
+                        if not await self._click_candidate_index(cdp, index):
+                            return "INDEED_CANDIDATE_OPEN_FAILED"
+                        await asyncio.sleep(0.5)
                     return None
                 await asyncio.sleep(0.35)
 
             if await self._fill_candidate_search(cdp, query):
                 await asyncio.sleep(1.0)
                 rows = await self._candidate_rows(cdp)
-                href, error = self._select_candidate(rows, name, job_title)
+                target, error = self._select_candidate(rows, name, job_title)
                 if error:
                     return error
-                if href:
-                    await self._navigate(
-                        cdp,
-                        urljoin("https://employers.indeed.com/", href),
-                    )
+                if target:
+                    href = str(target.get("href") or "")
+                    if href:
+                        await self._navigate(
+                            cdp,
+                            urljoin("https://employers.indeed.com/", href),
+                        )
+                    else:
+                        try:
+                            index = int(target.get("index"))
+                        except (TypeError, ValueError):
+                            return "INDEED_CANDIDATE_OPEN_FAILED"
+                        if not await self._click_candidate_index(cdp, index):
+                            return "INDEED_CANDIDATE_OPEN_FAILED"
+                        await asyncio.sleep(0.5)
                     return None
 
         return "INDEED_CANDIDATE_NOT_FOUND"
@@ -724,7 +766,7 @@ class IndeedBrowserUse:
         script = r"""
 (() => {
   const clean = (v) => String(v || '')
-    .replace(/s+/g, ' ')
+    .replace(/\s+/g, ' ')
     .trim()
     .toLowerCase();
   const exactLabels = new Set([
@@ -774,6 +816,21 @@ class IndeedBrowserUse:
 })()
 """
         return (await self._evaluate(cdp, script)) is True
+
+    async def _click_download_when_ready(
+        self,
+        cdp,
+        *,
+        timeout_seconds: float,
+    ) -> bool:
+        deadline = time.monotonic() + max(0.5, float(timeout_seconds))
+        while time.monotonic() < deadline:
+            if await self._requires_human(cdp):
+                return False
+            if await self._click_download_control(cdp):
+                return True
+            await asyncio.sleep(0.35)
+        return False
 
     async def _write_ui_diagnostic_async(
         self,
@@ -834,6 +891,9 @@ class IndeedBrowserUse:
         cdp = await self._ensure_started()
         source_url = _safe_indeed_url(resume_url)
 
+        # Arm Network capture before navigation: a signed Indeed URL may redirect
+        # directly to the attachment response without rendering a download button.
+        future = self._arm_download()
         try:
             await self._navigate(cdp, source_url)
         except BrowserFetchStageError:
@@ -841,18 +901,27 @@ class IndeedBrowserUse:
         except Exception as exc:
             raise BrowserFetchStageError("INDEED_NAVIGATION_FAILED") from exc
 
+        if future.done():
+            return future.result()
+
         if await self._requires_human(cdp):
             return BrowserResult(
                 BrowserOutcome.NEEDS_HUMAN,
                 human_code="INDEED_AUTH_REQUIRED",
             )
 
-        # Some email links land directly on a candidate detail. Try that first.
-        future = self._arm_download()
-        if await self._click_download_control(cdp):
+        # A direct candidate page can be a React SPA. Give the control a short
+        # bounded mount window before falling back to Manage candidates.
+        if await self._click_download_when_ready(cdp, timeout_seconds=3.0):
             result = await self._wait_for_download(future)
             if result is not None:
                 return result
+
+        if await self._requires_human(cdp):
+            return BrowserResult(
+                BrowserOutcome.NEEDS_HUMAN,
+                human_code="INDEED_AUTH_REQUIRED",
+            )
 
         error = await self._open_candidate(cdp, candidate_name, job_title)
         if error:
@@ -873,7 +942,19 @@ class IndeedBrowserUse:
             )
 
         future = self._arm_download()
-        if not await self._click_download_control(cdp):
+        clicked = await self._click_download_when_ready(
+            cdp,
+            timeout_seconds=min(
+                10.0,
+                max(6.0, float(self._config.request_timeout_seconds)),
+            ),
+        )
+        if not clicked:
+            if await self._requires_human(cdp):
+                return BrowserResult(
+                    BrowserOutcome.NEEDS_HUMAN,
+                    human_code="INDEED_AUTH_REQUIRED",
+                )
             diagnostic_path = await self._write_ui_diagnostic_async(
                 cdp,
                 reason="INDEED_DOWNLOAD_CONTROL_NOT_FOUND",
