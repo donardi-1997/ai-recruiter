@@ -127,3 +127,10 @@ def test_ui_surfaces_only_sanitized_indeed_diagnostic_path():
         stats(needs_human=1),
     )
     assert ui.status_label == detail
+
+
+def test_diagnostic_browser_failure_has_specific_recovery_instruction():
+    ui = build_ui_state(snap("DIAGNOSTIC_BROWSER_FAILED"), stats())
+    assert "Chrome" in ui.status_label
+    assert "Open Indeed (Google Chrome)" in ui.status_label
+    assert "conexión con el servicio" not in ui.status_label
