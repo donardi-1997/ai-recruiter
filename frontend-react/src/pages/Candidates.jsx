@@ -80,8 +80,11 @@ function Candidates() {
         candidateId,
         evaluation: response.data,
       });
-    } catch {
-      alert("Error evaluando candidato");
+    } catch (error) {
+      alert(
+        error.response?.data?.detail ||
+          "No fue posible evaluar el candidato.",
+      );
     } finally {
       setLoading(false);
     }
@@ -119,8 +122,11 @@ function Candidates() {
       const downloadUrl = response.data.download_url;
       if (!downloadUrl) throw new Error("No se recibió URL de descarga");
       window.location.assign(downloadUrl);
-    } catch {
-      alert("No fue posible descargar el CV");
+    } catch (error) {
+      alert(
+        error.response?.data?.detail ||
+          "No fue posible descargar el CV",
+      );
     }
   }
 

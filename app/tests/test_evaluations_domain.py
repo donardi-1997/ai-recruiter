@@ -9,7 +9,11 @@ from app.domains.evaluations import service
 
 def test_owner_scoped_entrypoint_resolves_objects_then_delegates(monkeypatch):
     candidate = SimpleNamespace(id="candidate-1")
-    job = SimpleNamespace(id="job-1")
+    job = SimpleNamespace(
+        id="job-1",
+        description="Python y APIs REST.",
+        evaluation_profile={},
+    )
     db = object()
     events = []
     expected = (SimpleNamespace(id="evaluation-1"), True, None)

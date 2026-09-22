@@ -17,7 +17,7 @@ from app.domains.evaluations.rules import (
     validate_completed_evaluation_result,
 )
 from app.domains.jobs import repository as jobs_repository
-from app.domains.jobs.profile import build_evaluation_text
+from app.domains.jobs.profile import build_evaluation_text, has_evaluation_criteria
 
 logger = logging.getLogger(__name__)
 
@@ -25,6 +25,10 @@ FAILED_EVALUATION_PUBLIC_MESSAGE = (
     "No fue posible completar la evaluación. Intenta nuevamente."
 )
 INTERNAL_EVALUATION_ERROR_CODE = "EVALUATION_INTERNAL_ERROR"
+
+
+class EvaluationCriteriaMissing(RuntimeError):
+    """Raised when a vacancy has no recruiter-authored criteria to compare."""
 
 
 def _safe_failure_code(value: object) -> str:
@@ -54,6 +58,8 @@ def evaluate_candidate_for_owner(
     job = jobs_repository.get_job(db, job_id, owner_sub=owner_sub)
     if job is None:
         raise JobNotFound(job_id)
+    if not has_evaluation_criteria(job):
+        raise EvaluationCriteriaMissing("JOB_EVALUATION_CRITERIA_MISSING")
 
     if force:
         return evaluate_candidate_for_job(

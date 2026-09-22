@@ -267,14 +267,26 @@ def _evaluate(db: Session, event) -> bool:
     for index, delay in enumerate(delays):
         if delay:
             time.sleep(delay)
-        evaluation, _newly_evaluated, internal_error = (
-            evaluations_service.evaluate_candidate_for_owner(
-                db,
-                candidate_id=event.candidate_id,
-                job_id=event.job_id,
-                owner_sub=event.owner_sub,
+        try:
+            evaluation, _newly_evaluated, internal_error = (
+                evaluations_service.evaluate_candidate_for_owner(
+                    db,
+                    candidate_id=event.candidate_id,
+                    job_id=event.job_id,
+                    owner_sub=event.owner_sub,
+                )
             )
-        )
+        except evaluations_service.EvaluationCriteriaMissing:
+            _needs_review(
+                db,
+                event,
+                code="JOB_EVALUATION_CRITERIA_MISSING",
+                message=(
+                    "La vacante necesita descripción o criterios aprobados "
+                    "antes de evaluar candidatos."
+                ),
+            )
+            return False
         if getattr(evaluation, "status", None) == "COMPLETED" and not internal_error:
             event.status = "RANKING"
             db.commit()

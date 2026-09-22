@@ -87,6 +87,7 @@ def _seed_job(db):
     job = Job(
         id=_uuid(),
         title="Dev Python",
+        description="Desarrollo backend con Python, APIs REST y AWS.",
         owner_sub="test-user",
     )
     db.add(job)

@@ -264,3 +264,40 @@ def test_create_and_index_candidate_does_not_swallow_index_failure(monkeypatch):
         )
 
     assert events == ["create", "index"]
+
+
+def test_candidate_download_requires_owner_and_uses_canonical_storage(monkeypatch):
+    candidate = _candidate()
+    calls = []
+
+    monkeypatch.setattr(
+        service,
+        "require_candidate",
+        lambda db, candidate_id, owner_sub: (
+            calls.append(("require", candidate_id, owner_sub)) or candidate
+        ),
+    )
+    monkeypatch.setattr(
+        service,
+        "create_canonical_candidate_download",
+        lambda candidate_id: (
+            calls.append(("download", candidate_id))
+            or {
+                "url": "https://signed.example/cv",
+                "expires_in": 300,
+                "key": "documents/cv-candidate-1.docx",
+            }
+        ),
+    )
+
+    result = service.get_candidate_download(
+        object(),
+        "candidate-1",
+        "owner-1",
+    )
+
+    assert result["url"] == "https://signed.example/cv"
+    assert calls == [
+        ("require", "candidate-1", "owner-1"),
+        ("download", "candidate-1"),
+    ]

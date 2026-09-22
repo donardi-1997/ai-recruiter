@@ -82,6 +82,20 @@ def _list_section(label: str, values: list[str], *, preferred: bool = False) -> 
     return f"{label}{suffix}:\n{items}"
 
 
+def has_evaluation_criteria(job) -> bool:
+    """Return True when a vacancy contains recruiter-authored evaluation criteria."""
+    if normalize_text(getattr(job, "description", None)):
+        return True
+    profile = normalize_evaluation_profile(getattr(job, "evaluation_profile", None))
+    if profile.get("minimum_years_experience") is not None:
+        return True
+    return any(
+        bool(profile.get(field))
+        for field in PROFILE_LIST_FIELDS
+        if field != "assumptions_to_validate"
+    )
+
+
 def build_evaluation_text(job) -> str:
     """Build the vacancy text consumed by retrieval and candidate evaluation.
 
