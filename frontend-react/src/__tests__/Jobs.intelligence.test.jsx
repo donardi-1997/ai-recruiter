@@ -65,6 +65,9 @@ describe("Jobs AI enrichment", () => {
               job_id: "job-1",
               title: "Existing Cloud Engineer",
               description: "Existing description",
+              indeed_description: "Existing description",
+              ai_description: null,
+              active_description_source: "indeed",
               candidate_count: 2,
               evaluation_version: 1,
               evaluation_profile: {},
@@ -156,6 +159,9 @@ describe("Jobs AI enrichment", () => {
         expect.objectContaining({
           title: "Cloud Engineer",
           description: EXPECTED_APPLIED_DESCRIPTION,
+          indeed_description: null,
+          ai_description: EXPECTED_APPLIED_DESCRIPTION,
+          active_description_source: "ai",
           evaluation_profile: expect.objectContaining({
             required_technologies: ["AWS"],
             preferred_technologies: ["Terraform"],
@@ -197,10 +203,45 @@ describe("Jobs AI enrichment", () => {
         "/jobs/job-1",
         expect.objectContaining({
           description: EXPECTED_APPLIED_DESCRIPTION,
+          indeed_description: "Existing description",
+          ai_description: EXPECTED_APPLIED_DESCRIPTION,
+          active_description_source: "ai",
           evaluation_profile: expect.objectContaining({
             required_technologies: ["AWS"],
             preferred_technologies: ["Terraform"],
           }),
+        })
+      );
+    });
+  });
+
+  it("keeps Indeed and AI descriptions separate when a proposal is saved", async () => {
+    renderJobs();
+    await screen.findByText("Existing Cloud Engineer");
+
+    fireEvent.click(screen.getByText("Editar"));
+    expect(screen.getByRole("radio", { name: "Original · Indeed" })).toHaveAttribute("aria-checked", "true");
+
+    fireEvent.click(screen.getByRole("button", { name: /enriquecer con ia/i }));
+    await screen.findByText("Propuesta de IA");
+    fireEvent.click(screen.getByRole("button", { name: /guardar como versión ia/i }));
+
+    expect(screen.getByLabelText("Descripción y requisitos")).toHaveValue(EXPECTED_APPLIED_DESCRIPTION);
+    expect(screen.getByRole("radio", { name: "Optimizada · IA" })).toHaveAttribute("aria-checked", "true");
+
+    fireEvent.click(screen.getByRole("tab", { name: "Original · Indeed" }));
+    expect(screen.getByLabelText("Descripción y requisitos")).toHaveValue("Existing description");
+
+    fireEvent.click(screen.getByRole("button", { name: /guardar cambios/i }));
+
+    await waitFor(() => {
+      expect(api.put).toHaveBeenCalledWith(
+        "/jobs/job-1",
+        expect.objectContaining({
+          indeed_description: "Existing description",
+          ai_description: EXPECTED_APPLIED_DESCRIPTION,
+          active_description_source: "ai",
+          description: EXPECTED_APPLIED_DESCRIPTION,
         })
       );
     });
