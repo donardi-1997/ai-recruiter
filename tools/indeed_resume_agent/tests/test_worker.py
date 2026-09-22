@@ -41,12 +41,15 @@ class FakeBrowser:
         self.urls=[]
         self.candidate_names=[]
         self.job_titles=[]
+        self.reset_calls=0
     def fetch_resume(self, url, *, candidate_name=None, job_title=None):
         self.urls.append(url)
         self.candidate_names.append(candidate_name)
         self.job_titles.append(job_title)
         if self.error: raise self.error
         return self.result
+    def reset_session(self):
+        self.reset_calls += 1
 
 
 class FakeHeartbeat:
@@ -121,6 +124,40 @@ def test_needs_human_blocks_new_claims_until_resume(tmp_path):
     assert len(api.claims) == 1
 
 
+def test_candidate_level_review_does_not_block_next_candidate(tmp_path):
+    second=ClaimedTask(**{**task().__dict__, "task_id":"t2", "candidate_name":"Grace"})
+    api=FakeApi([task(), second])
+    browser=FakeBrowser(
+        BrowserResult(
+            BrowserOutcome.NEEDS_HUMAN,
+            human_code="INDEED_CANDIDATE_NOT_FOUND",
+        )
+    )
+    worker=ResumeWorker(
+        config=config(tmp_path),
+        api=api,
+        browser=browser,
+        heartbeat_factory=lambda **kw: FakeHeartbeat(),
+    )
+
+    first=worker.run_once()
+
+    assert first.state == "NEEDS_REVIEW_CONTINUE"
+    assert api.human == [("t1","INDEED_CANDIDATE_NOT_FOUND")]
+    assert worker.human_task_id is None
+    assert len(api.claims) == 1
+
+    browser.result=BrowserResult(
+        BrowserOutcome.DOWNLOADED,
+        filename="grace.pdf",
+        data=b"%PDF-ok",
+    )
+    second_snap=worker.run_once()
+
+    assert second_snap.state == "COMPLETED"
+    assert second_snap.active_candidate == "Grace"
+
+
 def test_needs_human_preserves_safe_code_without_diagnostic_path(tmp_path):
     api=FakeApi([task()])
     browser=FakeBrowser(
@@ -145,7 +182,7 @@ def test_needs_human_preserves_safe_code_without_diagnostic_path(tmp_path):
 
 def test_external_attention_retry_clears_local_human_state(tmp_path):
     api=FakeApi([task()])
-    browser=FakeBrowser(BrowserResult(BrowserOutcome.NEEDS_HUMAN, human_code="INDEED_UI_REQUIRES_REVIEW"))
+    browser=FakeBrowser(BrowserResult(BrowserOutcome.NEEDS_HUMAN, human_code="INDEED_AUTH_REQUIRED"))
     worker=ResumeWorker(
         config=config(tmp_path),
         api=api,
@@ -182,6 +219,7 @@ def test_technical_browser_failure_is_reported_to_backend(tmp_path):
     assert api.failures == [("t1","RESUME_BROWSER_FETCH_FAILED")]
     assert snap.last_error == "RESUME_BROWSER_FETCH_FAILED"
     assert "secret URL" not in (snap.last_error or "")
+    assert browser.reset_calls == 1
 
 
 def test_browser_stage_failure_code_is_preserved(tmp_path):
@@ -215,7 +253,7 @@ def test_needs_human_surfaces_only_local_diagnostic_path(tmp_path):
     browser=FakeBrowser(
         BrowserResult(
             BrowserOutcome.NEEDS_HUMAN,
-            human_code="INDEED_UI_REQUIRES_REVIEW",
+            human_code="INDEED_AUTH_REQUIRED",
             diagnostic_path=diagnostic,
         )
     )
@@ -229,5 +267,5 @@ def test_needs_human_surfaces_only_local_diagnostic_path(tmp_path):
     snap=worker.run_once()
 
     assert snap.state == "WAITING_FOR_HUMAN"
-    assert snap.last_error == f"INDEED_UI_REQUIRES_REVIEW — Diagnóstico local: {diagnostic}"
-    assert api.human == [("t1","INDEED_UI_REQUIRES_REVIEW")]
+    assert snap.last_error == f"INDEED_AUTH_REQUIRED — Diagnóstico local: {diagnostic}"
+    assert api.human == [("t1","INDEED_AUTH_REQUIRED")]

@@ -67,6 +67,44 @@ def _normalize_lookup_text(value: object) -> str:
     return " ".join(text.split())
 
 
+def _candidate_recency_key(row: dict) -> tuple[int, float, int]:
+    """Sort candidate applications newest-first using provider date, then relative text."""
+    raw = str(row.get("appliedAt") or "").strip()
+    if raw:
+        try:
+            parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+            if parsed.tzinfo is None:
+                parsed = parsed.replace(tzinfo=timezone.utc)
+            return (3, parsed.timestamp(), -int(row.get("index") or 0))
+        except (TypeError, ValueError, OverflowError):
+            pass
+
+    text = _normalize_lookup_text(row.get("rowText"))
+    if "hoy" in text or "today" in text:
+        return (2, 0.0, -int(row.get("index") or 0))
+    if "ayer" in text or "yesterday" in text:
+        return (2, -86400.0, -int(row.get("index") or 0))
+
+    units = (
+        (r"(?:hace|ago)\s+(\d+)\s*(?:minuto|minutos|minute|minutes|min)", 60),
+        (r"(?:hace|ago)\s+(\d+)\s*(?:hora|horas|hour|hours|hr)", 3600),
+        (r"(?:hace|ago)\s+(\d+)\s*(?:dia|dias|day|days)", 86400),
+        (r"(?:hace|ago)\s+(\d+)\s*(?:semana|semanas|week|weeks)", 604800),
+        (r"(?:hace|ago)\s+(\d+)\s*(?:mes|meses|month|months)", 2629800),
+        (r"(?:hace|ago)\s+(\d+)\s*(?:ano|anos|year|years)", 31557600),
+    )
+    for pattern, seconds in units:
+        match = re.search(pattern, text)
+        if match:
+            age = int(match.group(1)) * seconds
+            return (2, -float(age), -int(row.get("index") or 0))
+
+    # Indeed normally keeps equal-name rows in provider order even when the
+    # visible primary sort is by name. Prefer the first row as deterministic
+    # fallback instead of blocking the entire queue.
+    return (1, 0.0, -int(row.get("index") or 0))
+
+
 def _candidate_search_queries(candidate_name: str) -> list[str]:
     original = " ".join(str(candidate_name or "").split()).strip()
     if not original:
@@ -336,6 +374,15 @@ class IndeedBrowserUse:
 
     def start(self) -> None:
         self._call(self._ensure_started())
+
+    def reset_session(self) -> None:
+        """Discard only the current Browser Use session and keep the driver reusable."""
+        if self._closed:
+            return
+        try:
+            self._call(self._discard_browser_session(), timeout=30.0)
+        except Exception:
+            pass
 
     async def _async_close(self) -> None:
         self._diagnostic_active = False
@@ -621,10 +668,17 @@ class IndeedBrowserUse:
     const name = clean(node.innerText || link?.innerText || '');
     const rowText = clean(row?.innerText || node.innerText || '');
     const href = String(link?.href || '');
-    const key = name + '|' + href + '|' + rowText;
+    const timeNode = row?.querySelector?.('time[datetime]');
+    const appliedAt = String(
+      timeNode?.getAttribute?.('datetime')
+      || row?.getAttribute?.('data-applied-at')
+      || row?.getAttribute?.('data-application-date')
+      || ''
+    );
+    const key = name + '|' + href + '|' + rowText + '|' + appliedAt;
     if (!name || seen.has(key)) continue;
     seen.add(key);
-    out.push({name, rowText, href, index});
+    out.push({name, rowText, href, index, appliedAt});
   }
   return out;
 })()
@@ -722,13 +776,13 @@ class IndeedBrowserUse:
                 for row in exact
                 if target_job in _normalize_lookup_text(row.get("rowText"))
             ]
-            if len(job_matches) == 1:
-                return job_matches[0], None
-            if len(job_matches) > 1:
-                return None, "INDEED_CANDIDATE_AMBIGUOUS"
-        if len(exact) == 1:
-            return exact[0], None
-        return None, "INDEED_CANDIDATE_AMBIGUOUS"
+            if job_matches:
+                return max(job_matches, key=_candidate_recency_key), None
+            # Never fall back to another vacancy for the same person.
+            return None, None
+        if exact:
+            return max(exact, key=_candidate_recency_key), None
+        return None, None
 
     async def _open_candidate(
         self,

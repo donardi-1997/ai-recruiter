@@ -110,8 +110,92 @@ def test_duplicate_candidates_are_fail_closed_and_job_can_disambiguate(tmp_path)
         "Alejandra Camacho Saenz",
         None,
     )
-    assert target is None
-    assert error == "INDEED_CANDIDATE_AMBIGUOUS"
+    assert error is None
+    assert target is not None
+    assert str(target["href"]).endswith("id=1")
+
+
+def test_duplicate_same_candidate_same_job_chooses_most_recent_application():
+    rows = [
+        {
+            "name": "Edwar Lisandro",
+            "rowText": "Edwar Lisandro Coordinador de operaciones Se postuló hace 4 meses",
+            "href": "https://employers.indeed.com/candidates/view?id=old",
+            "index": 0,
+            "appliedAt": "2026-05-01T15:00:00Z",
+        },
+        {
+            "name": "EDWAR LISANDRO",
+            "rowText": "EDWAR LISANDRO Coordinador de operaciones Se postuló hace 2 días",
+            "href": "https://employers.indeed.com/candidates/view?id=new",
+            "index": 1,
+            "appliedAt": "2026-09-20T15:00:00Z",
+        },
+    ]
+
+    target, error = IndeedBrowserUse._select_candidate(
+        rows,
+        "Edwar Lisandro",
+        "Coordinador de operaciones",
+    )
+
+    assert error is None
+    assert target is not None
+    assert str(target["href"]).endswith("id=new")
+
+
+def test_duplicate_same_candidate_same_job_uses_relative_age_when_datetime_missing():
+    rows = [
+        {
+            "name": "Edwar Lisandro",
+            "rowText": "Edwar Lisandro Coordinador de operaciones Se postuló hace 4 meses",
+            "href": "https://employers.indeed.com/candidates/view?id=old",
+            "index": 0,
+        },
+        {
+            "name": "Edwar Lisandro",
+            "rowText": "Edwar Lisandro Coordinador de operaciones Se postuló hace 3 días",
+            "href": "https://employers.indeed.com/candidates/view?id=new",
+            "index": 1,
+        },
+    ]
+
+    target, error = IndeedBrowserUse._select_candidate(
+        rows,
+        "Edwar Lisandro",
+        "Coordinador de operaciones",
+    )
+
+    assert error is None
+    assert target is not None
+    assert str(target["href"]).endswith("id=new")
+
+
+def test_same_candidate_in_two_jobs_selects_requested_vacancy_without_blocking():
+    rows = [
+        {
+            "name": "Ana Perez",
+            "rowText": "Ana Perez Backend Developer Se postuló hace 1 día",
+            "href": "https://employers.indeed.com/candidates/view?id=backend",
+            "index": 0,
+        },
+        {
+            "name": "Ana Perez",
+            "rowText": "Ana Perez Frontend Developer Se postuló hace 2 días",
+            "href": "https://employers.indeed.com/candidates/view?id=frontend",
+            "index": 1,
+        },
+    ]
+
+    target, error = IndeedBrowserUse._select_candidate(
+        rows,
+        "Ana Perez",
+        "Frontend Developer",
+    )
+
+    assert error is None
+    assert target is not None
+    assert str(target["href"]).endswith("id=frontend")
 
 
 def test_row_only_namecell_remains_clickable_without_anchor():

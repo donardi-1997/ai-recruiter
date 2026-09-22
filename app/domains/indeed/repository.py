@@ -141,7 +141,11 @@ def get_candidate_link(
             IndeedCandidateLink.job_id == job_id,
             IndeedCandidateLink.candidate_id == candidate_id,
         )
-        .order_by(IndeedCandidateLink.created_at.asc())
+        .order_by(
+            IndeedCandidateLink.staged_at.desc().nullslast(),
+            IndeedCandidateLink.created_at.desc(),
+            IndeedCandidateLink.id.desc(),
+        )
         .first()
     )
 
@@ -164,6 +168,7 @@ def create_candidate_link(
     resume_name: str | None = None,
     resume_url: str | None = None,
     staged_test: bool = False,
+    staged_at: datetime | None = None,
 ) -> IndeedCandidateLink:
     existing = get_candidate_link_by_asset(db, owner_sub=owner_sub, asset_id=asset_id)
     if existing is not None:
@@ -184,6 +189,7 @@ def create_candidate_link(
         resume_name=resume_name,
         resume_url=resume_url,
         staged_test=bool(staged_test),
+        staged_at=staged_at,
     )
     db.add(link)
     db.flush()

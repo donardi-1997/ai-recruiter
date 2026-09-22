@@ -33,6 +33,96 @@ def _lookup_event_external_id(candidate_link_id: str) -> str:
     return f"indeed-candidate-link:{candidate_link_id}"
 
 
+def _application_sort_key(task: IndeedEmailResumeTask, event: CandidateIngestionEvent) -> tuple[int, float, str]:
+    metadata = dict(event.raw_metadata or {})
+    try:
+        internal_date_ms = int(metadata.get("internal_date_ms") or 0)
+    except (TypeError, ValueError):
+        internal_date_ms = 0
+    created = getattr(event, "created_at", None) or getattr(task, "created_at", None)
+    created_ts = created.timestamp() if created is not None else 0.0
+    return (internal_date_ms, created_ts, str(task.id or ""))
+
+
+def compact_duplicate_application_tasks(db, *, owner_sub: str) -> dict[str, int]:
+    """Keep the newest active application only when canonical identity is known.
+
+    Names are deliberately not used as identity: two people can share the same
+    name. Different vacancies remain independent associations for the same
+    candidate.
+    """
+    ambiguous = (
+        db.query(IndeedEmailResumeTask)
+        .filter(
+            IndeedEmailResumeTask.owner_sub == owner_sub,
+            IndeedEmailResumeTask.status == "NEEDS_HUMAN",
+            IndeedEmailResumeTask.last_error_code == "INDEED_CANDIDATE_AMBIGUOUS",
+        )
+        .all()
+    )
+    for task in ambiguous:
+        task.status = "WAITING_DOWNLOAD"
+        task.available_at = None
+        task.attempt_count = 0
+        task.last_error_code = None
+        task.last_error_message = None
+        task.lease_token = None
+        task.lease_expires_at = None
+        task.claimed_at = None
+
+    rows = (
+        db.query(IndeedEmailResumeTask, CandidateIngestionEvent)
+        .join(
+            CandidateIngestionEvent,
+            CandidateIngestionEvent.id == IndeedEmailResumeTask.ingestion_event_id,
+        )
+        .filter(
+            IndeedEmailResumeTask.owner_sub == owner_sub,
+            IndeedEmailResumeTask.job_id.is_not(None),
+            CandidateIngestionEvent.candidate_id.is_not(None),
+            IndeedEmailResumeTask.status.in_(
+                ("WAITING_DOWNLOAD", "RETRY", "NEEDS_HUMAN", "FAILED")
+            ),
+        )
+        .all()
+    )
+    groups: dict[tuple[str, str], list[tuple[IndeedEmailResumeTask, CandidateIngestionEvent]]] = {}
+    for task, event in rows:
+        key = (str(task.job_id), str(event.candidate_id))
+        groups.setdefault(key, []).append((task, event))
+
+    superseded = 0
+    for group in groups.values():
+        if len(group) < 2:
+            continue
+        winner_task, _winner_event = max(
+            group,
+            key=lambda pair: _application_sort_key(pair[0], pair[1]),
+        )
+        for task, event in group:
+            if task.id == winner_task.id:
+                continue
+            task.status = "IGNORED"
+            task.available_at = None
+            task.lease_token = None
+            task.lease_expires_at = None
+            task.claimed_at = None
+            task.last_error_code = "SUPERSEDED_BY_NEWER_APPLICATION"
+            task.last_error_message = "Existe una postulacion mas reciente para el mismo candidato y vacante."
+            if str(event.status or "") not in {"COMPLETED"}:
+                event.status = "IGNORED"
+                event.last_error_code = "SUPERSEDED_BY_NEWER_APPLICATION"
+                event.last_error_message = task.last_error_message
+            superseded += 1
+
+    if superseded or ambiguous:
+        db.commit()
+    return {
+        "superseded": superseded,
+        "requeued_ambiguity": len(ambiguous),
+    }
+
+
 def _has_existing_agent_task(
     db,
     *,
@@ -73,7 +163,13 @@ def reconcile_existing_indeed_candidates(db, *, owner_sub: str) -> dict[str, int
             Candidate.owner_sub == owner_sub,
             Job.owner_sub == owner_sub,
         )
-        .order_by(Job.title.asc(), Candidate.name.asc(), IndeedCandidateLink.id.asc())
+        .order_by(
+            Job.title.asc(),
+            Candidate.name.asc(),
+            IndeedCandidateLink.staged_at.desc().nullslast(),
+            IndeedCandidateLink.created_at.desc(),
+            IndeedCandidateLink.id.desc(),
+        )
         .all()
     )
 
@@ -90,7 +186,12 @@ def reconcile_existing_indeed_candidates(db, *, owner_sub: str) -> dict[str, int
         "queued": 0,
     }
 
+    seen_candidate_jobs: set[tuple[str, str]] = set()
     for link, candidate, job, resume in rows:
+        pair = (str(candidate.id), str(job.id))
+        if pair in seen_candidate_jobs:
+            continue
+        seen_candidate_jobs.add(pair)
         counts["scanned"] += 1
 
         if (
@@ -195,6 +296,7 @@ def sync_one_page(
         mailbox_client=mailbox_client,
         max_results=max_results,
     )
+    compact = compact_duplicate_application_tasks(db, owner_sub=owner_sub)
     reconcile = reconcile_existing_indeed_candidates(db, owner_sub=owner_sub)
     cursor = str(gmail.get("cursor_value") or "")
     return {
@@ -211,4 +313,6 @@ def sync_one_page(
         "reconcile_provider_pending": reconcile["provider_pending"],
         "reconcile_covered": reconcile["covered"],
         "reconcile_queued": reconcile["queued"],
+        "superseded_duplicate_applications": compact["superseded"],
+        "requeued_candidate_ambiguity": compact["requeued_ambiguity"],
     }

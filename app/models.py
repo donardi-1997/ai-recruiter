@@ -503,6 +503,7 @@ class IndeedCandidateLink(Base):
     resume_url = Column(Text, nullable=True)
     staged_test = Column(Boolean, nullable=False, default=False)
     acknowledged_at = Column(DateTime(timezone=True), nullable=True)
+    staged_at = Column(DateTime(timezone=True), nullable=True)
     created_at = Column(DateTime(timezone=True), nullable=False, default=lambda: datetime.now(timezone.utc))
     updated_at = Column(
         DateTime(timezone=True),
