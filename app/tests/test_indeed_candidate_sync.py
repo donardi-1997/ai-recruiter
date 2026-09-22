@@ -478,12 +478,17 @@ def test_disposition_partial_failure_with_null_response_fields_marks_same_applic
     assert all(event.last_error == "sandbox rejection" for event in events)
 
 
-def test_candidate_details_are_owner_scoped_and_expose_resume_without_core_provider_fields(db_session):
+def test_candidate_details_are_owner_scoped_and_expose_resume_without_core_provider_fields(db_session, monkeypatch):
     job, candidate, _assignment, link = seed_indeed_candidate(db_session)
     link.resume_name = "ana.pdf"
     link.resume_url = "https://example.invalid/private-resume"
     link.source_name = "Indeed Smart Sourcing"
     db_session.commit()
+    monkeypatch.setattr(
+        service.storage,
+        "get_canonical_candidate_document",
+        lambda _candidate_id: None,
+    )
 
     details = service.get_candidate_details(
         db_session,
@@ -495,3 +500,30 @@ def test_candidate_details_are_owner_scoped_and_expose_resume_without_core_provi
     assert details["resume_name"] == "ana.pdf"
     assert details["resume_url"] == "https://example.invalid/private-resume"
     assert not hasattr(candidate, "indeed_apply_id")
+
+
+def test_candidate_details_mark_resume_available_from_canonical_document(db_session, monkeypatch):
+    job, candidate, _assignment, link = seed_indeed_candidate(db_session)
+    link.resume_name = "cesar.docx"
+    link.resume_url = "https://example.invalid/private-resume"
+    db_session.commit()
+
+    monkeypatch.setattr(
+        service.storage,
+        "get_canonical_candidate_document",
+        lambda candidate_id: {
+            "key": f"documents/cv-{candidate_id}.docx",
+            "content_type": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            "size_bytes": 1234,
+        },
+    )
+
+    details = service.get_candidate_details(
+        db_session,
+        owner_sub="owner-1",
+        job_id=job.id,
+        candidate_id=candidate.id,
+    )
+
+    assert details["resume"]["available"] is True
+    assert details["resume"]["status"] == "COMPLETED"
