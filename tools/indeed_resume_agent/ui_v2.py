@@ -206,12 +206,7 @@ def run_ui(*, worker, api, browser) -> None:
     status_var = tk.StringVar(value="Iniciando agente...")
     phase = ttk.LabelFrame(shell, text="Estado actual", padding=14)
     phase.pack(fill="x", pady=(18, 14))
-    status_label_widget = ttk.Label(
-        phase,
-        textvariable=status_var,
-        wraplength=980,
-        font=("Segoe UI", 10),
-    )
+    status_label_widget = ttk.Label(phase, textvariable=status_var, wraplength=980, font=("Segoe UI", 10))
     status_label_widget.pack(anchor="w")
 
     counters = {
@@ -238,12 +233,7 @@ def run_ui(*, worker, api, browser) -> None:
     candidate_var = tk.StringVar(value="-")
     candidate_card = ttk.LabelFrame(shell, text="Candidato actual", padding=14)
     candidate_card.pack(fill="x", pady=(0, 14))
-    candidate_label_widget = ttk.Label(
-        candidate_card,
-        textvariable=candidate_var,
-        wraplength=980,
-        font=("Segoe UI", 11, "bold"),
-    )
+    candidate_label_widget = ttk.Label(candidate_card, textvariable=candidate_var, wraplength=980, font=("Segoe UI", 11, "bold"))
     candidate_label_widget.pack(anchor="w")
 
     commands: queue.Queue[str] = queue.Queue()
@@ -268,63 +258,28 @@ def run_ui(*, worker, api, browser) -> None:
 
     operations = ttk.LabelFrame(shell, text="Operación", padding=12)
     operations.pack(fill="x", pady=(0, 12))
-    pause_button = ttk.Button(
-        operations,
-        text="Pausar",
-        style="Secondary.TButton",
-        command=lambda: commands.put("pause"),
-    )
-    resume_button = ttk.Button(
-        operations,
-        text="Continuar",
-        style="Secondary.TButton",
-        command=lambda: commands.put("resume"),
-    )
-    retry_attention_button = ttk.Button(
-        operations,
-        text="Reintentar atención",
-        style="Secondary.TButton",
-        command=lambda: commands.put("retry_attention"),
-    )
-    retry_failed_button = ttk.Button(
-        operations,
-        text="Reintentar fallidos",
-        style="Secondary.TButton",
-        command=lambda: commands.put("retry_failed"),
-    )
+    pause_button = ttk.Button(operations, text="Pausar", style="Secondary.TButton", command=lambda: commands.put("pause"))
+    resume_button = ttk.Button(operations, text="Continuar", style="Secondary.TButton", command=lambda: commands.put("resume"))
+    retry_attention_button = ttk.Button(operations, text="Reintentar atención", style="Secondary.TButton", command=lambda: commands.put("retry_attention"))
+    retry_failed_button = ttk.Button(operations, text="Reintentar fallidos", style="Secondary.TButton", command=lambda: commands.put("retry_failed"))
     open_button = ttk.Button(
         operations,
         text=f"Abrir Indeed ({browser.browser_label})",
         style="Secondary.TButton",
         command=lambda: commands.put("open"),
     )
-    operation_buttons = [
-        pause_button,
-        resume_button,
-        retry_attention_button,
-        retry_failed_button,
-        open_button,
-    ]
+    operation_buttons = [pause_button, resume_button, retry_attention_button, retry_failed_button, open_button]
 
     tools = ttk.LabelFrame(shell, text="Diagnóstico", padding=10)
     tools.pack(fill="x")
-    diagnostic_start_button = ttk.Button(
-        tools,
-        text="Iniciar diagnóstico",
-        command=lambda: commands.put("diagnostic_start"),
-    )
-    diagnostic_stop_button = ttk.Button(
-        tools,
-        text="Guardar diagnóstico",
-        command=lambda: commands.put("diagnostic_stop"),
-    )
+    diagnostic_start_button = ttk.Button(tools, text="Iniciar diagnóstico", command=lambda: commands.put("diagnostic_start"))
+    diagnostic_stop_button = ttk.Button(tools, text="Guardar diagnóstico", command=lambda: commands.put("diagnostic_stop"))
     diagnostic_buttons = [diagnostic_start_button, diagnostic_stop_button]
 
     current_layout: LayoutSpec | None = None
 
     def place_grid(items, parent, columns: int, *, pady: int = 4) -> None:
-        max_columns = max(len(items), 1)
-        for column in range(max_columns):
+        for column in range(max(len(items), 1)):
             parent.columnconfigure(column, weight=1 if column < columns else 0)
         for index, widget in enumerate(items):
             widget.grid(
@@ -341,25 +296,22 @@ def run_ui(*, worker, api, browser) -> None:
             return
         width = event.width if event is not None else root.winfo_width()
         layout = _layout_for_width(width)
-        horizontal_padding = max(
-            layout.shell_padding,
-            (width - layout.max_content_width) // 2,
-        )
+        horizontal_padding = max(layout.shell_padding, (width - layout.max_content_width) // 2)
         shell.configure(padding=(horizontal_padding, layout.shell_padding))
         usable_width = max(320, min(width - (horizontal_padding * 2), layout.max_content_width))
         wraplength = max(280, usable_width - 48)
         status_label_widget.configure(wraplength=wraplength)
         candidate_label_widget.configure(wraplength=wraplength)
 
-        if current_layout is not None and (
-            current_layout.metric_columns,
-            current_layout.sync_columns,
-            current_layout.operation_columns,
-        ) == (
-            layout.metric_columns,
-            layout.sync_columns,
-            layout.operation_columns,
-        ):
+        previous_columns = None
+        if current_layout is not None:
+            previous_columns = (
+                current_layout.metric_columns,
+                current_layout.sync_columns,
+                current_layout.operation_columns,
+            )
+        columns = (layout.metric_columns, layout.sync_columns, layout.operation_columns)
+        if previous_columns == columns:
             current_layout = layout
             return
 
@@ -418,12 +370,7 @@ def run_ui(*, worker, api, browser) -> None:
                     elif command == "resume":
                         if browser.diagnostic_active:
                             publish(
-                                WorkerSnapshot(
-                                    "DIAGNOSTIC_MODE",
-                                    worker.snapshot.active_candidate,
-                                    worker.snapshot.processed_session,
-                                    None,
-                                ),
+                                WorkerSnapshot("DIAGNOSTIC_MODE", worker.snapshot.active_candidate, worker.snapshot.processed_session, None),
                                 last_stats,
                             )
                             continue
@@ -455,19 +402,9 @@ def run_ui(*, worker, api, browser) -> None:
                                     "Indeed requiere inicio de sesión o verificación antes de actualizar vacantes.",
                                 )
                             else:
-                                diagnostic_snapshot = WorkerSnapshot(
-                                    "JOBS_SYNC_ATTENTION",
-                                    None,
-                                    worker.snapshot.processed_session,
-                                    "No fue posible actualizar las vacantes de Indeed.",
-                                )
+                                diagnostic_snapshot = WorkerSnapshot("JOBS_SYNC_ATTENTION", None, worker.snapshot.processed_session, "No fue posible actualizar las vacantes de Indeed.")
                         except Exception:
-                            diagnostic_snapshot = WorkerSnapshot(
-                                "JOBS_SYNC_ATTENTION",
-                                None,
-                                worker.snapshot.processed_session,
-                                "No fue posible actualizar las vacantes de Indeed.",
-                            )
+                            diagnostic_snapshot = WorkerSnapshot("JOBS_SYNC_ATTENTION", None, worker.snapshot.processed_session, "No fue posible actualizar las vacantes de Indeed.")
                         publish(diagnostic_snapshot, last_stats)
                         if not was_paused and diagnostic_snapshot.state == "JOBS_SYNC_COMPLETED":
                             diagnostic_snapshot = None
@@ -514,9 +451,7 @@ def run_ui(*, worker, api, browser) -> None:
                             full_sync_active = False
                             detail = str(exc)
                             diagnostic_snapshot = WorkerSnapshot(
-                                "JOBS_SYNC_ATTENTION"
-                                if detail == "INDEED_AUTH_REQUIRED"
-                                else "SYNC_FAILED",
+                                "JOBS_SYNC_ATTENTION" if detail == "INDEED_AUTH_REQUIRED" else "SYNC_FAILED",
                                 worker.snapshot.active_candidate,
                                 worker.snapshot.processed_session,
                                 None,
@@ -524,12 +459,7 @@ def run_ui(*, worker, api, browser) -> None:
                             publish(diagnostic_snapshot, last_stats)
                         except Exception:
                             full_sync_active = False
-                            diagnostic_snapshot = WorkerSnapshot(
-                                "SYNC_FAILED",
-                                worker.snapshot.active_candidate,
-                                worker.snapshot.processed_session,
-                                None,
-                            )
+                            diagnostic_snapshot = WorkerSnapshot("SYNC_FAILED", worker.snapshot.active_candidate, worker.snapshot.processed_session, None)
                             publish(diagnostic_snapshot, last_stats)
                     elif command == "retry_failed":
                         if browser.diagnostic_active:
@@ -556,31 +486,12 @@ def run_ui(*, worker, api, browser) -> None:
                         worker.pause()
                         try:
                             browser.start_diagnostic()
-                            diagnostic_snapshot = WorkerSnapshot(
-                                "DIAGNOSTIC_MODE",
-                                worker.snapshot.active_candidate,
-                                worker.snapshot.processed_session,
-                                None,
-                            )
+                            diagnostic_snapshot = WorkerSnapshot("DIAGNOSTIC_MODE", worker.snapshot.active_candidate, worker.snapshot.processed_session, None)
                         except RuntimeError as exc:
-                            state = (
-                                "MANUAL_LOGIN_REQUIRED"
-                                if str(exc) == "INDEED_MANUAL_LOGIN_REQUIRED"
-                                else "ERROR"
-                            )
-                            diagnostic_snapshot = WorkerSnapshot(
-                                state,
-                                worker.snapshot.active_candidate,
-                                worker.snapshot.processed_session,
-                                None,
-                            )
+                            state = "MANUAL_LOGIN_REQUIRED" if str(exc) == "INDEED_MANUAL_LOGIN_REQUIRED" else "ERROR"
+                            diagnostic_snapshot = WorkerSnapshot(state, worker.snapshot.active_candidate, worker.snapshot.processed_session, None)
                         except Exception:
-                            diagnostic_snapshot = WorkerSnapshot(
-                                "DIAGNOSTIC_BROWSER_FAILED",
-                                worker.snapshot.active_candidate,
-                                worker.snapshot.processed_session,
-                                None,
-                            )
+                            diagnostic_snapshot = WorkerSnapshot("DIAGNOSTIC_BROWSER_FAILED", worker.snapshot.active_candidate, worker.snapshot.processed_session, None)
                         publish(diagnostic_snapshot, last_stats)
                     elif command == "diagnostic_stop":
                         path = None
@@ -588,61 +499,27 @@ def run_ui(*, worker, api, browser) -> None:
                             path = browser.stop_diagnostic()
                         except Exception:
                             pass
-                        detail = (
-                            f"Diagnóstico guardado: {path}"
-                            if path
-                            else "No fue posible guardar el diagnóstico."
-                        )
-                        diagnostic_snapshot = WorkerSnapshot(
-                            "DIAGNOSTIC_SAVED",
-                            worker.snapshot.active_candidate,
-                            worker.snapshot.processed_session,
-                            detail,
-                        )
+                        detail = f"Diagnóstico guardado: {path}" if path else "No fue posible guardar el diagnóstico."
+                        diagnostic_snapshot = WorkerSnapshot("DIAGNOSTIC_SAVED", worker.snapshot.active_candidate, worker.snapshot.processed_session, detail)
                         publish(diagnostic_snapshot, last_stats)
                     elif command == "open":
                         diagnostic_snapshot = None
                         worker.pause()
                         try:
                             browser.open_indeed()
-                            diagnostic_snapshot = WorkerSnapshot(
-                                "BROWSER_READY",
-                                worker.snapshot.active_candidate,
-                                worker.snapshot.processed_session,
-                                None,
-                            )
+                            diagnostic_snapshot = WorkerSnapshot("BROWSER_READY", worker.snapshot.active_candidate, worker.snapshot.processed_session, None)
                         except Exception:
-                            diagnostic_snapshot = WorkerSnapshot(
-                                "MANUAL_OPEN_FAILED",
-                                worker.snapshot.active_candidate,
-                                worker.snapshot.processed_session,
-                                None,
-                            )
+                            diagnostic_snapshot = WorkerSnapshot("MANUAL_OPEN_FAILED", worker.snapshot.active_candidate, worker.snapshot.processed_session, None)
                         publish(diagnostic_snapshot, last_stats)
 
                 if browser.diagnostic_active:
                     try:
                         browser.poll_diagnostic()
                     except RuntimeError:
-                        diagnostic_snapshot = WorkerSnapshot(
-                            "MANUAL_LOGIN_REQUIRED",
-                            worker.snapshot.active_candidate,
-                            worker.snapshot.processed_session,
-                            None,
-                        )
+                        diagnostic_snapshot = WorkerSnapshot("MANUAL_LOGIN_REQUIRED", worker.snapshot.active_candidate, worker.snapshot.processed_session, None)
                     except Exception:
-                        diagnostic_snapshot = WorkerSnapshot(
-                            "ERROR",
-                            worker.snapshot.active_candidate,
-                            worker.snapshot.processed_session,
-                            None,
-                        )
-                    snapshot = diagnostic_snapshot or WorkerSnapshot(
-                        "DIAGNOSTIC_MODE",
-                        worker.snapshot.active_candidate,
-                        worker.snapshot.processed_session,
-                        None,
-                    )
+                        diagnostic_snapshot = WorkerSnapshot("ERROR", worker.snapshot.active_candidate, worker.snapshot.processed_session, None)
+                    snapshot = diagnostic_snapshot or WorkerSnapshot("DIAGNOSTIC_MODE", worker.snapshot.active_candidate, worker.snapshot.processed_session, None)
                     try:
                         last_stats = api.stats()
                     except Exception:
@@ -666,51 +543,27 @@ def run_ui(*, worker, api, browser) -> None:
                             and last_stats.claimed == 0
                             and last_stats.retry == 0
                         ):
-                            if (
-                                last_stats.needs_human
-                                or last_stats.failed
-                                or full_sync_provider_pending
-                            ):
+                            if last_stats.needs_human or last_stats.failed or full_sync_provider_pending:
                                 detail = (
                                     "Sincronización incremental terminada con pendientes: "
                                     f"{last_stats.needs_human} requieren intervención, "
                                     f"{last_stats.failed} fallaron y "
                                     f"{full_sync_provider_pending} siguen en procesamiento automático."
                                 )
-                                snapshot = WorkerSnapshot(
-                                    "FULL_SYNC_ATTENTION",
-                                    None,
-                                    worker.snapshot.processed_session,
-                                    detail,
-                                )
+                                snapshot = WorkerSnapshot("FULL_SYNC_ATTENTION", None, worker.snapshot.processed_session, detail)
                             else:
                                 detail = (
                                     "Sincronización incremental completada: no queda trabajo pendiente y "
                                     f"{last_stats.completed} CV figuran completados."
                                 )
-                                snapshot = WorkerSnapshot(
-                                    "FULL_SYNC_COMPLETED",
-                                    None,
-                                    worker.snapshot.processed_session,
-                                    detail,
-                                )
+                                snapshot = WorkerSnapshot("FULL_SYNC_COMPLETED", None, worker.snapshot.processed_session, detail)
                             full_sync_active = False
                         publish(snapshot, last_stats)
                     except Exception:
-                        snapshot = WorkerSnapshot(
-                            "ERROR",
-                            None,
-                            worker.snapshot.processed_session,
-                            None,
-                        )
+                        snapshot = WorkerSnapshot("ERROR", None, worker.snapshot.processed_session, None)
                         publish(snapshot, last_stats)
 
-                delay = (
-                    0.5
-                    if snapshot.state
-                    not in {"IDLE", "PAUSED", "WAITING_FOR_HUMAN", "JOBS_SYNC_COMPLETED"}
-                    else 2.0
-                )
+                delay = 0.5 if snapshot.state not in {"IDLE", "PAUSED", "WAITING_FOR_HUMAN", "JOBS_SYNC_COMPLETED"} else 2.0
                 stop_event.wait(delay)
         finally:
             try:
@@ -718,11 +571,7 @@ def run_ui(*, worker, api, browser) -> None:
             except Exception:
                 pass
 
-    agent_thread = threading.Thread(
-        target=agent_loop,
-        name="asiati-resume-agent",
-        daemon=True,
-    )
+    agent_thread = threading.Thread(target=agent_loop, name="asiati-resume-agent", daemon=True)
     agent_thread.start()
 
     def drain_updates() -> None:
