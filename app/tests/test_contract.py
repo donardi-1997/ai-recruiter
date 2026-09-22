@@ -300,7 +300,7 @@ def test_evaluate_candidate_completed_has_status_and_long_summary(
         lambda **kwargs: {
             "status": "COMPLETED",
             "match_score": 70,
-            "recommendation": "PARTIAL_MATCH",
+            "recommendation": "GOOD_MATCH",
             "summary": summary,
             "strengths": ["Python", "APIs REST"],
             "gaps": ["Kubernetes"],
@@ -319,7 +319,7 @@ def test_evaluate_candidate_completed_has_status_and_long_summary(
 
     assert data["status"] == "COMPLETED"
     assert data["match_score"] == 70
-    assert data["recommendation"] == "PARTIAL_MATCH"
+    assert data["recommendation"] == "GOOD_MATCH"
     assert len(data["summary"].strip()) >= 100
     assert data["error_message"] is None
 
