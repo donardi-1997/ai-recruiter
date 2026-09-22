@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import hmac
 import io
+import logging
 import zipfile
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
@@ -28,6 +29,7 @@ from app.domains.candidate_ingestion.models import (
     IndeedEmailResumeTask,
 )
 from app.infrastructure.gmail_oauth_store import GmailOAuthSecretStore
+from app.infrastructure.imports import queue as ingestion_queue
 from app.infrastructure.ingestion.storage import EmailIngestionStorage
 from app.integrations.email_ingestion.gmail import GmailClient
 from app.integrations.email_ingestion.indeed_email_parser import (
@@ -44,6 +46,8 @@ SECOND_RETRY_SECONDS = 60
 MAX_DOCUMENT_BYTES = 15 * 1024 * 1024
 PDF_CONTENT_TYPE = "application/pdf"
 DOCX_CONTENT_TYPE = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+
+logger = logging.getLogger(__name__)
 
 
 class ResumeTaskNotFound(LookupError):
@@ -564,6 +568,48 @@ def store_resume_document(
     db.refresh(document)
     return document
 
+
+
+def dispatch_stored_resume_ingestion(
+    db: Session,
+    *,
+    owner_sub: str,
+    document: CandidateIngestionDocument,
+    queue_sender=None,
+    now: datetime | None = None,
+) -> bool:
+    """Best-effort immediate handoff from agent upload to the shared worker.
+
+    The source document and resume-task completion are already durable before
+    this function runs. If SQS is temporarily unavailable, queue_dispatched_at
+    stays NULL so the shared worker repair loop can dispatch it later.
+    """
+    event = repository.get_event(
+        db,
+        document.ingestion_event_id,
+        owner_sub=owner_sub,
+    )
+    if event is None:
+        raise ResumeTaskNotFound("RESUME_EVENT_NOT_FOUND")
+    if event.status != "STORED":
+        return event.queue_dispatched_at is not None
+    if event.queue_dispatched_at is not None:
+        return True
+
+    sender = queue_sender or ingestion_queue.send_candidate_ingestion
+    try:
+        sender(event.id)
+    except Exception:
+        db.rollback()
+        logger.exception(
+            "Immediate candidate-ingestion dispatch failed for event %s",
+            event.id,
+        )
+        return False
+
+    event.queue_dispatched_at = _now(now)
+    db.commit()
+    return True
 
 def store_resume_pdf(
     db: Session,
