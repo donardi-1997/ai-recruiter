@@ -117,6 +117,26 @@ def test_ui_state_has_no_secret_fields():
     assert fields.isdisjoint(forbidden)
 
 
+def test_full_sync_states_are_explicit_and_attention_safe():
+    syncing = build_ui_state(snap("SYNCING"), stats())
+    completed = build_ui_state(
+        snap("FULL_SYNC_COMPLETED", error="Prueba final completada: cola en cero."),
+        stats(pending=0, retry=0, failed=0, needs_human=0),
+    )
+    attention = build_ui_state(
+        snap(
+            "FULL_SYNC_ATTENTION",
+            error="Revisión masiva terminada con pendientes: 1 requiere intervención.",
+        ),
+        stats(pending=0, retry=0, failed=0, needs_human=1),
+    )
+
+    assert "Revisando todas las vacantes" in syncing.status_label
+    assert completed.status_label == "Prueba final completada: cola en cero."
+    assert attention.session_label == "Needs attention"
+    assert "pendientes" in attention.status_label
+
+
 def test_ui_surfaces_only_sanitized_indeed_diagnostic_path():
     detail = (
         "INDEED_CANDIDATE_NOT_FOUND — Diagnóstico local: "
