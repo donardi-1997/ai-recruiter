@@ -495,7 +495,7 @@ function Jobs() {
     else setIndeedDescription(value);
   }
 
-  async function useDescriptionSource(source) {
+  async function activateDescriptionSource(source) {
     if (!viewJob || descriptionSourceBusy) return;
     const sourceDescription = source === "ai"
       ? (viewJob.ai_description ?? (viewJob.active_description_source === "ai" ? viewJob.description : null))
@@ -735,7 +735,7 @@ function Jobs() {
                     <p className="job-detail-description">{visibleDescription || "Esta versión aún no tiene contenido."}</p>
                     <div className="job-description-detail-actions">
                       {canActivate && (
-                        <button type="button" className="btn btn-secondary" disabled={descriptionSourceBusy} onClick={() => useDescriptionSource(detailDescriptionTab)}>
+                        <button type="button" className="btn btn-secondary" disabled={descriptionSourceBusy} onClick={() => activateDescriptionSource(detailDescriptionTab)}>
                           {descriptionSourceBusy ? "Actualizando…" : "Usar esta descripción"}
                         </button>
                       )}
