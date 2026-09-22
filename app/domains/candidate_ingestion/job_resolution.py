@@ -100,6 +100,36 @@ def _job_by_employer_ui_key(
     )
 
 
+def _linked_job_by_title(
+    db: Session,
+    *,
+    owner_sub: str,
+    job_title: str,
+) -> Job | None:
+    """Resolve a title only among vacancies already linked to Indeed."""
+    target = _normalize(job_title)
+    if not target:
+        return None
+
+    rows = (
+        db.query(Job)
+        .join(IndeedJobLink, IndeedJobLink.job_id == Job.id)
+        .filter(
+            Job.owner_sub == owner_sub,
+            IndeedJobLink.owner_sub == owner_sub,
+        )
+        .all()
+    )
+    matches = {
+        job.id: job
+        for job in rows
+        if _normalize(job.title) == target
+    }
+    if len(matches) != 1:
+        return None
+    return next(iter(matches.values()))
+
+
 def _ensure_discovery_link(
     db: Session,
     *,
@@ -216,8 +246,8 @@ def resolve_or_create_indeed_job(
 
     Indeed Employers vacancy synchronization is the canonical creation path.
     Gmail only discovers applications. Strong posting identifiers win, followed
-    by a controlled unambiguous title fallback for already-synchronized or
-    historical local vacancies.
+    by a controlled title fallback restricted to vacancies already linked to
+    Indeed. Unlinked manual vacancies are never adopted by Gmail.
     """
     metadata = metadata or {}
     raw_title = " ".join(str(metadata.get("job_title") or "").split()).strip()
@@ -261,11 +291,10 @@ def resolve_or_create_indeed_job(
         if employer_ui_job is not None:
             return employer_ui_job
 
-    resolved = resolve_job(
+    resolved = _linked_job_by_title(
         db,
         owner_sub=owner_sub,
-        explicit_job_id=None,
-        metadata=metadata,
+        job_title=raw_title,
     )
     if resolved is None:
         return None
