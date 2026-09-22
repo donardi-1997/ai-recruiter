@@ -375,6 +375,15 @@ class IndeedBrowserUse:
     def start(self) -> None:
         self._call(self._ensure_started())
 
+    def reset_session(self) -> None:
+        """Discard only the current Browser Use session and keep the driver reusable."""
+        if self._closed:
+            return
+        try:
+            self._call(self._discard_browser_session(), timeout=30.0)
+        except Exception:
+            pass
+
     async def _async_close(self) -> None:
         self._diagnostic_active = False
         await self._discard_browser_session()
@@ -769,6 +778,8 @@ class IndeedBrowserUse:
             ]
             if job_matches:
                 return max(job_matches, key=_candidate_recency_key), None
+            # Never fall back to another vacancy for the same person.
+            return None, None
         if exact:
             return max(exact, key=_candidate_recency_key), None
         return None, None
