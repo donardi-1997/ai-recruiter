@@ -266,7 +266,9 @@ class ResumeWorker:
             }.get(stage, "RESUME_DOWNLOAD_FAILED")
             if stage == "BROWSER_FETCH":
                 try:
-                    self._browser.close()
+                    reset = getattr(self._browser, "reset_session", None)
+                    if callable(reset):
+                        reset()
                 except Exception:
                     pass
             try:
