@@ -54,6 +54,42 @@ def test_spa_listing_discovers_clickable_job_without_job_href():
     assert row["href"] == ""
 
 
+def test_spa_listing_keeps_clickable_job_until_detail_exposes_stable_identity():
+    listing_html = """
+    <table>
+      <tbody>
+        <tr>
+          <td><button type="button" role="link">ANALISTA CONTABLE</button></td>
+          <td>5 Todos · 0 Nuevos</td>
+          <td>Bogotá, Cundinamarca</td>
+          <td>Abierto</td>
+        </tr>
+      </tbody>
+    </table>
+    """
+    detail_html = """
+    <aside role="dialog" data-job-id="job-detail-456">
+      <h1>ANALISTA CONTABLE</h1>
+      <section data-testid="job-description">
+        Analizar conciliaciones, cierres y reportes contables con trazabilidad completa.
+      </section>
+    </aside>
+    """
+    with sync_playwright() as playwright:
+        browser = playwright.chromium.launch(headless=True)
+        page = browser.new_page()
+        page.set_content(listing_html)
+        listing_state = page.evaluate(LISTING_STATE_SCRIPT)
+        page.set_content(detail_html)
+        detail_state = page.evaluate(DETAIL_STATE_SCRIPT)
+        browser.close()
+
+    assert len(listing_state["rows"]) == 1
+    assert listing_state["rows"][0]["externalJobKey"] == ""
+    assert listing_state["rows"][0]["clickToken"]
+    assert detail_state["externalJobKey"] == "job-detail-456"
+
+
 def test_detail_state_reports_loading_until_spa_job_detail_is_hydrated():
     loading_html = """
     <main>
