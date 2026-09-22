@@ -300,7 +300,7 @@ def test_evaluate_candidate_completed_has_status_and_long_summary(
         lambda **kwargs: {
             "status": "COMPLETED",
             "match_score": 70,
-            "recommendation": "PARTIAL_MATCH",
+            "recommendation": "GOOD_MATCH",
             "summary": summary,
             "strengths": ["Python", "APIs REST"],
             "gaps": ["Kubernetes"],
@@ -319,7 +319,7 @@ def test_evaluate_candidate_completed_has_status_and_long_summary(
 
     assert data["status"] == "COMPLETED"
     assert data["match_score"] == 70
-    assert data["recommendation"] == "PARTIAL_MATCH"
+    assert data["recommendation"] == "GOOD_MATCH"
     assert len(data["summary"].strip()) >= 100
     assert data["error_message"] is None
 
@@ -388,7 +388,8 @@ def test_evaluate_candidate_failure_does_not_expose_aws_error(
 
     assert stored is not None
     assert stored.status == "FAILED"
-    assert raw_error in stored.error_message
+    assert stored.error_message == "EVALUATION_INTERNAL_ERROR"
+    assert raw_error not in stored.error_message
 
 
 def test_evaluate_candidate_rejects_short_completed_summary(

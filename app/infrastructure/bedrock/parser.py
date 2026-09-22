@@ -38,41 +38,38 @@ def clean_json(content: str) -> str:
         content = content[:-3].strip()
     start = content.find("{")
     if start == -1:
-        raise ValueError(
-            f"No se encontró un objeto JSON en la respuesta: {content}"
-        )
+        raise ValueError("MODEL_JSON_OBJECT_NOT_FOUND")
     end = content.rfind("}")
     if end == -1 or end < start:
-        raise ValueError(f"El JSON está incompleto: {content}")
+        raise ValueError("MODEL_JSON_INCOMPLETE")
     return content[start : end + 1].strip()
 
 
+def _parse_json_response(content: str) -> dict:
+    """Parse one model response without including its content in failures."""
+    try:
+        parsed = json.loads(clean_json(content))
+    except (ValueError, json.JSONDecodeError) as exc:
+        raise ValueError("MODEL_JSON_INVALID") from exc
+    if not isinstance(parsed, dict):
+        raise ValueError("MODEL_JSON_NOT_OBJECT")
+    return parsed
+
+
 def invoke_json_prompt(chain, payload: dict, description: str):
-    """Invoke a LangChain chain with JSON output and automatic retry.
-
-    Performs up to two attempts:
-    1. First attempt with original payload
-    2. If JSON decode fails, retry with strict instruction
-
-    Args:
-        chain: LangChain chain to invoke
-        payload: Input payload for the chain
-        description: Description for error logging
-
-    Returns:
-        Parsed JSON dict
-
-    Raises:
-        ValueError: If both attempts produce invalid JSON
-    """
+    """Invoke a JSON-producing chain with one safe automatic retry."""
     response = chain.invoke(payload)
     raw_content = response.content
-    cleaned_content = clean_json(raw_content)
     try:
-        return json.loads(cleaned_content)
-    except json.JSONDecodeError as first_error:
-        logger.error("JSON inválido en %s: %s", description, first_error)
-        logger.error("Respuesta recibida: %s", raw_content)
+        return _parse_json_response(raw_content)
+    except ValueError as first_error:
+        logger.error(
+            "JSON invalido en %s: %s (response_chars=%d)",
+            description,
+            first_error,
+            len(str(raw_content or "")),
+        )
+
     retry_payload = dict(payload)
     retry_payload["_retry_instruction"] = """
 La respuesta anterior NO fue JSON válido.
@@ -90,13 +87,15 @@ REGLAS ABSOLUTAS:
 """
     retry_response = chain.invoke(retry_payload)
     retry_raw_content = retry_response.content
-    retry_cleaned_content = clean_json(retry_raw_content)
     try:
-        return json.loads(retry_cleaned_content)
-    except json.JSONDecodeError as second_error:
+        return _parse_json_response(retry_raw_content)
+    except ValueError as second_error:
+        logger.error(
+            "Segundo JSON invalido en %s: %s (response_chars=%d)",
+            description,
+            second_error,
+            len(str(retry_raw_content or "")),
+        )
         raise ValueError(
-            f"El modelo no devolvió JSON válido al {description}. "
-            f"Primer error: {first_error}. "
-            f"Segundo error: {second_error}. "
-            f"Respuesta: {retry_cleaned_content}"
+            f"MODEL_JSON_INVALID_AFTER_RETRY:{description}"
         ) from second_error

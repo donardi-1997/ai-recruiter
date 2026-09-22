@@ -13,39 +13,65 @@ function CandidateDetail() {
   const [loading, setLoading] = useState(true);
   const [openingResume, setOpeningResume] = useState(false);
   const [resumeError, setResumeError] = useState("");
+  const [loadError, setLoadError] = useState("");
 
   useEffect(() => {
-    async function load() {
-      try {
-        const [candidateResponse, evaluationResponse] = await Promise.all([
-          api.get(`/candidates/${candidate_id}`),
-          api.get(jobId
-            ? `/jobs/${jobId}/candidates/${candidate_id}`
-            : `/candidates/${candidate_id}/evaluations`),
-        ]);
-        setCandidate(candidateResponse.data);
-        setEvaluations(jobId
-          ? [evaluationResponse.data]
-          : evaluationResponse.data.evaluations || []);
+    let cancelled = false;
 
-        if (jobId) {
-          try {
-            const indeedResponse = await api.get(
-              `/jobs/${jobId}/candidates/${candidate_id}/integrations/indeed`
-            );
-            setIndeedDetails(indeedResponse.data);
-          } catch {
-            // Not every candidate comes from Indeed. Keep the core profile usable.
-            setIndeedDetails(null);
-          }
+    async function load() {
+      setLoading(true);
+      setLoadError("");
+      setCandidate(null);
+      setEvaluations([]);
+      setIndeedDetails(null);
+
+      try {
+        const candidateResponse = await api.get(`/candidates/${candidate_id}`);
+        if (cancelled) return;
+        setCandidate(candidateResponse.data);
+      } catch {
+        if (!cancelled) {
+          setLoadError("No fue posible cargar el perfil del candidato.");
+          setLoading(false);
+        }
+        return;
+      }
+
+      try {
+        const evaluationResponse = await api.get(jobId
+          ? `/jobs/${jobId}/candidates/${candidate_id}`
+          : `/candidates/${candidate_id}/evaluations`);
+        if (!cancelled) {
+          setEvaluations(jobId
+            ? [evaluationResponse.data]
+            : evaluationResponse.data.evaluations || []);
         }
       } catch (error) {
-        console.error("No fue posible cargar el candidato", error);
-      } finally {
-        setLoading(false);
+        // A candidate can legitimately exist before its first evaluation.
+        if (!cancelled && error?.response?.status !== 404) {
+          setLoadError("El perfil cargó, pero no fue posible consultar su evaluación.");
+        }
       }
+
+      if (jobId && !cancelled) {
+        try {
+          const indeedResponse = await api.get(
+            `/jobs/${jobId}/candidates/${candidate_id}/integrations/indeed`
+          );
+          if (!cancelled) setIndeedDetails(indeedResponse.data);
+        } catch {
+          // Not every candidate comes from Indeed. Keep the core profile usable.
+          if (!cancelled) setIndeedDetails(null);
+        }
+      }
+
+      if (!cancelled) setLoading(false);
     }
+
     load();
+    return () => {
+      cancelled = true;
+    };
   }, [candidate_id, jobId]);
 
   async function openResume() {
@@ -65,7 +91,18 @@ function CandidateDetail() {
   }
 
   if (loading) return <div className="page"><div className="page-loading"><span /> Cargando perfil…</div></div>;
+  if (!candidate) {
+    return <div className="page"><div className="empty-state"><strong>No fue posible cargar el candidato</strong><p>{loadError || "Intenta nuevamente."}</p><Link to="/candidates" className="btn btn-primary">Volver a candidatos</Link></div></div>;
+  }
+
   const evaluation = evaluations[0];
+  const numericScore = Number(evaluation?.match_score);
+  const evaluationCompleted = Boolean(
+    evaluation
+      && evaluation.status !== "FAILED"
+      && evaluation.status !== "PENDING"
+      && Number.isFinite(numericScore),
+  );
   const sourceName = indeedDetails?.source_name || candidate?.metadata?.source_name || candidate?.metadata?.source;
   const resume = indeedDetails?.resume;
   const resumeName = resume?.name || candidate?.filename || candidate?.metadata?.resume_name || "Currículum registrado";
@@ -99,16 +136,25 @@ function CandidateDetail() {
             </button>
           )}
           {resumeError && <p className="muted">{resumeError}</p>}
-          {jobId && <p>Evaluado para la vacante seleccionada</p>}
+          {jobId && (
+            <p>{evaluationCompleted ? "Evaluado para la vacante seleccionada" : "Pendiente de evaluación para la vacante seleccionada"}</p>
+          )}
         </div>
         <span className="status-pill"><i /> Disponible</span>
       </header>
 
-      {!evaluation ? (
-        <div className="empty-state"><span aria-hidden="true">↗</span><strong>Perfil pendiente de evaluación</strong><p>Evalúa este candidato contra una vacante para ver su afinidad.</p><Link to="/candidates" className="btn btn-primary">Evaluar candidato</Link></div>
+      {!evaluationCompleted ? (
+        <div className="empty-state">
+          <span aria-hidden="true">{evaluation?.status === "FAILED" ? "!" : "↗"}</span>
+          <strong>{evaluation?.status === "FAILED" ? "La evaluación no pudo completarse" : "Perfil pendiente de evaluación"}</strong>
+          <p>{evaluation?.status === "FAILED"
+            ? "Intenta evaluar nuevamente este candidato."
+            : "Evalúa este candidato contra una vacante para ver su afinidad."}</p>
+          <Link to="/candidates" className="btn btn-primary">Evaluar candidato</Link>
+        </div>
       ) : (
         <div className="evaluation-layout">
-          <aside className="panel score-panel"><span className="eyebrow">Afinidad global</span><strong className="score score-large">{evaluation.match_score}%</strong><div className="score-bar"><div className="score-fill" style={{ width: `${evaluation.match_score}%` }} /></div><span className="badge badge-success">{evaluation.recommendation}</span></aside>
+          <aside className="panel score-panel"><span className="eyebrow">Afinidad global</span><strong className="score score-large">{numericScore}%</strong><div className="score-bar"><div className="score-fill" style={{ width: `${Math.max(0, Math.min(100, numericScore))}%` }} /></div><span className="badge badge-success">{evaluation.recommendation}</span></aside>
           <div className="evaluation-content">
             <section className="panel"><span className="eyebrow">Lectura ejecutiva</span><h2>Resumen del perfil</h2><p className="analysis-copy">{evaluation.summary}</p></section>
             <div className="columns">

@@ -37,5 +37,5 @@ def validate_access_token(token: str) -> dict[str, str | None]:
             "email": attrs.get("email"),
         }
     except Exception as exc:
-        logger.warning("Auth validation failed: %s", exc)
+        logger.warning("Auth validation failed: %s", type(exc).__name__)
         raise CognitoAuthenticationError() from exc

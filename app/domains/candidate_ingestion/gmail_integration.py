@@ -63,6 +63,10 @@ class GmailOAuthConfigurationError(RuntimeError):
     pass
 
 
+class GmailOAuthOwnershipError(RuntimeError):
+    pass
+
+
 def is_safe_mailbox_filter(settings: GmailSettings) -> bool:
     """Require either a sender allowlist or an explicit Gmail from: restriction."""
     if settings.allowed_senders:
@@ -195,6 +199,20 @@ def _resolved_oauth_settings(
     )
 
 
+def _oauth_owner(payload: dict) -> str:
+    return str(
+        payload.get("connected_by_sub")
+        or payload.get("authorized_owner_sub")
+        or ""
+    ).strip()
+
+
+def _require_oauth_owner(payload: dict, owner_sub: str) -> None:
+    owner = _oauth_owner(payload)
+    if not owner or owner != str(owner_sub or "").strip():
+        raise GmailOAuthOwnershipError("GMAIL_OAUTH_OWNER_MISMATCH")
+
+
 def _oauth_is_configured(oauth_settings: GmailOAuthSettings, payload: dict) -> bool:
     return bool(
         oauth_settings.redirect_uri
@@ -206,6 +224,7 @@ def _oauth_is_configured(oauth_settings: GmailOAuthSettings, payload: dict) -> b
 
 def integration_status(
     *,
+    owner_sub: str | None = None,
     settings: GmailSettings | None = None,
     oauth_settings: GmailOAuthSettings | None = None,
     oauth_store=None,
@@ -221,12 +240,15 @@ def integration_status(
     resolved_oauth = _resolved_oauth_settings(oauth, payload)
     connected_email = str(payload.get("connected_email") or "").strip().casefold()
     connected = bool(resolved.refresh_token and connected_email)
+    owner = _oauth_owner(payload)
+    manageable = bool(owner_sub and owner and owner == str(owner_sub).strip())
     return {
         "enabled": resolved.enabled,
         "configured": resolved.configured,
         "oauth_configured": _oauth_is_configured(resolved_oauth, payload),
         "connected": connected,
-        "connected_email": connected_email or None,
+        "connected_email": connected_email if manageable and connected_email else None,
+        "manageable": manageable,
         "provider": resolved.ingestion_provider,
         "safe_filter": is_safe_mailbox_filter(resolved),
         "redirect_uri": resolved_oauth.redirect_uri or None,
@@ -289,6 +311,14 @@ def oauth_start(
     if not _oauth_is_configured(resolved_oauth, payload):
         raise GmailOAuthConfigurationError("Gmail OAuth client is not configured.")
 
+    owner = _oauth_owner(payload)
+    if owner:
+        _require_oauth_owner(payload, owner_sub)
+    elif not str(payload.get("connected_email") or "").strip():
+        # New installations must nominate the corporate integration owner before
+        # any authenticated application user can bind an arbitrary mailbox.
+        raise GmailOAuthOwnershipError("GMAIL_OAUTH_OWNER_REQUIRED")
+
     state_secret = str(payload["state_secret"])
     state = _sign_state(
         {
@@ -331,68 +361,85 @@ def oauth_callback(
     if not _oauth_is_configured(resolved_oauth, payload):
         raise GmailOAuthConfigurationError("Gmail OAuth client is not configured.")
 
-    _verify_state(
+    state_payload = _verify_state(
         state,
         str(payload["state_secret"]),
         resolved_oauth.state_max_age_seconds,
     )
+    owner_sub = str(state_payload["sub"]).strip()
+    owner = _oauth_owner(payload)
+    if owner:
+        _require_oauth_owner(payload, owner_sub)
+    elif not str(payload.get("connected_email") or "").strip():
+        raise GmailOAuthOwnershipError("GMAIL_OAUTH_OWNER_REQUIRED")
 
+    owns_client = http_client is None
     client = http_client or httpx.Client(timeout=current.request_timeout_seconds)
     try:
-        token_response = client.post(
-            resolved_oauth.token_url,
-            data={
-                "code": code,
-                "client_id": str(payload["client_id"]),
-                "client_secret": str(payload["client_secret"]),
-                "redirect_uri": resolved_oauth.redirect_uri,
-                "grant_type": "authorization_code",
-            },
-        )
-        token_response.raise_for_status()
-        token_payload = token_response.json()
-        access_token = str(token_payload.get("access_token") or "").strip()
-        refresh_token = str(
-            token_payload.get("refresh_token") or payload.get("refresh_token") or ""
-        ).strip()
-        if not access_token or not refresh_token:
-            raise GmailRemoteError("Google OAuth did not return the required tokens.")
+        try:
+            token_response = client.post(
+                resolved_oauth.token_url,
+                data={
+                    "code": code,
+                    "client_id": str(payload["client_id"]),
+                    "client_secret": str(payload["client_secret"]),
+                    "redirect_uri": resolved_oauth.redirect_uri,
+                    "grant_type": "authorization_code",
+                },
+            )
+            token_response.raise_for_status()
+            token_payload = token_response.json()
+            access_token = str(token_payload.get("access_token") or "").strip()
+            refresh_token = str(
+                token_payload.get("refresh_token") or payload.get("refresh_token") or ""
+            ).strip()
+            if not access_token or not refresh_token:
+                raise GmailRemoteError("Google OAuth did not return the required tokens.")
 
-        profile_response = client.get(
-            f"{current.api_base_url}/users/me/profile",
-            headers={"Authorization": f"Bearer {access_token}"},
-        )
-        profile_response.raise_for_status()
-        connected_email = str(
-            profile_response.json().get("emailAddress") or ""
-        ).strip().casefold()
-        if not connected_email:
-            raise GmailRemoteError("Gmail profile did not include an email address.")
-    except GmailRemoteError:
-        raise
-    except Exception as exc:
-        raise GmailRemoteError("Google OAuth callback failed.") from exc
+            profile_response = client.get(
+                f"{current.api_base_url}/users/me/profile",
+                headers={"Authorization": f"Bearer {access_token}"},
+            )
+            profile_response.raise_for_status()
+            connected_email = str(
+                profile_response.json().get("emailAddress") or ""
+            ).strip().casefold()
+            if not connected_email:
+                raise GmailRemoteError("Gmail profile did not include an email address.")
+        except GmailRemoteError:
+            raise
+        except Exception as exc:
+            raise GmailRemoteError("Google OAuth callback failed.") from exc
 
-    updated = dict(payload)
-    updated.update(
-        {
-            "refresh_token": refresh_token,
+        existing_email = str(payload.get("connected_email") or "").strip().casefold()
+        if not owner and existing_email and connected_email != existing_email:
+            raise GmailOAuthOwnershipError("GMAIL_OAUTH_MAILBOX_MISMATCH")
+
+        updated = dict(payload)
+        updated.update(
+            {
+                "refresh_token": refresh_token,
+                "connected_email": connected_email,
+                "connected_by_sub": owner_sub,
+                "connected_at": datetime.now(timezone.utc).isoformat(),
+            }
+        )
+        store.write(updated)
+        return {
+            "connected": True,
             "connected_email": connected_email,
-            "connected_at": datetime.now(timezone.utc).isoformat(),
         }
-    )
-    store.write(updated)
-    return {
-        "connected": True,
-        "connected_email": connected_email,
-    }
+    finally:
+        if owns_client:
+            client.close()
 
 
-def disconnect_oauth(*, oauth_store=None) -> dict:
-    """Forget the mailbox grant while preserving the OAuth client configuration."""
+def disconnect_oauth(*, owner_sub: str, oauth_store=None) -> dict:
+    """Forget the mailbox grant only when requested by its corporate owner."""
     oauth = get_gmail_oauth_settings()
     store = _oauth_store(oauth, oauth_store)
     payload = dict(store.read() or {})
+    _require_oauth_owner(payload, owner_sub)
     payload["refresh_token"] = ""
     payload["connected_email"] = ""
     payload.pop("connected_at", None)
@@ -427,6 +474,7 @@ def sync_mailbox(
         raise GmailUnsafeConfiguration(
             "Gmail ingestion requires GMAIL_ALLOWED_SENDERS or a restrictive from: query."
         )
+    _require_oauth_owner(payload, owner_sub)
 
     client = mailbox_client or GmailClient(resolved)
     try:
@@ -492,6 +540,7 @@ def reset_mailbox_to_current(
         raise GmailUnsafeConfiguration(
             "Gmail ingestion requires GMAIL_ALLOWED_SENDERS or a restrictive from: query."
         )
+    _require_oauth_owner(payload, owner_sub)
 
     client = mailbox_client or GmailClient(resolved)
     try:

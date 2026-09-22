@@ -217,19 +217,7 @@ def build_ranking_response(
 
 
 def _sanitize_error_message(error_message: str | None) -> str | None:
+    """Never expose evaluator/provider internals through public ranking payloads."""
     if not error_message:
         return None
-    aws_indicators = [
-        "AccessDeniedException",
-        "arn:aws",
-        "assumed-role",
-        "AmazonLightsailInstanceRole",
-        "knowledge-base/",
-        "bedrock:Retrieve",
-        "bedrock:InvokeModel",
-        "is not authorized to perform",
-    ]
-    for indicator in aws_indicators:
-        if indicator in error_message:
-            return "No fue posible completar la evaluación. Intente recalcular el ranking."
-    return error_message
+    return "No fue posible completar la evaluación. Intente recalcular el ranking."

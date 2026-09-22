@@ -1,5 +1,7 @@
 """Authenticated Indeed integration routes."""
 
+import logging
+
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
@@ -15,6 +17,8 @@ from app.domains.indeed.exceptions import (
 )
 from app.domains.jobs.exceptions import JobNotFound
 
+logger = logging.getLogger(__name__)
+
 router = APIRouter(tags=["indeed"])
 
 
@@ -22,15 +26,22 @@ def _translate(exc: Exception) -> HTTPException:
     if isinstance(exc, JobNotFound):
         return HTTPException(status_code=404, detail="Vacante no encontrada.")
     if isinstance(exc, IndeedLinkNotFound):
-        return HTTPException(status_code=404, detail=str(exc))
+        return HTTPException(status_code=404, detail="Integracion de Indeed no encontrada.")
     if isinstance(exc, IdentityConflict):
         return HTTPException(status_code=409, detail="Conflicto de identidad de candidato.")
     if isinstance(exc, IndeedValidationError):
         return HTTPException(status_code=422, detail=str(exc))
-    if isinstance(exc, (IndeedDisabled, IndeedNotConfigured)):
-        return HTTPException(status_code=503, detail=str(exc))
+    if isinstance(exc, IndeedDisabled):
+        return HTTPException(status_code=503, detail="La integracion de Indeed esta deshabilitada.")
+    if isinstance(exc, IndeedNotConfigured):
+        return HTTPException(status_code=503, detail="La integracion de Indeed no esta configurada.")
     if isinstance(exc, IndeedRemoteError):
-        return HTTPException(status_code=502, detail=str(exc))
+        logger.warning("Indeed remote operation failed: %s", exc)
+        return HTTPException(
+            status_code=502,
+            detail="Indeed no pudo completar la operacion. Intenta nuevamente.",
+        )
+    logger.exception("Unexpected Indeed integration error", exc_info=exc)
     return HTTPException(status_code=500, detail="Error interno del servidor.")
 
 

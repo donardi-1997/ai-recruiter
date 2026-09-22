@@ -13,7 +13,17 @@ from app.domains.candidates.exceptions import (
 )
 from app.domains.evaluations import repository as evaluations_repository
 from app.domains.jobs import repository as jobs_repository
+from app.infrastructure.imports.documents import (
+    MAX_DOCUMENT_BYTES,
+    DocumentImportError,
+    PDF_CONTENT_TYPE,
+    extract_document,
+)
 from app.infrastructure.storage.candidate_documents import index_candidate_document
+
+class LegacyCandidateUploadError(ValueError):
+    """Safe validation error for the compatibility bulk-upload endpoint."""
+
 
 APPLICATION_STATUSES = {
     "APPLIED",
@@ -171,6 +181,33 @@ def delete_all_candidates(db: Session, owner_sub: str) -> tuple[int, int]:
     return candidates_repository.delete_all_candidates(db, owner_sub=owner_sub)
 
 
+def _legacy_pdf_filename(original_filename: str | None) -> str:
+    safe_name = str(original_filename or "").replace("\\", "/").rsplit("/", 1)[-1].strip()
+    if not safe_name or not safe_name.casefold().endswith(".pdf"):
+        raise LegacyCandidateUploadError("LEGACY_UPLOAD_PDF_ONLY")
+    return safe_name
+
+
+def validate_legacy_candidate_pdf(
+    *,
+    original_filename: str | None,
+    file_content: bytes,
+) -> str:
+    """Validate the legacy endpoint's PDF-only storage contract."""
+    safe_name = _legacy_pdf_filename(original_filename)
+    if not file_content:
+        raise LegacyCandidateUploadError("LEGACY_UPLOAD_EMPTY")
+    if len(file_content) > MAX_DOCUMENT_BYTES:
+        raise LegacyCandidateUploadError("LEGACY_UPLOAD_TOO_LARGE")
+    try:
+        parsed = extract_document(file_content, safe_name)
+    except DocumentImportError as exc:
+        raise LegacyCandidateUploadError("LEGACY_UPLOAD_INVALID_PDF") from exc
+    if parsed.content_type != PDF_CONTENT_TYPE:
+        raise LegacyCandidateUploadError("LEGACY_UPLOAD_PDF_ONLY")
+    return safe_name
+
+
 def create_and_index_candidate(
     db: Session,
     *,
@@ -178,23 +215,26 @@ def create_and_index_candidate(
     original_filename: str | None,
     file_content: bytes,
 ):
-    name = os.path.splitext(original_filename or "Unknown")[0]
+    safe_filename = _legacy_pdf_filename(original_filename)
+    name = os.path.splitext(safe_filename)[0]
     candidate = candidates_repository.create_candidate(
         db,
         name=name,
-        metadata={"filename": original_filename},
+        metadata={"filename": safe_filename},
         owner_sub=owner_sub,
     )
     indexing = index_candidate_document(
         candidate,
         file_content,
-        original_filename,
+        safe_filename,
     )
     return candidate, indexing
 
 
 __all__ = [
     "APPLICATION_STATUSES",
+    "LegacyCandidateUploadError",
+    "validate_legacy_candidate_pdf",
     "CandidateNotFound",
     "InvalidApplicationStatus",
     "JobCandidateNotFound",

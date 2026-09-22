@@ -49,6 +49,7 @@ def runtime_secret():
         "refresh_token": "refresh-token",
         "connected_email": "recruiting@asiaticorp.com",
         "state_secret": "state-signing-secret",
+        "authorized_owner_sub": "owner-a",
         "redirect_uri": (
             "https://regional.execute-api.us-east-2.amazonaws.com/"
             "api/integrations/gmail/oauth/callback"

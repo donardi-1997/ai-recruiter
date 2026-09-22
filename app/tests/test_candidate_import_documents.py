@@ -110,6 +110,16 @@ def test_extract_docx_reads_contact_header():
     assert parsed.phone == "+573105559876"
 
 
+def test_extract_docx_rejects_excessive_internal_expansion(monkeypatch):
+    documents = _documents()
+    payload = _docx_bytes(["Ana Gomez", "Backend Engineer"])
+
+    monkeypatch.setattr(documents, "MAX_DOCX_EXPANDED_BYTES", 100)
+
+    with pytest.raises(documents.DocumentTooLarge, match="DOCX_EXPANDED_TOO_LARGE"):
+        documents.extract_document(payload, "ana.docx")
+
+
 def test_ambiguous_header_contact_is_not_a_strong_identity():
     documents = _documents()
     payload = _docx_bytes(

@@ -5,9 +5,9 @@ import logging
 
 import boto3
 from botocore.exceptions import ClientError
-from fastapi import APIRouter, Cookie, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, field_validator
 
 from app.infrastructure.bedrock.session import get_cached_session
 
@@ -30,9 +30,28 @@ def get_admin_cognito_client():
     return get_cached_session().client("cognito-idp", region_name=AWS_REGION)
 
 
-class LoginRequest(BaseModel):
-    email: str
-    password: str
+class CredentialsRequest(BaseModel):
+    email: str = Field(min_length=3, max_length=320)
+    password: str = Field(min_length=1, max_length=256)
+
+    @field_validator("email")
+    @classmethod
+    def normalize_email(cls, value: str) -> str:
+        normalized = value.strip().casefold()
+        if normalized.count("@") != 1:
+            raise ValueError("invalid email")
+        local, domain = normalized.split("@", 1)
+        if not local or not domain or "." not in domain:
+            raise ValueError("invalid email")
+        return normalized
+
+
+class LoginRequest(CredentialsRequest):
+    pass
+
+
+class RegisterRequest(CredentialsRequest):
+    password: str = Field(min_length=8, max_length=256)
 
 
 @router.post("/login")
@@ -47,9 +66,16 @@ def login(body: LoginRequest):
             },
         )
         auth = response.get("AuthenticationResult", {})
+        access_token = auth.get("AccessToken")
+        if not access_token:
+            challenge = str(response.get("ChallengeName") or "").strip()
+            logger.warning("Cognito login did not return an access token; challenge=%s", challenge)
+            raise HTTPException(
+                status_code=403,
+                detail="El inicio de sesion requiere un paso adicional no soportado.",
+            )
         resp = JSONResponse({
-            "access_token": auth.get("AccessToken"),
-            "id_token": auth.get("IdToken"),
+            "access_token": access_token,
             "expires_in": auth.get("ExpiresIn"),
         })
         if auth.get("RefreshToken"):
@@ -58,14 +84,14 @@ def login(body: LoginRequest):
                 auth["RefreshToken"],
                 httponly=True,
                 secure=True,
-                samesite="none",
+                samesite="lax",
                 max_age=86400 * 30,
                 path="/",
             )
         return resp
     except ClientError as e:
         error_code = e.response["Error"].get("Code", "")
-        logger.warning("Cognito login error: %s %s", error_code, e.response["Error"].get("Message"))
+        logger.warning("Cognito login error: %s", error_code)
         if error_code in ("NotAuthorizedException", "UserNotFoundException"):
             raise HTTPException(status_code=401, detail="Correo o contrasena incorrectos.")
         if error_code == "UserNotConfirmedException":
@@ -74,7 +100,9 @@ def login(body: LoginRequest):
 
 
 @router.post("/register")
-def register(email: str = Query(...), password: str = Query(...)):
+def register(body: RegisterRequest):
+    email = body.email
+    password = body.password
     if not COGNITO_USER_POOL_ID:
         logger.error("COGNITO_USER_POOL_ID is required for automatic registration confirmation")
         raise HTTPException(status_code=500, detail="No fue posible crear la cuenta.")
@@ -95,7 +123,33 @@ def register(email: str = Query(...), password: str = Query(...)):
             "user_sub": response.get("UserSub"),
         }
     except ClientError as e:
-        raise HTTPException(status_code=400, detail=e.response["Error"]["Message"])
+        error = e.response.get("Error", {})
+        error_code = str(error.get("Code") or "")
+        logger.warning("Cognito registration error: %s", error_code)
+        if error_code == "UsernameExistsException":
+            raise HTTPException(
+                status_code=409,
+                detail="Ya existe una cuenta con este correo.",
+            ) from e
+        if error_code == "InvalidPasswordException":
+            raise HTTPException(
+                status_code=400,
+                detail="La contrasena no cumple los requisitos de seguridad.",
+            ) from e
+        if error_code in {"InvalidParameterException", "InvalidLambdaResponseException"}:
+            raise HTTPException(
+                status_code=400,
+                detail="Los datos de registro no son validos.",
+            ) from e
+        if error_code in {"TooManyRequestsException", "LimitExceededException"}:
+            raise HTTPException(
+                status_code=429,
+                detail="Hay demasiados intentos. Intenta nuevamente mas tarde.",
+            ) from e
+        raise HTTPException(
+            status_code=500,
+            detail="No fue posible crear la cuenta.",
+        ) from e
 
 
 @router.post("/refresh")
@@ -110,9 +164,14 @@ def refresh(request: Request):
             AuthParameters={"REFRESH_TOKEN": refresh_token},
         )
         auth = response.get("AuthenticationResult", {})
+        access_token = auth.get("AccessToken")
+        if not access_token:
+            raise HTTPException(
+                status_code=401,
+                detail="La sesion expiro. Inicia sesion nuevamente.",
+            )
         resp = JSONResponse({
-            "access_token": auth.get("AccessToken"),
-            "id_token": auth.get("IdToken"),
+            "access_token": access_token,
             "expires_in": auth.get("ExpiresIn"),
         })
         if auth.get("RefreshToken"):
@@ -146,7 +205,7 @@ def me(request: Request):
         response = cognito_client.get_user(AccessToken=token)
         attrs = {a["Name"]: a["Value"] for a in response.get("UserAttributes", [])}
         return {
-            "sub": response.get("Username"),
+            "sub": attrs.get("sub") or response.get("Username"),
             "email": attrs.get("email"),
             "email_verified": attrs.get("email_verified"),
         }

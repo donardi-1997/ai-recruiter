@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, File, Header, HTTPException, Response, UploadFile
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from app.deps import get_db
@@ -32,7 +32,12 @@ class HeartbeatResponse(BaseModel):
 
 
 class FailureRequest(BaseModel):
-    code: str = "RESUME_DOWNLOAD_FAILED"
+    code: str = Field(
+        default="RESUME_DOWNLOAD_FAILED",
+        min_length=3,
+        max_length=120,
+        pattern=r"^[A-Z0-9_]+$",
+    )
 
 
 class UploadResponse(BaseModel):

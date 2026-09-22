@@ -83,6 +83,13 @@ class Job(Base):
 
 class JobCandidate(Base):
     __tablename__ = "job_candidates"
+    __table_args__ = (
+        UniqueConstraint(
+            "job_id",
+            "candidate_id",
+            name="uq_job_candidates_job_candidate",
+        ),
+    )
 
     id = Column(
         UUID(as_uuid=False),
@@ -117,6 +124,13 @@ class JobCandidate(Base):
 
 class Evaluation(Base):
     __tablename__ = "evaluations"
+    __table_args__ = (
+        UniqueConstraint(
+            "job_id",
+            "candidate_id",
+            name="uq_evaluations_job_candidate",
+        ),
+    )
 
     id = Column(
         UUID(as_uuid=False),

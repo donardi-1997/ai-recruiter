@@ -71,6 +71,7 @@ def _secret():
         "enabled": True,
         "query": "from:indeedemail.com",
         "ingestion_provider": "INDEED",
+        "authorized_owner_sub": "owner-a",
     }
 
 

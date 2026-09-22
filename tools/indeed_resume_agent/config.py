@@ -20,6 +20,7 @@ class AgentConfig:
     heartbeat_interval_seconds: float = 120.0
     idle_poll_seconds: float = 10.0
     max_pdf_bytes: int = 15 * 1024 * 1024
+    diagnostic_screenshots: bool = False
 
 
 def _env_float(env: Mapping[str, str], key: str, default: float) -> float:
@@ -30,6 +31,17 @@ def _env_float(env: Mapping[str, str], key: str, default: float) -> float:
     if value <= 0:
         raise ValueError(f"{key} must be greater than zero")
     return value
+
+
+def _env_bool(env: Mapping[str, str], key: str, default: bool) -> bool:
+    raw = str(env.get(key, "")).strip().casefold()
+    if not raw:
+        return default
+    if raw in {"1", "true", "yes", "on"}:
+        return True
+    if raw in {"0", "false", "no", "off"}:
+        return False
+    raise ValueError(f"{key} must be a boolean")
 
 
 def _normalize_api_base_url(raw: str) -> str:
@@ -78,5 +90,10 @@ def load_config(*, environ: Mapping[str, str] | None = None) -> AgentConfig:
         ),
         idle_poll_seconds=_env_float(
             env, "ASIATI_RESUME_AGENT_IDLE_POLL_SECONDS", 10.0
+        ),
+        diagnostic_screenshots=_env_bool(
+            env,
+            "ASIATI_RESUME_AGENT_DIAGNOSTIC_SCREENSHOTS",
+            False,
         ),
     )

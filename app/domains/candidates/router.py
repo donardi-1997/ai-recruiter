@@ -15,6 +15,7 @@ from app.domains.candidates.exceptions import (
 )
 from app.domains.candidates.schemas import ApplicationStatusRequest
 from app.domains.jobs.schemas import AssignCandidatesRequest
+from app.infrastructure.imports.documents import MAX_DOCUMENT_BYTES
 
 logger = logging.getLogger(__name__)
 
@@ -223,21 +224,26 @@ async def upload_candidates_bulk(
     errors = []
 
     for upload in files:
+        public_filename = str(upload.filename or "").replace("\\", "/").rsplit("/", 1)[-1]
         try:
-            file_content = await upload.read()
-            if not file_content:
+            file_content = await upload.read(MAX_DOCUMENT_BYTES + 1)
+            if len(file_content) > MAX_DOCUMENT_BYTES:
                 errors.append(
                     {
-                        "original_filename": upload.filename,
-                        "error": "Empty file",
+                        "original_filename": public_filename,
+                        "error": "El archivo supera el limite de 15 MB.",
                     }
                 )
                 continue
 
+            safe_filename = service.validate_legacy_candidate_pdf(
+                original_filename=public_filename,
+                file_content=file_content,
+            )
             candidate, indexing = service.create_and_index_candidate(
                 db,
                 owner_sub=_user["sub"],
-                original_filename=upload.filename,
+                original_filename=safe_filename,
                 file_content=file_content,
             )
 
@@ -245,23 +251,46 @@ async def upload_candidates_bulk(
                 {
                     "candidate_id": candidate.id,
                     "name": candidate.name,
-                    "original_filename": upload.filename,
+                    "original_filename": public_filename,
                     "ingestion_status": indexing.get("status", "UNKNOWN"),
                     "ingestion_job_id": indexing.get("ingestion_job_id"),
-                    "error": indexing.get("error"),
+                    "error": (
+                        "No fue posible indexar el CV."
+                        if indexing.get("error")
+                        else None
+                    ),
+                }
+            )
+        except service.LegacyCandidateUploadError as exc:
+            logger.info(
+                "Legacy candidate upload rejected for %s: %s",
+                public_filename,
+                exc,
+            )
+            code = str(exc)
+            public_error = {
+                "LEGACY_UPLOAD_EMPTY": "El archivo esta vacio.",
+                "LEGACY_UPLOAD_TOO_LARGE": "El archivo supera el limite de 15 MB.",
+                "LEGACY_UPLOAD_PDF_ONLY": "Esta ruta solo admite archivos PDF.",
+                "LEGACY_UPLOAD_INVALID_PDF": "El archivo PDF no es valido.",
+            }.get(code, "El archivo no es valido.")
+            errors.append(
+                {
+                    "original_filename": public_filename,
+                    "error": public_error,
                 }
             )
         except Exception as exc:
             logger.error(
-                "Error processing %s: %s",
-                upload.filename,
+                "Error processing legacy candidate upload %s: %s",
+                public_filename,
                 exc,
                 exc_info=True,
             )
             errors.append(
                 {
-                    "original_filename": upload.filename,
-                    "error": str(exc),
+                    "original_filename": public_filename,
+                    "error": "No fue posible procesar el CV.",
                 }
             )
 

@@ -11,4 +11,4 @@ class ImportUploadRequest(BaseModel):
 
 class CreateImportBatchRequest(BaseModel):
     job_id: str = Field(min_length=1)
-    uploads: list[ImportUploadRequest] = Field(min_length=1)
+    uploads: list[ImportUploadRequest] = Field(min_length=1, max_length=500)

@@ -23,12 +23,25 @@ def _translate(exc: Exception) -> HTTPException:
         ),
     ):
         return HTTPException(status_code=503, detail=str(exc))
+    if isinstance(exc, gmail_integration.GmailOAuthOwnershipError):
+        return HTTPException(
+            status_code=403,
+            detail="No tienes permisos para administrar la conexion corporativa de Gmail.",
+        )
     if isinstance(exc, gmail_integration.GmailUnsafeConfiguration):
-        return HTTPException(status_code=409, detail=str(exc))
+        return HTTPException(status_code=409, detail="La configuracion de Gmail no es segura.")
     if isinstance(exc, gmail_integration.GmailOAuthStateError):
         return HTTPException(status_code=400, detail="Invalid or expired Gmail OAuth state.")
     if isinstance(exc, gmail_integration.GmailRemoteError):
-        return HTTPException(status_code=502, detail=str(exc))
+        if str(exc).startswith("GMAIL_TOKEN_REFRESH_REJECTED"):
+            return HTTPException(
+                status_code=502,
+                detail="La conexion de Gmail expiro. Vuelve a conectarla.",
+            )
+        return HTTPException(
+            status_code=502,
+            detail="Gmail no pudo completar la operacion. Intenta nuevamente.",
+        )
     return HTTPException(status_code=500, detail="Error interno del servidor.")
 
 
@@ -43,8 +56,8 @@ def _frontend_redirect(outcome: str) -> str:
 
 
 @router.get("/api/integrations/gmail/status")
-def gmail_status(_user: dict = Depends(get_current_user)):
-    return gmail_integration.integration_status()
+def gmail_status(user: dict = Depends(get_current_user)):
+    return gmail_integration.integration_status(owner_sub=user["sub"])
 
 
 @router.get("/api/integrations/gmail/oauth/start")
@@ -146,8 +159,8 @@ def gmail_retry_active_archived_test(
 
 
 @router.delete("/api/integrations/gmail")
-def gmail_disconnect(_user: dict = Depends(get_current_user)):
+def gmail_disconnect(user: dict = Depends(get_current_user)):
     try:
-        return gmail_integration.disconnect_oauth()
+        return gmail_integration.disconnect_oauth(owner_sub=user["sub"])
     except Exception as exc:
         raise _translate(exc)

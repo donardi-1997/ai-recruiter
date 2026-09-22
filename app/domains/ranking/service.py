@@ -118,8 +118,7 @@ def recalculate_ranking(
 
                     if evaluation.status == "FAILED":
                         failed_count += 1
-                        error_msg = internal_error or evaluation.error_message or "EVALUATION_FAILED"
-                        failures.append({"candidate_id": candidate.id, "error": error_msg})
+                        failures.append({"candidate_id": candidate.id, "error": FAILED_EVALUATION_PUBLIC_MESSAGE})
                     else:
                         evaluated_count += 1
 
@@ -132,7 +131,7 @@ def recalculate_ranking(
                     )
 
                     failed_count += 1
-                    failures.append({"candidate_id": candidate.id, "error": str(exc)})
+                    failures.append({"candidate_id": candidate.id, "error": FAILED_EVALUATION_PUBLIC_MESSAGE})
 
                     evaluation = evaluations_repository.create_evaluation(
                         db,
@@ -144,7 +143,7 @@ def recalculate_ranking(
                         strengths=[],
                         gaps=[],
                         status="FAILED",
-                        error_message=str(exc),
+                        error_message="EVALUATION_INTERNAL_ERROR",
                     )
             else:
                 evaluated_count += 1
@@ -268,7 +267,7 @@ def materialize_ranking_from_evaluations(
                 failed_count += 1
                 failures.append({
                     "candidate_id": candidate.id,
-                    "error": evaluation.error_message or "EVALUATION_FAILED",
+                    "error": FAILED_EVALUATION_PUBLIC_MESSAGE,
                 })
             else:
                 effective_status = "PENDING"

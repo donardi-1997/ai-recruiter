@@ -1,6 +1,6 @@
 // eslint-disable-next-line no-unused-vars
 import React from "react";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 
 import api from "../api/client";
@@ -16,6 +16,8 @@ function Ranking() {
   const [requirements, setRequirements] = useState([]);
   const [analysisLoading, setAnalysisLoading] = useState(false);
   const [requirementsLoading, setRequirementsLoading] = useState(false);
+  const [analysisError, setAnalysisError] = useState("");
+  const [requirementsError, setRequirementsError] = useState("");
 
   const [minScore, setMinScore] = useState(0);
   const [maxScore, setMaxScore] = useState(100);
@@ -35,6 +37,8 @@ function Ranking() {
   const [rankingBaseTotal, setRankingBaseTotal] = useState(0);
   const [rankingLoadedScope, setRankingLoadedScope] = useState(null);
   const [rankingMessage, setRankingMessage] = useState("");
+  const rankingAbortRef = useRef(null);
+  const analysisAbortRef = useRef(null);
 
   const [rankingInfo, setRankingInfo] = useState({
     total: 0,
@@ -78,14 +82,21 @@ function Ranking() {
         setSelectedJob(firstJobId);
         await loadRanking(1, pageSize, firstJobId, rankingScope);
       }
-    } catch (error) {
-      console.error("ERROR LOADING JOBS:", error.response?.data || error);
+    } catch {
+      setActionFeedback({
+        type: "error",
+        message: "No fue posible cargar las vacantes.",
+      });
     }
   }
 
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect
     loadJobs();
+    return () => {
+      rankingAbortRef.current?.abort();
+      analysisAbortRef.current?.abort();
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -126,8 +137,12 @@ async function loadRanking(
       return { ok: false, data: null, candidates: [], scopeMismatch: false };
     }
 
+    rankingAbortRef.current?.abort();
+    const controller = new AbortController();
+    rankingAbortRef.current = controller;
+    setLoading(true);
+
     try {
-      setLoading(true);
       const params = {
         min_score: minScore,
         max_score: maxScore,
@@ -137,7 +152,10 @@ async function loadRanking(
       };
       if (targetRecommendation) params.recommendation = targetRecommendation;
 
-      const response = await api.get(`/jobs/${targetJob}/ranking`, { params });
+      const response = await api.get(`/jobs/${targetJob}/ranking`, {
+        params,
+        signal: controller.signal,
+      });
       const data = response.data;
       const candidates = data.candidates || data.ranking || data.items || [];
 
@@ -199,7 +217,9 @@ async function loadRanking(
         scopeMismatch: false,
       };
     } catch (error) {
-      console.error("ERROR LOADING RANKING:", error.response?.data || error);
+      if (error?.code === "ERR_CANCELED") {
+        return { ok: false, data: null, candidates: [], scopeMismatch: false, cancelled: true };
+      }
       setActionFeedback({
         type: "error",
         message:
@@ -208,7 +228,10 @@ async function loadRanking(
       });
       return { ok: false, data: null, candidates: [], scopeMismatch: false };
     } finally {
-      setLoading(false);
+      if (rankingAbortRef.current === controller) {
+        rankingAbortRef.current = null;
+        setLoading(false);
+      }
     }
 }
 
@@ -284,13 +307,6 @@ async function evaluateCandidates() {
           message: `Evaluación completada: ${result.evaluated} candidatos procesados y ${result.failed} con error.`,
         });
       } else if (refreshed.data.ranking_total === 0 || refreshed.data.total === 0) {
-        console.error("EVALUATE: POST reported candidates but GET returned empty", {
-          requestedScope: rankingScope,
-          postTotalCandidates: result.total_candidates,
-          rankingScope: refreshed.data.ranking_scope,
-          rankingTotal: refreshed.data.ranking_total,
-          scopeMismatch: refreshed.scopeMismatch,
-        });
         setActionFeedback({
           type: "error",
           message:
@@ -303,10 +319,6 @@ async function evaluateCandidates() {
         });
       }
     } catch (error) {
-      console.error(
-        "ERROR EVALUATING CANDIDATES:",
-        error.response?.data || error,
-      );
       setActionFeedback({
         type: "error",
         message:
@@ -368,10 +380,6 @@ async function refreshRanking() {
         message: "Ranking actualizado.",
       });
     } catch (error) {
-      console.error(
-        "ERROR REFRESHING RANKING:",
-        error.response?.data || error,
-      );
       setActionFeedback({
         type: "error",
         message:
@@ -452,24 +460,10 @@ async function recalculateRanking() {
               "El ranking se procesó, pero no fue posible cargar los resultados. Actualiza el ranking o intenta nuevamente.",
           });
         }
-        console.error("RECALCULATE: POST succeeded but GET failed", {
-          requestedScope: rankingScope,
-          postTotalCandidates: result.total_candidates,
-          rankingScope: refreshed.data?.ranking_scope,
-          rankingTotal: refreshed.data?.ranking_total,
-          scopeMismatch: refreshed.scopeMismatch,
-        });
         return;
       }
 
       if (result.total_candidates > 0 && (refreshed.data.ranking_total === 0 || refreshed.data.total === 0)) {
-        console.error("RECALCULATE: POST reported candidates but GET returned empty", {
-          requestedScope: rankingScope,
-          postTotalCandidates: result.total_candidates,
-          rankingScope: refreshed.data.ranking_scope,
-          rankingTotal: refreshed.data.ranking_total,
-          scopeMismatch: refreshed.scopeMismatch,
-        });
         setActionFeedback({
           type: "error",
           message:
@@ -499,10 +493,6 @@ async function recalculateRanking() {
         });
       }
     } catch (error) {
-      console.error(
-        "ERROR RECALCULATING RANKING:",
-        error.response?.data || error,
-      );
       setActionFeedback({
         type: "error",
         message:
@@ -586,39 +576,55 @@ async function recalculateRanking() {
   // ============================================================
 
   async function openAnalysis(candidate) {
+    analysisAbortRef.current?.abort();
+    const controller = new AbortController();
+    analysisAbortRef.current = controller;
+
     setSelectedCandidate(candidate);
     setAnalysis(null);
     setRequirements([]);
+    setAnalysisError("");
+    setRequirementsError("");
+    setAnalysisLoading(true);
+    setRequirementsLoading(true);
 
-    try {
-      setAnalysisLoading(true);
-      const analysisResponse = await api.get(
+    const [analysisResult, requirementsResult] = await Promise.allSettled([
+      api.get(
         `/jobs/${selectedJob}/candidates/${candidate.candidate_id}/explanation`,
-      );
-      setAnalysis(analysisResponse.data);
-    } catch (error) {
-      console.error("ERROR ANALYSIS:", error.response?.data || error);
-    } finally {
-      setAnalysisLoading(false);
+        { signal: controller.signal },
+      ),
+      api.get(
+        `/jobs/${selectedJob}/candidates/${candidate.candidate_id}/requirements`,
+        { signal: controller.signal },
+      ),
+    ]);
+
+    if (controller.signal.aborted || analysisAbortRef.current !== controller) return;
+
+    if (analysisResult.status === "fulfilled") {
+      setAnalysis(analysisResult.value.data);
+    } else if (analysisResult.reason?.code !== "ERR_CANCELED") {
+      setAnalysisError("No fue posible cargar el análisis del candidato.");
     }
 
-    try {
-      setRequirementsLoading(true);
-      const requirementsResponse = await api.get(
-        `/jobs/${selectedJob}/candidates/${candidate.candidate_id}/requirements`,
-      );
-      setRequirements(requirementsResponse.data.requirements || []);
-    } catch (error) {
-      console.error("ERROR REQUIREMENTS:", error.response?.data || error);
-    } finally {
-      setRequirementsLoading(false);
+    if (requirementsResult.status === "fulfilled") {
+      setRequirements(requirementsResult.value.data.requirements || []);
+    } else if (requirementsResult.reason?.code !== "ERR_CANCELED") {
+      setRequirementsError("No fue posible cargar los requisitos evaluados.");
     }
+
+    setAnalysisLoading(false);
+    setRequirementsLoading(false);
   }
 
   function closeModal() {
+    analysisAbortRef.current?.abort();
+    analysisAbortRef.current = null;
     setSelectedCandidate(null);
     setAnalysis(null);
     setRequirements([]);
+    setAnalysisError("");
+    setRequirementsError("");
   }
 
   // ============================================================
@@ -1111,7 +1117,8 @@ async function recalculateRanking() {
             <div className="ranking-modal-section">
               <h3>Requisitos evaluados</h3>
               {requirementsLoading && <p className="muted">Cargando requisitos...</p>}
-              {!requirementsLoading && requirements.length === 0 && <p className="muted">No hay requisitos disponibles.</p>}
+              {requirementsError && <p className="muted" role="alert">{requirementsError}</p>}
+              {!requirementsLoading && !requirementsError && requirements.length === 0 && <p className="muted">No hay requisitos disponibles.</p>}
               {requirements.map((req, i) => (
                 <div key={i} className="ranking-modal-requirement">
                   <strong>{req.requirement}</strong>
@@ -1128,6 +1135,7 @@ async function recalculateRanking() {
             <div className="ranking-modal-section">
               <h3>Análisis IA</h3>
               {analysisLoading && <p className="muted">Generando análisis...</p>}
+              {analysisError && <p className="muted" role="alert">{analysisError}</p>}
               {analysis && <p style={{ lineHeight: 1.6, color: "var(--ink-soft)" }}>{analysis.explanation || analysis.summary || analysis.analysis}</p>}
             </div>
 

@@ -52,6 +52,36 @@ describe("Gmail corporate integration", () => {
     expect(screen.getByRole("button", { name: "Conectar Gmail" })).toBeDisabled();
   });
 
+  it("shows a read-only Gmail state to non-owners", async () => {
+    api.get.mockResolvedValueOnce({
+      data: {
+        enabled: true,
+        configured: true,
+        oauth_configured: true,
+        connected: true,
+        connected_email: null,
+        manageable: false,
+        provider: "INDEED",
+        safe_filter: true,
+      },
+    });
+
+    renderPage();
+
+    expect(
+      await screen.findByText("Cuenta corporativa conectada"),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(/administrada por otro usuario autorizado/i),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Sincronizar ahora" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Desconectar" }),
+    ).not.toBeInTheDocument();
+  });
+
   it("starts OAuth from the authenticated app and redirects to Google", async () => {
     const openSpy = vi.spyOn(window, "open").mockImplementation(() => null);
     api.get

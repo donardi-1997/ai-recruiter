@@ -2,7 +2,13 @@
 
 from datetime import datetime
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
+
+
+MAX_JOB_TITLE_CHARS = 200
+MAX_JOB_DESCRIPTION_CHARS = 20_000
+MAX_PROFILE_ITEMS = 100
+MAX_PROFILE_ITEM_CHARS = 1_000
 
 
 class EvaluationProfile(BaseModel):
@@ -10,25 +16,45 @@ class EvaluationProfile(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    required_technologies: list[str] = Field(default_factory=list)
-    preferred_technologies: list[str] = Field(default_factory=list)
-    required_certifications: list[str] = Field(default_factory=list)
-    preferred_certifications: list[str] = Field(default_factory=list)
+    required_technologies: list[str] = Field(default_factory=list, max_length=MAX_PROFILE_ITEMS)
+    preferred_technologies: list[str] = Field(default_factory=list, max_length=MAX_PROFILE_ITEMS)
+    required_certifications: list[str] = Field(default_factory=list, max_length=MAX_PROFILE_ITEMS)
+    preferred_certifications: list[str] = Field(default_factory=list, max_length=MAX_PROFILE_ITEMS)
     minimum_years_experience: float | None = Field(default=None, ge=0)
-    specific_experience: list[str] = Field(default_factory=list)
-    responsibilities: list[str] = Field(default_factory=list)
-    domain_knowledge: list[str] = Field(default_factory=list)
-    education: list[str] = Field(default_factory=list)
-    languages: list[str] = Field(default_factory=list)
-    technical_competencies: list[str] = Field(default_factory=list)
-    assumptions_to_validate: list[str] = Field(default_factory=list)
+    specific_experience: list[str] = Field(default_factory=list, max_length=MAX_PROFILE_ITEMS)
+    responsibilities: list[str] = Field(default_factory=list, max_length=MAX_PROFILE_ITEMS)
+    domain_knowledge: list[str] = Field(default_factory=list, max_length=MAX_PROFILE_ITEMS)
+    education: list[str] = Field(default_factory=list, max_length=MAX_PROFILE_ITEMS)
+    languages: list[str] = Field(default_factory=list, max_length=MAX_PROFILE_ITEMS)
+    technical_competencies: list[str] = Field(default_factory=list, max_length=MAX_PROFILE_ITEMS)
+    assumptions_to_validate: list[str] = Field(default_factory=list, max_length=MAX_PROFILE_ITEMS)
+
+    @field_validator(
+        "required_technologies",
+        "preferred_technologies",
+        "required_certifications",
+        "preferred_certifications",
+        "specific_experience",
+        "responsibilities",
+        "domain_knowledge",
+        "education",
+        "languages",
+        "technical_competencies",
+        "assumptions_to_validate",
+    )
+    @classmethod
+    def bound_profile_items(cls, values: list[str]) -> list[str]:
+        for value in values:
+            if len(str(value)) > MAX_PROFILE_ITEM_CHARS:
+                raise ValueError("profile item too long")
+        return values
 
 
 class JobEnrichmentRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    title: str
-    description: str | None = None
+    title: str = Field(min_length=1, max_length=MAX_JOB_TITLE_CHARS)
+    description: str | None = Field(default=None, max_length=MAX_JOB_DESCRIPTION_CHARS)
     country_code: str | None = None
     city: str | None = None
     employment_type: str | None = None
@@ -36,12 +62,12 @@ class JobEnrichmentRequest(BaseModel):
 
 
 class JobEnrichmentProposal(EvaluationProfile):
-    improved_description: str
+    improved_description: str = Field(min_length=1, max_length=MAX_JOB_DESCRIPTION_CHARS)
 
 
 class CreateJobRequest(BaseModel):
-    title: str
-    description: str | None = None
+    title: str = Field(min_length=1, max_length=MAX_JOB_TITLE_CHARS)
+    description: str | None = Field(default=None, max_length=MAX_JOB_DESCRIPTION_CHARS)
     country_code: str | None = None
     city: str | None = None
     employment_type: str | None = None
@@ -51,8 +77,8 @@ class CreateJobRequest(BaseModel):
 
 
 class UpdateJobRequest(BaseModel):
-    title: str | None = None
-    description: str | None = None
+    title: str | None = Field(default=None, min_length=1, max_length=MAX_JOB_TITLE_CHARS)
+    description: str | None = Field(default=None, max_length=MAX_JOB_DESCRIPTION_CHARS)
     country_code: str | None = None
     city: str | None = None
     employment_type: str | None = None

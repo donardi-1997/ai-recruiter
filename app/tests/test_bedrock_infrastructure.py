@@ -189,12 +189,12 @@ class TestCleanJson:
 
     def test_missing_opening_brace(self):
         from app.infrastructure.bedrock.parser import clean_json
-        with pytest.raises(ValueError, match="No se encontr"):
+        with pytest.raises(ValueError, match="MODEL_JSON_OBJECT_NOT_FOUND"):
             clean_json("no json here")
 
     def test_missing_closing_brace(self):
         from app.infrastructure.bedrock.parser import clean_json
-        with pytest.raises(ValueError, match="El JSON est"):
+        with pytest.raises(ValueError, match="MODEL_JSON_INCOMPLETE"):
             clean_json('{"a":1')
 
 
@@ -236,19 +236,38 @@ class TestInvokeJsonPrompt:
         assert mock_chain.invoke.call_count == 2
 
 
-def test_invalid_both_attempts():
-    """Invalid first response preserves current clean_json error contract."""
+def test_invalid_both_attempts_retry_and_never_expose_model_content():
     mock_chain = MagicMock()
     mock_resp1 = MagicMock()
-    mock_resp1.content = '{"invalid": "json"'
-    mock_chain.invoke.return_value = mock_resp1
+    mock_resp1.content = 'candidate-secret-one without json'
+    mock_resp2 = MagicMock()
+    mock_resp2.content = '{"candidate-secret-two":'
+    mock_chain.invoke.side_effect = [mock_resp1, mock_resp2]
 
     from app.infrastructure.bedrock.parser import invoke_json_prompt
 
-    with pytest.raises(ValueError, match="incompleto"):
+    with pytest.raises(ValueError, match="MODEL_JSON_INVALID_AFTER_RETRY:test") as exc:
         invoke_json_prompt(mock_chain, {"input": "test"}, "test")
 
-    assert mock_chain.invoke.call_count == 1
+    assert mock_chain.invoke.call_count == 2
+    assert "candidate-secret-one" not in str(exc.value)
+    assert "candidate-secret-two" not in str(exc.value)
+
+
+def test_missing_brace_first_attempt_can_recover_on_retry():
+    mock_chain = MagicMock()
+    first = MagicMock()
+    first.content = '{"incomplete": true'
+    second = MagicMock()
+    second.content = '{"result": "ok"}'
+    mock_chain.invoke.side_effect = [first, second]
+
+    from app.infrastructure.bedrock.parser import invoke_json_prompt
+
+    assert invoke_json_prompt(mock_chain, {"input": "test"}, "test") == {
+        "result": "ok"
+    }
+    assert mock_chain.invoke.call_count == 2
 
 
 # ============================================================
@@ -373,18 +392,157 @@ def test_no_results_returns_failed(monkeypatch):
 # TEST GROUP 12 — NO REQUIREMENTS CONTRACT
 # ============================================================
 
-def test_no_requirements_returns_low_match(monkeypatch):
-    """No explicit requirements behavior is covered by evaluation contracts."""
-    import app.infrastructure.bedrock.clients as clients_module
+class _PromptStub:
+    def __init__(self, name):
+        self.name = name
 
-    mock_client = MagicMock()
-    mock_client.retrieve.return_value = {
-        "retrievalResults": [{"content": {"text": "Some CV content"}}]
-    }
-    monkeypatch.setattr(clients_module, "get_bedrock_agent_runtime", lambda: mock_client)
+    def __or__(self, _other):
+        return self.name
 
+
+def test_no_requirements_returns_failed_not_low_match(monkeypatch):
     import app.infrastructure.bedrock.evaluator as evaluator_module
-    assert callable(evaluator_module.get_llm)
+
+    monkeypatch.setattr(
+        evaluator_module,
+        "REQUIREMENT_EXTRACTION_PROMPT",
+        _PromptStub("extract"),
+    )
+    monkeypatch.setattr(evaluator_module, "get_llm", lambda: object())
+    monkeypatch.setattr(
+        evaluator_module,
+        "invoke_json_prompt",
+        lambda chain, payload, description: {"requirements": []},
+    )
+
+    result = evaluator_module.evaluate_candidate(
+        candidate_id="cand-1",
+        job_description="Vacante ambigua sin requisitos verificables",
+        results=[{"content": {"text": "Some CV content"}}],
+    )
+
+    assert result["status"] == "FAILED"
+    assert result["recommendation"] == "EVALUATION_FAILED"
+    assert result["error_message"] == "JOB_REQUIREMENTS_NOT_FOUND"
+    assert result["match_score"] == 0
+
+
+def test_positive_match_without_evidence_is_downgraded_to_missing(monkeypatch):
+    import app.infrastructure.bedrock.evaluator as evaluator_module
+
+    monkeypatch.setattr(
+        evaluator_module,
+        "REQUIREMENT_EXTRACTION_PROMPT",
+        _PromptStub("extract"),
+    )
+    monkeypatch.setattr(
+        evaluator_module,
+        "CANDIDATE_EVALUATION_PROMPT",
+        _PromptStub("evaluate"),
+    )
+    monkeypatch.setattr(evaluator_module, "get_llm", lambda: object())
+
+    def fake_invoke(chain, payload, description):
+        if chain == "extract":
+            return {"requirements": ["Python", "AWS"]}
+        assert chain == "evaluate"
+        return {
+            "requirements": [
+                {
+                    "requirement": "Python",
+                    "status": "MATCH",
+                    "evidence": "",
+                },
+                {
+                    "requirement": "AWS",
+                    "status": "MATCH",
+                    "evidence": "Implementó servicios productivos sobre AWS.",
+                },
+            ]
+        }
+
+    monkeypatch.setattr(evaluator_module, "invoke_json_prompt", fake_invoke)
+
+    result = evaluator_module.evaluate_candidate(
+        candidate_id="cand-1",
+        job_description="Python y AWS son requisitos explícitos.",
+        results=[
+            {
+                "content": {
+                    "text": (
+                        "Implementó servicios productivos sobre AWS. "
+                        "No hay evidencia de Python."
+                    )
+                }
+            }
+        ],
+    )
+
+    assert result["match_score"] == 50
+    assert result["recommendation"] == "PARTIAL_MATCH"
+    assert result["requirements"] == [
+        {"requirement": "Python", "status": "MISSING", "evidence": None},
+        {
+            "requirement": "AWS",
+            "status": "MATCH",
+            "evidence": "Implementó servicios productivos sobre AWS.",
+        },
+    ]
+    assert result["strengths"] == ["AWS"]
+    assert result["gaps"] == ["Python"]
+
+
+def test_hallucinated_positive_evidence_does_not_inflate_score(monkeypatch):
+    import app.infrastructure.bedrock.evaluator as evaluator_module
+
+    monkeypatch.setattr(
+        evaluator_module,
+        "REQUIREMENT_EXTRACTION_PROMPT",
+        _PromptStub("extract"),
+    )
+    monkeypatch.setattr(
+        evaluator_module,
+        "CANDIDATE_EVALUATION_PROMPT",
+        _PromptStub("evaluate"),
+    )
+    monkeypatch.setattr(evaluator_module, "get_llm", lambda: object())
+
+    def fake_invoke(chain, payload, description):
+        if chain == "extract":
+            return {"requirements": ["Kubernetes"]}
+        return {
+            "requirements": [
+                {
+                    "requirement": "Kubernetes",
+                    "status": "MATCH",
+                    "evidence": "Administró clusters Kubernetes en producción.",
+                }
+            ]
+        }
+
+    monkeypatch.setattr(evaluator_module, "invoke_json_prompt", fake_invoke)
+
+    result = evaluator_module.evaluate_candidate(
+        candidate_id="cand-1",
+        job_description="Kubernetes",
+        results=[
+            {
+                "content": {
+                    "text": "Experiencia en Python y APIs REST."
+                }
+            }
+        ],
+    )
+
+    assert result["match_score"] == 0
+    assert result["recommendation"] == "LOW_MATCH"
+    assert result["requirements"] == [
+        {
+            "requirement": "Kubernetes",
+            "status": "MISSING",
+            "evidence": None,
+        }
+    ]
 
 
 # ============================================================

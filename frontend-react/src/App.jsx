@@ -13,7 +13,7 @@ import Integrations from "./pages/Integrations";
 import Layout from "./components/Layout";
 import Register from "./auth/Register";
 
-import api from "./api/client";
+import api, { clearAccessToken, getAccessToken, refreshAccessToken } from "./api/client";
 import { ThemeProvider } from "./context/ThemeContext";
 
 function ProtectedRoute({ children }) {
@@ -22,14 +22,11 @@ function ProtectedRoute({ children }) {
 
   useEffect(() => {
     async function checkAuth() {
-      let token = localStorage.getItem("access_token");
+      let token = getAccessToken();
 
       if (!token) {
         try {
-          const response = await api.post("/auth/refresh");
-          token = response.data.access_token;
-          localStorage.setItem("access_token", token);
-          if (response.data.id_token) localStorage.setItem("id_token", response.data.id_token);
+          token = await refreshAccessToken();
         } catch {
           setValid(false);
           setChecking(false);
@@ -41,9 +38,7 @@ function ProtectedRoute({ children }) {
         await api.get("/auth/me");
         setValid(true);
       } catch {
-        localStorage.removeItem("access_token");
-        localStorage.removeItem("id_token");
-        localStorage.removeItem("refresh_token");
+        clearAccessToken();
         setValid(false);
       } finally {
         setChecking(false);

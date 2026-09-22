@@ -57,6 +57,53 @@ describe("CandidateDetail Indeed canonical resume", () => {
     vi.spyOn(window, "open").mockImplementation(() => null);
   });
 
+  it("keeps the profile visible when the job evaluation does not exist yet", async () => {
+    api.get.mockImplementation((url) => {
+      if (url === "/candidates/candidate-1") return Promise.resolve(candidateResponse());
+      if (url === "/jobs/job-1/candidates/candidate-1") {
+        return Promise.reject({ response: { status: 404 } });
+      }
+      if (url === "/jobs/job-1/candidates/candidate-1/integrations/indeed") {
+        return Promise.reject({ response: { status: 404 } });
+      }
+      return Promise.reject(new Error(`Unexpected URL ${url}`));
+    });
+
+    renderDetail();
+
+    await screen.findByText("Ana Perez");
+    expect(screen.getByText(/Perfil pendiente de evaluación/i)).toBeInTheDocument();
+    expect(screen.getByText(/Pendiente de evaluación para la vacante seleccionada/i)).toBeInTheDocument();
+  });
+
+  it("never renders a null score for a failed evaluation", async () => {
+    api.get.mockImplementation((url) => {
+      if (url === "/candidates/candidate-1") return Promise.resolve(candidateResponse());
+      if (url === "/jobs/job-1/candidates/candidate-1") {
+        return Promise.resolve({
+          data: {
+            status: "FAILED",
+            match_score: null,
+            recommendation: "EVALUATION_FAILED",
+            summary: "No fue posible completar la evaluación.",
+            strengths: [],
+            gaps: [],
+          },
+        });
+      }
+      if (url === "/jobs/job-1/candidates/candidate-1/integrations/indeed") {
+        return Promise.reject({ response: { status: 404 } });
+      }
+      return Promise.reject(new Error(`Unexpected URL ${url}`));
+    });
+
+    renderDetail();
+
+    await screen.findByText("Ana Perez");
+    expect(screen.getByText(/La evaluación no pudo completarse/i)).toBeInTheDocument();
+    expect(document.body).not.toHaveTextContent("null%");
+  });
+
   it("shows processing state without exposing the temporary Indeed URL", async () => {
     api.get.mockImplementation((url) => {
       if (url === "/candidates/candidate-1") return Promise.resolve(candidateResponse());

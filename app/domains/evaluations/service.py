@@ -24,6 +24,17 @@ logger = logging.getLogger(__name__)
 FAILED_EVALUATION_PUBLIC_MESSAGE = (
     "No fue posible completar la evaluación. Intenta nuevamente."
 )
+INTERNAL_EVALUATION_ERROR_CODE = "EVALUATION_INTERNAL_ERROR"
+
+
+def _safe_failure_code(value: object) -> str:
+    candidate = str(value or "").strip()
+    if (
+        3 <= len(candidate) <= 120
+        and all(character.isupper() or character.isdigit() or character == "_" for character in candidate)
+    ):
+        return candidate
+    return "EVALUATION_FAILED"
 
 
 def evaluate_candidate_for_owner(
@@ -121,7 +132,9 @@ def evaluate_candidate_for_job(
                 gaps=[],
                 requirements=[],
                 status="FAILED",
-                error_message=llm_result.get("error_message", "EVALUATION_FAILED"),
+                error_message=_safe_failure_code(
+                    llm_result.get("error_message", "EVALUATION_FAILED")
+                ),
             )
             return evaluation, True, None
 
@@ -169,6 +182,6 @@ def evaluate_candidate_for_job(
             gaps=[],
             requirements=[],
             status="FAILED",
-            error_message=internal_error,
+            error_message=INTERNAL_EVALUATION_ERROR_CODE,
         )
         return evaluation, True, internal_error

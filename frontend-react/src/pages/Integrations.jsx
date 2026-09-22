@@ -195,6 +195,7 @@ function Integrations() {
 
   const connected = Boolean(status?.connected);
   const oauthConfigured = Boolean(status?.oauth_configured);
+  const manageable = status?.manageable !== false;
 
   return (
     <section className="integrations-page">
@@ -240,7 +241,7 @@ function Integrations() {
             {connected ? (
               <div className="integration-account">
                 <span className="integration-account-label">Cuenta conectada</span>
-                <strong>{status.connected_email}</strong>
+                <strong>{status.connected_email || "Cuenta corporativa conectada"}</strong>
                 <span>
                   Proveedor de ingestión: {status.provider || "INDEED"}
                 </span>
@@ -269,6 +270,13 @@ function Integrations() {
               </div>
             )}
 
+            {!manageable && (
+              <div className="integration-alert is-warning">
+                Esta conexión corporativa está administrada por otro usuario autorizado.
+                Puedes consultar su estado, pero no modificarla ni ejecutar sincronizaciones manuales.
+              </div>
+            )}
+
             {!status?.safe_filter && (
               <div className="integration-alert is-warning">
                 La sincronización permanecerá bloqueada hasta configurar un remitente
@@ -282,7 +290,8 @@ function Integrations() {
               </div>
             )}
 
-            <div className="integration-actions">
+            {manageable && (
+              <div className="integration-actions">
               {!connected ? (
                 <button
                   type="button"
@@ -330,7 +339,8 @@ function Integrations() {
                   </button>
                 </>
               )}
-            </div>
+              </div>
+            )}
           </div>
         )}
       </article>

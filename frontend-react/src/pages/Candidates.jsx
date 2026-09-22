@@ -12,11 +12,13 @@ function Candidates() {
   const [loading, setLoading] = useState(false);
   const [selectedEvaluation, setSelectedEvaluation] = useState(null);
   const [showCreateModal, setShowCreateModal] = useState(false);
+  const [loadError, setLoadError] = useState("");
   const [searchParams] = useSearchParams();
 
   const requestedJobId = searchParams.get("job_id") || "";
 
   const loadData = useCallback(async () => {
+    setLoadError("");
     try {
       const [candidatesResponse, jobsResponse] = await Promise.all([
         api.get("/candidates"),
@@ -32,8 +34,8 @@ function Candidates() {
           : candidatesData.candidates || [],
       );
       setJobs(Array.isArray(jobsData) ? jobsData : jobsData.jobs || []);
-    } catch (error) {
-      console.error("ERROR LOADING DATA:", error);
+    } catch {
+      setLoadError("No fue posible cargar los candidatos y las vacantes.");
     }
   }, []);
 
@@ -74,13 +76,11 @@ function Candidates() {
         { job_id: jobId },
       );
 
-      console.log("EVALUATION RESPONSE:", response.data);
       setSelectedEvaluation({
         candidateId,
         evaluation: response.data,
       });
-    } catch (error) {
-      console.error("EVALUATION ERROR:", error.response?.data || error);
+    } catch {
       alert("Error evaluando candidato");
     } finally {
       setLoading(false);
@@ -119,8 +119,7 @@ function Candidates() {
       const downloadUrl = response.data.download_url;
       if (!downloadUrl) throw new Error("No se recibió URL de descarga");
       window.location.assign(downloadUrl);
-    } catch (error) {
-      console.error("DOWNLOAD ERROR:", error.response?.data || error);
+    } catch {
       alert("No fue posible descargar el CV");
     }
   }
@@ -149,7 +148,6 @@ function Candidates() {
         return updated;
       });
     } catch (error) {
-      console.error("DELETE CANDIDATE ERROR:", error.response?.data || error);
       alert(
         error.response?.data?.detail ||
           "No fue posible eliminar el candidato",
@@ -176,7 +174,6 @@ function Candidates() {
         );
       }
     } catch (error) {
-      console.error("DELETE ALL CANDIDATES ERROR:", error.response?.data || error);
       window.alert(
         error.response?.data?.detail ||
           "No fue posible eliminar los candidatos.",
@@ -265,6 +262,16 @@ function Candidates() {
           <span aria-hidden="true">＋</span>
         </button>
       </div>
+
+      {loadError && (
+        <div className="empty-state" role="alert">
+          <strong>No se pudo cargar la información</strong>
+          <p>{loadError}</p>
+          <button type="button" className="btn btn-secondary" onClick={() => void loadData()}>
+            Reintentar
+          </button>
+        </div>
+      )}
 
       <div className="section-heading candidate-section-heading">
         <div>

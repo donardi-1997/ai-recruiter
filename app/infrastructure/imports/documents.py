@@ -20,6 +20,8 @@ from app.domains.candidate_imports.rules import (
 MIB = 1024 * 1024
 MAX_DOCUMENT_BYTES = 15 * MIB
 MAX_ARCHIVE_BYTES = 500 * MIB
+MAX_DOCX_EXPANDED_BYTES = 100 * MIB
+MAX_DOCX_ENTRIES = 5000
 PDF_CONTENT_TYPE = "application/pdf"
 DOCX_CONTENT_TYPE = (
     "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
@@ -143,12 +145,46 @@ def _extract_pdf_text(data: bytes) -> str:
         raise InvalidDocument("INVALID_PDF") from exc
 
 
+def _validate_docx_container(data: bytes) -> None:
+    """Reject DOCX ZIP bombs and unsafe members before python-docx expands XML."""
+    try:
+        with zipfile.ZipFile(io.BytesIO(data), "r") as archive:
+            infos = archive.infolist()
+            if len(infos) > MAX_DOCX_ENTRIES:
+                raise DocumentTooLarge("DOCX_TOO_MANY_ENTRIES")
+
+            expanded_bytes = 0
+            names: set[str] = set()
+            for info in infos:
+                name = str(info.filename or "")
+                if _unsafe_archive_path(name):
+                    raise InvalidDocument("INVALID_DOCX_PATH")
+                if _is_symlink(info):
+                    raise InvalidDocument("INVALID_DOCX_SYMLINK")
+                if info.flag_bits & 0x1:
+                    raise InvalidDocument("ENCRYPTED_DOCX")
+                if info.is_dir():
+                    continue
+                expanded_bytes += max(0, int(info.file_size or 0))
+                if expanded_bytes > MAX_DOCX_EXPANDED_BYTES:
+                    raise DocumentTooLarge("DOCX_EXPANDED_TOO_LARGE")
+                names.add(name)
+
+            if "[Content_Types].xml" not in names or "word/document.xml" not in names:
+                raise InvalidDocument("INVALID_DOCX")
+    except (zipfile.BadZipFile, zipfile.LargeZipFile) as exc:
+        raise InvalidDocument("INVALID_DOCX") from exc
+
+
 def _extract_docx_text(data: bytes) -> str:
     from docx import Document
 
+    _validate_docx_container(data)
     try:
         document = Document(io.BytesIO(data))
         return "\n".join(paragraph.text for paragraph in document.paragraphs).strip()
+    except DocumentImportError:
+        raise
     except Exception as exc:  # python-docx wraps multiple ZIP/XML failures
         raise InvalidDocument("INVALID_DOCX") from exc
 

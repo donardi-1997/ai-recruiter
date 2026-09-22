@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import api from "../api/client";
+import api, { setAccessToken } from "../api/client";
 import BrandMark from "../components/BrandMark";
 
 function AuthBrand() {
@@ -25,8 +25,7 @@ function Login() {
 
     try {
       const { data } = await api.post("/auth/login", { email, password });
-      localStorage.setItem("access_token", data.access_token);
-      localStorage.setItem("id_token", data.id_token);
+      setAccessToken(data.access_token);
       navigate("/dashboard");
     } catch (err) {
       setError(

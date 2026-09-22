@@ -451,9 +451,9 @@ class IndeedBrowserUse:
                         "status": status,
                         "url": _safe_diagnostic_url(url),
                         "content_type": content_type[:200],
-                        "content_disposition": _safe_diagnostic_text(
-                            disposition,
-                            limit=300,
+                        "filename_extension": (
+                            os.path.splitext(_decode_filename(disposition) or "")[1]
+                            .casefold()[:16]
                         ),
                     }
                 )
@@ -862,17 +862,18 @@ class IndeedBrowserUse:
 
         state = await self._page_state(cdp)
         screenshot_saved = False
-        try:
-            shot = await cdp.cdp_client.send.Page.captureScreenshot(
-                params={"format": "png"},
-                session_id=cdp.session_id,
-            )
-            encoded = shot.get("data") if isinstance(shot, dict) else None
-            if encoded:
-                png_path.write_bytes(base64.b64decode(encoded))
-                screenshot_saved = True
-        except Exception:
-            pass
+        if self._config.diagnostic_screenshots:
+            try:
+                shot = await cdp.cdp_client.send.Page.captureScreenshot(
+                    params={"format": "png"},
+                    session_id=cdp.session_id,
+                )
+                encoded = shot.get("data") if isinstance(shot, dict) else None
+                if encoded:
+                    png_path.write_bytes(base64.b64decode(encoded))
+                    screenshot_saved = True
+            except Exception:
+                pass
 
         payload = {
             "captured_at_utc": datetime.now(timezone.utc).isoformat(),
@@ -886,6 +887,7 @@ class IndeedBrowserUse:
                 "cookies_persisted": False,
                 "authorization_headers_persisted": False,
                 "response_bodies_persisted": False,
+                "screenshots_enabled": self._config.diagnostic_screenshots,
             },
         }
         try:
@@ -1050,17 +1052,18 @@ class IndeedBrowserUse:
         png_path = diagnostics_dir / f"indeed-flow-diagnostic-{stamp}.png"
         state = await self._page_state(cdp)
         screenshot_saved = False
-        try:
-            shot = await cdp.cdp_client.send.Page.captureScreenshot(
-                params={"format": "png"},
-                session_id=cdp.session_id,
-            )
-            encoded = shot.get("data") if isinstance(shot, dict) else None
-            if encoded:
-                png_path.write_bytes(base64.b64decode(encoded))
-                screenshot_saved = True
-        except Exception:
-            pass
+        if self._config.diagnostic_screenshots:
+            try:
+                shot = await cdp.cdp_client.send.Page.captureScreenshot(
+                    params={"format": "png"},
+                    session_id=cdp.session_id,
+                )
+                encoded = shot.get("data") if isinstance(shot, dict) else None
+                if encoded:
+                    png_path.write_bytes(base64.b64decode(encoded))
+                    screenshot_saved = True
+            except Exception:
+                pass
 
         payload = {
             "captured_at_utc": datetime.now(timezone.utc).isoformat(),

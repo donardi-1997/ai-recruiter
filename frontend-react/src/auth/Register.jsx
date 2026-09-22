@@ -22,7 +22,7 @@ function Register() {
     }
     setLoading(true);
     try {
-      await api.post("/auth/register", null, { params: { email, password } });
+      await api.post("/auth/register", { email, password });
       navigate("/login", { replace: true });
     } catch (err) {
       setError(err.response?.data?.detail || err.response?.data?.error || "No fue posible crear la cuenta.");

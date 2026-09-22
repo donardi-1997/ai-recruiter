@@ -29,6 +29,10 @@ class FakeStreamContext:
         return False
 
 
+def public_resolver(host, port, type=None):
+    return [(2, 1, 6, "", ("93.184.216.34", port))]
+
+
 class FakeHTTP:
     def __init__(self, response):
         self.response = response
@@ -51,9 +55,53 @@ def test_download_rejects_non_https_before_network_call():
     fake = FakeHTTP(FakeResponse(chunks=[b"%PDF-ok"]))
 
     with pytest.raises(resumes.ResumeDownloadError) as exc:
-        resumes.download_resume("http://example.invalid/cv.pdf", "cv.pdf", http_client=fake)
+        resumes.download_resume("http://example.invalid/cv.pdf", "cv.pdf", http_client=fake, host_resolver=public_resolver)
 
     assert exc.value.code == "RESUME_URL_INVALID"
+    assert fake.calls == []
+
+
+def test_download_rejects_local_and_private_destinations_before_network_call():
+    resumes = _resumes()
+    fake = FakeHTTP(FakeResponse(chunks=[b"%PDF-ok"]))
+
+    with pytest.raises(resumes.ResumeDownloadError):
+        resumes.download_resume(
+            "https://127.0.0.1/cv.pdf",
+            "cv.pdf",
+            http_client=fake,
+            host_resolver=public_resolver,
+        )
+    with pytest.raises(resumes.ResumeDownloadError):
+        resumes.download_resume(
+            "https://metadata.internal/cv.pdf",
+            "cv.pdf",
+            http_client=fake,
+            host_resolver=lambda *args, **kwargs: [
+                (2, 1, 6, "", ("169.254.169.254", 443))
+            ],
+        )
+
+    assert fake.calls == []
+
+
+def test_download_rejects_embedded_credentials_and_nonstandard_ports():
+    resumes = _resumes()
+    fake = FakeHTTP(FakeResponse(chunks=[b"%PDF-ok"]))
+
+    for url in (
+        "https://user:secret@example.com/cv.pdf",
+        "https://example.com:8443/cv.pdf",
+    ):
+        with pytest.raises(resumes.ResumeDownloadError) as exc:
+            resumes.download_resume(
+                url,
+                "cv.pdf",
+                http_client=fake,
+                host_resolver=public_resolver,
+            )
+        assert exc.value.code == "RESUME_URL_INVALID"
+
     assert fake.calls == []
 
 
@@ -67,7 +115,7 @@ def test_download_rejects_redirect_without_following_location():
     )
 
     with pytest.raises(resumes.ResumeDownloadError) as exc:
-        resumes.download_resume("https://s3.invalid/cv.pdf?secret=x", "cv.pdf", http_client=fake)
+        resumes.download_resume("https://s3.invalid/cv.pdf?secret=x", "cv.pdf", http_client=fake, host_resolver=public_resolver)
 
     assert exc.value.code == "RESUME_DOWNLOAD_FAILED"
     assert fake.calls[0][2]["follow_redirects"] is False
@@ -88,6 +136,7 @@ def test_download_rejects_content_length_above_limit():
             "cv.pdf",
             http_client=fake,
             max_bytes=100,
+            host_resolver=public_resolver,
         )
 
     assert exc.value.code == "RESUME_TOO_LARGE"
@@ -103,6 +152,7 @@ def test_download_rejects_stream_that_crosses_limit_without_content_length():
             "cv.pdf",
             http_client=fake,
             max_bytes=100,
+            host_resolver=public_resolver,
         )
 
     assert exc.value.code == "RESUME_TOO_LARGE"
@@ -114,7 +164,7 @@ def test_download_rejects_non_pdf_magic_and_never_leaks_query_in_error():
     secret_url = "https://s3.invalid/cv.pdf?X-Amz-Signature=super-secret"
 
     with pytest.raises(resumes.ResumeDownloadError) as exc:
-        resumes.download_resume(secret_url, "cv.pdf", http_client=fake)
+        resumes.download_resume(secret_url, "cv.pdf", http_client=fake, host_resolver=public_resolver)
 
     assert exc.value.code == "RESUME_NOT_PDF"
     assert "super-secret" not in str(exc.value)
@@ -129,6 +179,7 @@ def test_download_returns_normalized_pdf_name_bytes_and_sha256():
         "https://s3.invalid/cv.pdf?sig=fake",
         "Ana Perez final.docx",
         http_client=fake,
+        host_resolver=public_resolver,
     )
 
     assert result.filename == "Ana Perez final.pdf"
