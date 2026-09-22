@@ -215,10 +215,7 @@ def create_and_index_candidate(
     original_filename: str | None,
     file_content: bytes,
 ):
-    safe_filename = validate_legacy_candidate_pdf(
-        original_filename=original_filename,
-        file_content=file_content,
-    )
+    safe_filename = _legacy_pdf_filename(original_filename)
     name = os.path.splitext(safe_filename)[0]
     candidate = candidates_repository.create_candidate(
         db,
