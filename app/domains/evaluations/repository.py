@@ -1,6 +1,7 @@
 """Evaluations repository."""
 
 from datetime import datetime, timezone
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.models import Evaluation
@@ -110,9 +111,32 @@ def create_evaluation(
         error_message=error_message,
     )
     db.add(evaluation)
-    db.commit()
-    db.refresh(evaluation)
-    return evaluation
+    try:
+        db.commit()
+        db.refresh(evaluation)
+        return evaluation
+    except IntegrityError:
+        # A concurrent evaluator may have inserted the logical row after our
+        # initial lookup. Recover that row and preserve the existing upsert
+        # semantics instead of surfacing a transient 500.
+        db.rollback()
+        existing = get_evaluation_for_job_candidate(db, job_id, candidate_id)
+        if existing is None:
+            raise
+        existing.status = status
+        existing.match_score = match_score
+        existing.recommendation = recommendation
+        existing.summary = summary
+        existing.strengths = strengths
+        existing.gaps = gaps
+        if requirements is not None:
+            existing.requirements = requirements
+        existing.error_message = error_message
+        existing.job_evaluation_version = int(job_evaluation_version)
+        existing.created_at = datetime.now(timezone.utc)
+        db.commit()
+        db.refresh(existing)
+        return existing
 
 
 def get_evaluations_for_candidate(db: Session, candidate_id: str) -> list[Evaluation]:
