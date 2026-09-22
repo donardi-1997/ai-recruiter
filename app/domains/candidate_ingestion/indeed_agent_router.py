@@ -248,8 +248,10 @@ def synchronize_resume_sources(
             db,
             owner_sub=principal.owner_sub,
         )
-    except Exception as exc:
-        raise _translate(exc)
+    except HTTPException:
+        raise
+    except Exception:
+        raise HTTPException(status_code=502, detail="RESUME_SYNC_FAILED")
 
 
 @router.get("/stats")
