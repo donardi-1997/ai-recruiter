@@ -226,8 +226,7 @@ function Integrations() {
                   {connected ? "Conectado" : "Sin conexión"}
                 </span>
               )}
-              </div>
-            )}
+            </div>
             <p>
               Lee únicamente los correos permitidos por el filtro de ingestión y procesa
               sus adjuntos PDF/DOCX como candidatos.
@@ -340,7 +339,8 @@ function Integrations() {
                   </button>
                 </>
               )}
-            </div>
+              </div>
+            )}
           </div>
         )}
       </article>
