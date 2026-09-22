@@ -21,6 +21,66 @@ function indeedLifecycle(status) {
   return status?.status?.globalStatus?.lifecycleStatus || status?.status?.lifecycleStatus || null;
 }
 
+function proposalList(values) {
+  return (Array.isArray(values) ? values : [])
+    .map((item) => String(item || "").trim())
+    .filter(Boolean);
+}
+
+function appendProposalSection(blocks, label, values) {
+  const items = proposalList(values);
+  if (!items.length) return;
+  blocks.push(`${label}\n${items.map((item) => `- ${item}`).join("\n")}`);
+}
+
+export function formatEnrichmentProposalDescription(proposal, fallbackDescription = "") {
+  const source = proposal || {};
+  const blocks = [];
+  const introduction = String(
+    source.improved_description || fallbackDescription || ""
+  ).trim();
+
+  if (introduction) blocks.push(introduction);
+
+  appendProposalSection(blocks, "Tecnologías requeridas", source.required_technologies);
+  appendProposalSection(blocks, "Tecnologías deseables", source.preferred_technologies);
+
+  appendProposalSection(
+    blocks,
+    "Certificaciones sugeridas",
+    [
+      ...proposalList(source.required_certifications),
+      ...proposalList(source.preferred_certifications),
+    ],
+  );
+
+  const experience = [];
+  if (
+    source.minimum_years_experience !== null
+    && source.minimum_years_experience !== undefined
+    && source.minimum_years_experience !== ""
+  ) {
+    experience.push(
+      `Experiencia mínima de ${source.minimum_years_experience} años.`
+    );
+  }
+  experience.push(...proposalList(source.specific_experience));
+  appendProposalSection(blocks, "Experiencia específica", experience);
+
+  appendProposalSection(blocks, "Responsabilidades", source.responsibilities);
+  appendProposalSection(blocks, "Conocimiento de dominio", source.domain_knowledge);
+  appendProposalSection(blocks, "Educación", source.education);
+  appendProposalSection(blocks, "Idiomas", source.languages);
+  appendProposalSection(blocks, "Competencias técnicas", source.technical_competencies);
+  appendProposalSection(
+    blocks,
+    "Preguntas por validar (no son requisitos de evaluación)",
+    source.assumptions_to_validate,
+  );
+
+  return blocks.join("\n\n").trim();
+}
+
 async function loadAllJobCandidates(jobId) {
   const pageSize = 100;
   let page = 1;
@@ -302,8 +362,11 @@ function Jobs() {
 
   function applyEnrichmentProposal() {
     if (!enrichmentProposal) return;
-    const { improved_description: improvedDescription, ...profile } = enrichmentProposal;
-    setDescription(improvedDescription || description);
+    const { improved_description: _improvedDescription, ...profile } = enrichmentProposal;
+    setDescription(
+      formatEnrichmentProposalDescription(enrichmentProposal, description)
+      || description
+    );
     setEvaluationProfile(profile);
     setEnrichmentProposal(null);
     setEnrichmentError("");
