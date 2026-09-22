@@ -78,6 +78,11 @@ def reconcile_existing_indeed_candidates(db, *, owner_sub: str) -> dict[str, int
     )
 
     counts = {
+        "jobs_scanned": (
+            db.query(Job)
+            .filter(Job.owner_sub == owner_sub)
+            .count()
+        ),
         "scanned": 0,
         "ready": 0,
         "provider_pending": 0,
@@ -195,6 +200,7 @@ def sync_one_page(
         "needs_review": int(gmail.get("needs_review") or 0),
         "skipped": int(gmail.get("skipped") or 0),
         "has_more": cursor.startswith(BOOTSTRAP_CURSOR_PREFIX),
+        "reconcile_jobs": reconcile["jobs_scanned"],
         "reconcile_scanned": reconcile["scanned"],
         "reconcile_ready": reconcile["ready"],
         "reconcile_provider_pending": reconcile["provider_pending"],
