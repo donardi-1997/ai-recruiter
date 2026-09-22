@@ -91,7 +91,7 @@ def login(body: LoginRequest):
         return resp
     except ClientError as e:
         error_code = e.response["Error"].get("Code", "")
-        logger.warning("Cognito login error: %s %s", error_code, e.response["Error"].get("Message"))
+        logger.warning("Cognito login error: %s", error_code)
         if error_code in ("NotAuthorizedException", "UserNotFoundException"):
             raise HTTPException(status_code=401, detail="Correo o contrasena incorrectos.")
         if error_code == "UserNotConfirmedException":
