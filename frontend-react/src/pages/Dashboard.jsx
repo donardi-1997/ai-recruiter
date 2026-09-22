@@ -34,8 +34,7 @@ function Dashboard() {
         const candidatesData = candidatesResponse.data;
         setJobs(Array.isArray(jobsData) ? jobsData : jobsData.jobs || []);
         setCandidates(Array.isArray(candidatesData) ? candidatesData : candidatesData.candidates || []);
-      } catch (error) {
-        console.error("No fue posible cargar el resumen", error);
+      } catch {
       } finally {
         setLoading(false);
       }
