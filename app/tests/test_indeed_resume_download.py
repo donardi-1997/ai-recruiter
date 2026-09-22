@@ -30,7 +30,7 @@ class FakeStreamContext:
 
 
 def public_resolver(host, port, type=None):
-    return [(2, 1, 6, "", ("203.0.113.10", port))]
+    return [(2, 1, 6, "", ("93.184.216.34", port))]
 
 
 class FakeHTTP:
