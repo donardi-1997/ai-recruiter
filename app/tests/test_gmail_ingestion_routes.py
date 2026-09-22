@@ -27,7 +27,7 @@ def test_gmail_status_never_exposes_oauth_secrets(api, monkeypatch):
     monkeypatch.setattr(
         gmail_integration,
         "integration_status",
-        lambda: {
+        lambda *, owner_sub: {
             "enabled": True,
             "configured": True,
             "provider": "INDEED",
@@ -204,4 +204,42 @@ def test_active_archived_test_uses_authenticated_owner(api, monkeypatch):
 
     assert response.status_code == 200
     assert response.json()["status"] == "NEEDS_HUMAN"
+    assert calls["owner_sub"] == principal["sub"]
+
+
+def test_gmail_status_passes_authenticated_owner(api, monkeypatch):
+    client, principal = api
+    calls = {}
+
+    def fake_status(*, owner_sub):
+        calls["owner_sub"] = owner_sub
+        return {
+            "enabled": True,
+            "configured": True,
+            "connected": True,
+            "connected_email": None,
+            "manageable": False,
+        }
+
+    monkeypatch.setattr(gmail_integration, "integration_status", fake_status)
+
+    response = client.get("/api/integrations/gmail/status")
+
+    assert response.status_code == 200
+    assert calls["owner_sub"] == principal["sub"]
+
+
+def test_gmail_disconnect_passes_authenticated_owner(api, monkeypatch):
+    client, principal = api
+    calls = {}
+
+    def fake_disconnect(*, owner_sub):
+        calls["owner_sub"] = owner_sub
+        return {"connected": False}
+
+    monkeypatch.setattr(gmail_integration, "disconnect_oauth", fake_disconnect)
+
+    response = client.delete("/api/integrations/gmail")
+
+    assert response.status_code == 200
     assert calls["owner_sub"] == principal["sub"]
