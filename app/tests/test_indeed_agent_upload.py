@@ -398,3 +398,79 @@ def test_upload_validation_rejects_invalid_content_before_storage(
     finally:
         db.close()
         engine.dispose()
+
+
+def test_immediate_dispatch_marks_event_only_after_queue_success():
+    from app.domains.candidate_ingestion import indeed_email_agent_service as service
+
+    engine, db = _db()
+    event, task = _event_task(db)
+    storage = FakeStorage()
+    sent = []
+    try:
+        claimed = service.claim_next_task(db, owner_sub="owner-1")
+        document = service.store_resume_document(
+            db,
+            owner_sub="owner-1",
+            task_id=task.id,
+            lease_token=claimed.lease_token,
+            filename="candidate.pdf",
+            content_type="application/pdf",
+            data=b"%PDF-1.7\nimmediate-dispatch",
+            storage=storage,
+        )
+
+        queued = service.dispatch_stored_resume_ingestion(
+            db,
+            owner_sub="owner-1",
+            document=document,
+            queue_sender=lambda event_id: sent.append(event_id) or "message-1",
+        )
+
+        db.refresh(event)
+        assert queued is True
+        assert sent == [event.id]
+        assert event.queue_dispatched_at is not None
+    finally:
+        db.close()
+        engine.dispose()
+
+
+def test_immediate_dispatch_failure_keeps_durable_event_repairable():
+    from app.domains.candidate_ingestion import indeed_email_agent_service as service
+
+    engine, db = _db()
+    event, task = _event_task(db)
+    storage = FakeStorage()
+    try:
+        claimed = service.claim_next_task(db, owner_sub="owner-1")
+        document = service.store_resume_document(
+            db,
+            owner_sub="owner-1",
+            task_id=task.id,
+            lease_token=claimed.lease_token,
+            filename="candidate.pdf",
+            content_type="application/pdf",
+            data=b"%PDF-1.7\nrepairable",
+            storage=storage,
+        )
+
+        def fail(_event_id):
+            raise RuntimeError("queue unavailable")
+
+        queued = service.dispatch_stored_resume_ingestion(
+            db,
+            owner_sub="owner-1",
+            document=document,
+            queue_sender=fail,
+        )
+
+        db.refresh(event)
+        db.refresh(task)
+        assert queued is False
+        assert event.status == "STORED"
+        assert event.queue_dispatched_at is None
+        assert task.status == "COMPLETED"
+    finally:
+        db.close()
+        engine.dispose()
