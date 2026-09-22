@@ -7,7 +7,7 @@ import boto3
 from botocore.exceptions import ClientError
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, field_validator
 
 from app.infrastructure.bedrock.session import get_cached_session
 
@@ -30,14 +30,28 @@ def get_admin_cognito_client():
     return get_cached_session().client("cognito-idp", region_name=AWS_REGION)
 
 
-class LoginRequest(BaseModel):
-    email: str
-    password: str
+class CredentialsRequest(BaseModel):
+    email: str = Field(min_length=3, max_length=320)
+    password: str = Field(min_length=8, max_length=256)
+
+    @field_validator("email")
+    @classmethod
+    def normalize_email(cls, value: str) -> str:
+        normalized = value.strip().casefold()
+        if normalized.count("@") != 1:
+            raise ValueError("invalid email")
+        local, domain = normalized.split("@", 1)
+        if not local or not domain or "." not in domain:
+            raise ValueError("invalid email")
+        return normalized
 
 
-class RegisterRequest(BaseModel):
-    email: str
-    password: str
+class LoginRequest(CredentialsRequest):
+    pass
+
+
+class RegisterRequest(CredentialsRequest):
+    pass
 
 
 @router.post("/login")
@@ -102,7 +116,33 @@ def register(body: RegisterRequest):
             "user_sub": response.get("UserSub"),
         }
     except ClientError as e:
-        raise HTTPException(status_code=400, detail=e.response["Error"]["Message"])
+        error = e.response.get("Error", {})
+        error_code = str(error.get("Code") or "")
+        logger.warning("Cognito registration error: %s", error_code)
+        if error_code == "UsernameExistsException":
+            raise HTTPException(
+                status_code=409,
+                detail="Ya existe una cuenta con este correo.",
+            ) from e
+        if error_code == "InvalidPasswordException":
+            raise HTTPException(
+                status_code=400,
+                detail="La contrasena no cumple los requisitos de seguridad.",
+            ) from e
+        if error_code in {"InvalidParameterException", "InvalidLambdaResponseException"}:
+            raise HTTPException(
+                status_code=400,
+                detail="Los datos de registro no son validos.",
+            ) from e
+        if error_code in {"TooManyRequestsException", "LimitExceededException"}:
+            raise HTTPException(
+                status_code=429,
+                detail="Hay demasiados intentos. Intenta nuevamente mas tarde.",
+            ) from e
+        raise HTTPException(
+            status_code=500,
+            detail="No fue posible crear la cuenta.",
+        ) from e
 
 
 @router.post("/refresh")
