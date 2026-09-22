@@ -22,6 +22,7 @@ from app.infrastructure.imports.documents import (
 from app.infrastructure.imports.storage import create_canonical_candidate_download
 from app.infrastructure.storage.candidate_documents import index_candidate_document
 
+
 class LegacyCandidateUploadError(ValueError):
     """Safe validation error for the compatibility bulk-upload endpoint."""
 
@@ -66,6 +67,21 @@ def require_job(
 
 def list_candidates(db: Session, owner_sub: str):
     return candidates_repository.list_candidates(db, owner_sub=owner_sub)
+
+
+def list_candidates_page(
+    db: Session,
+    owner_sub: str,
+    *,
+    page: int = 1,
+    page_size: int = 20,
+):
+    return candidates_repository.list_candidates_page(
+        db,
+        owner_sub=owner_sub,
+        page=page,
+        page_size=page_size,
+    )
 
 
 def list_job_candidates(
@@ -253,6 +269,7 @@ __all__ = [
     "require_candidate",
     "require_job",
     "list_candidates",
+    "list_candidates_page",
     "list_job_candidates",
     "assign_candidates",
     "set_application_status",
