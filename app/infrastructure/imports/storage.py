@@ -244,6 +244,22 @@ def write_canonical_candidate_document(
     return CanonicalWriteResult(key=key, changed=True)
 
 
+def get_canonical_candidate_document(candidate_id: str) -> dict | None:
+    """Return metadata for an existing canonical candidate CV without signing it."""
+    bucket = _require_canonical_bucket()
+    for extension in (".pdf", ".docx"):
+        key = f"{CANONICAL_PREFIX}/cv-{candidate_id}{extension}"
+        head = _head_or_none(bucket, key)
+        if head is None:
+            continue
+        return {
+            "key": key,
+            "content_type": head.get("ContentType") or _content_type_for_extension(extension),
+            "size_bytes": int(head.get("ContentLength") or 0),
+        }
+    return None
+
+
 def create_canonical_candidate_download(
     candidate_id: str,
     *,
@@ -252,19 +268,17 @@ def create_canonical_candidate_download(
     """Return a short-lived GET URL for an existing canonical candidate CV."""
     bucket = _require_canonical_bucket()
     bounded_expiry = max(60, min(int(expires_in), 3600))
+    existing = get_canonical_candidate_document(candidate_id)
+    if existing is None:
+        return None
     client = _s3_client()
-    for extension in (".pdf", ".docx"):
-        key = f"{CANONICAL_PREFIX}/cv-{candidate_id}{extension}"
-        if _head_or_none(bucket, key) is None:
-            continue
-        url = client.generate_presigned_url(
-            "get_object",
-            Params={"Bucket": bucket, "Key": key},
-            ExpiresIn=bounded_expiry,
-        )
-        return {
-            "url": url,
-            "expires_in": bounded_expiry,
-            "key": key,
-        }
-    return None
+    url = client.generate_presigned_url(
+        "get_object",
+        Params={"Bucket": bucket, "Key": existing["key"]},
+        ExpiresIn=bounded_expiry,
+    )
+    return {
+        "url": url,
+        "expires_in": bounded_expiry,
+        "key": existing["key"],
+    }
