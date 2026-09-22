@@ -1,5 +1,5 @@
 // eslint-disable-next-line no-unused-vars
-import React, { useEffect, useState, useCallback } from "react";
+import React, { useEffect, useState, useCallback, useRef } from "react";
 import { Link } from "react-router-dom";
 import api from "../api/client";
 import "./Jobs.css";
@@ -68,6 +68,7 @@ function Jobs() {
   const [deleteError, setDeleteError] = useState("");
 
   const [successMessage, setSuccessMessage] = useState("");
+  const detailsRequestRef = useRef(0);
 
   async function loadJobs() {
     try {
@@ -105,6 +106,7 @@ function Jobs() {
   }, [viewJob, deleteJobTarget]);
 
   const closeJobDetails = useCallback(() => {
+    detailsRequestRef.current += 1;
     setViewJob(null);
     setJobCandidates([]);
     setJobCandidatesError("");
@@ -119,24 +121,24 @@ function Jobs() {
         setDeleteJobTarget(null);
         setDeleteError("");
       } else if (viewJob) {
-        setViewJob(null);
-        setJobCandidates([]);
-        setJobCandidatesError("");
-        setIndeedJobStatus(null);
-        setIndeedError("");
+        closeJobDetails();
       }
     }
     document.addEventListener("keydown", handleEscape);
     return () => document.removeEventListener("keydown", handleEscape);
-  }, [deleteJobTarget, deletingJob, viewJob]);
+  }, [closeJobDetails, deleteJobTarget, deletingJob, viewJob]);
 
-  async function refreshIndeedJobStatus(job = viewJob) {
+  async function refreshIndeedJobStatus(job = viewJob, requestId = null) {
     if (!job || !indeedIntegration?.enabled || !indeedIntegration?.configured) return;
-    setIndeedError("");
+    if (requestId == null || requestId === detailsRequestRef.current) {
+      setIndeedError("");
+    }
     try {
       const { data } = await api.get(`/jobs/${job.job_id}/integrations/indeed/status`);
+      if (requestId != null && requestId !== detailsRequestRef.current) return;
       setIndeedJobStatus(data);
     } catch (requestError) {
+      if (requestId != null && requestId !== detailsRequestRef.current) return;
       if (requestError.response?.status === 404) {
         setIndeedJobStatus({ unpublished: true });
         return;
@@ -146,6 +148,9 @@ function Jobs() {
   }
 
   async function openJobDetails(job) {
+    const requestId = detailsRequestRef.current + 1;
+    detailsRequestRef.current = requestId;
+
     if (deleteJobTarget) {
       setDeleteJobTarget(null);
       setDeleteError("");
@@ -158,13 +163,19 @@ function Jobs() {
     setJobCandidatesLoading(true);
     try {
       const all = await loadAllJobCandidates(job.job_id);
+      if (requestId !== detailsRequestRef.current) return;
       setJobCandidates(all);
     } catch {
+      if (requestId !== detailsRequestRef.current) return;
       setJobCandidatesError("No fue posible cargar los candidatos de esta vacante.");
     } finally {
-      setJobCandidatesLoading(false);
+      if (requestId === detailsRequestRef.current) {
+        setJobCandidatesLoading(false);
+      }
     }
-    await refreshIndeedJobStatus(job);
+    if (requestId === detailsRequestRef.current) {
+      await refreshIndeedJobStatus(job, requestId);
+    }
   }
 
   async function publishToIndeed() {
