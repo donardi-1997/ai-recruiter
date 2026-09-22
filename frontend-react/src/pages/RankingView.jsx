@@ -1,6 +1,6 @@
 // eslint-disable-next-line no-unused-vars
 import React from "react";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 
 import api from "../api/client";
@@ -35,6 +35,8 @@ function Ranking() {
   const [rankingBaseTotal, setRankingBaseTotal] = useState(0);
   const [rankingLoadedScope, setRankingLoadedScope] = useState(null);
   const [rankingMessage, setRankingMessage] = useState("");
+  const rankingAbortRef = useRef(null);
+  const analysisAbortRef = useRef(null);
 
   const [rankingInfo, setRankingInfo] = useState({
     total: 0,
@@ -86,6 +88,10 @@ function Ranking() {
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect
     loadJobs();
+    return () => {
+      rankingAbortRef.current?.abort();
+      analysisAbortRef.current?.abort();
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -137,7 +143,13 @@ async function loadRanking(
       };
       if (targetRecommendation) params.recommendation = targetRecommendation;
 
-      const response = await api.get(`/jobs/${targetJob}/ranking`, { params });
+      rankingAbortRef.current?.abort();
+      const controller = new AbortController();
+      rankingAbortRef.current = controller;
+      const response = await api.get(`/jobs/${targetJob}/ranking`, {
+        params,
+        signal: controller.signal,
+      });
       const data = response.data;
       const candidates = data.candidates || data.ranking || data.items || [];
 
@@ -199,6 +211,9 @@ async function loadRanking(
         scopeMismatch: false,
       };
     } catch (error) {
+      if (error?.code === "ERR_CANCELED") {
+        return { ok: false, data: null, candidates: [], scopeMismatch: false, cancelled: true };
+      }
       console.error("ERROR LOADING RANKING:", error.response?.data || error);
       setActionFeedback({
         type: "error",
@@ -208,7 +223,9 @@ async function loadRanking(
       });
       return { ok: false, data: null, candidates: [], scopeMismatch: false };
     } finally {
-      setLoading(false);
+      if (!rankingAbortRef.current?.signal.aborted) {
+        setLoading(false);
+      }
     }
 }
 
@@ -586,36 +603,54 @@ async function recalculateRanking() {
   // ============================================================
 
   async function openAnalysis(candidate) {
+    analysisAbortRef.current?.abort();
+    const controller = new AbortController();
+    analysisAbortRef.current = controller;
+
     setSelectedCandidate(candidate);
     setAnalysis(null);
     setRequirements([]);
+    setAnalysisLoading(true);
+    setRequirementsLoading(true);
 
-    try {
-      setAnalysisLoading(true);
-      const analysisResponse = await api.get(
+    const [analysisResult, requirementsResult] = await Promise.allSettled([
+      api.get(
         `/jobs/${selectedJob}/candidates/${candidate.candidate_id}/explanation`,
+        { signal: controller.signal },
+      ),
+      api.get(
+        `/jobs/${selectedJob}/candidates/${candidate.candidate_id}/requirements`,
+        { signal: controller.signal },
+      ),
+    ]);
+
+    if (controller.signal.aborted || analysisAbortRef.current !== controller) return;
+
+    if (analysisResult.status === "fulfilled") {
+      setAnalysis(analysisResult.value.data);
+    } else if (analysisResult.reason?.code !== "ERR_CANCELED") {
+      console.error(
+        "ERROR ANALYSIS:",
+        analysisResult.reason?.response?.data || analysisResult.reason,
       );
-      setAnalysis(analysisResponse.data);
-    } catch (error) {
-      console.error("ERROR ANALYSIS:", error.response?.data || error);
-    } finally {
-      setAnalysisLoading(false);
     }
 
-    try {
-      setRequirementsLoading(true);
-      const requirementsResponse = await api.get(
-        `/jobs/${selectedJob}/candidates/${candidate.candidate_id}/requirements`,
+    if (requirementsResult.status === "fulfilled") {
+      setRequirements(requirementsResult.value.data.requirements || []);
+    } else if (requirementsResult.reason?.code !== "ERR_CANCELED") {
+      console.error(
+        "ERROR REQUIREMENTS:",
+        requirementsResult.reason?.response?.data || requirementsResult.reason,
       );
-      setRequirements(requirementsResponse.data.requirements || []);
-    } catch (error) {
-      console.error("ERROR REQUIREMENTS:", error.response?.data || error);
-    } finally {
-      setRequirementsLoading(false);
     }
+
+    setAnalysisLoading(false);
+    setRequirementsLoading(false);
   }
 
   function closeModal() {
+    analysisAbortRef.current?.abort();
+    analysisAbortRef.current = null;
     setSelectedCandidate(null);
     setAnalysis(null);
     setRequirements([]);
