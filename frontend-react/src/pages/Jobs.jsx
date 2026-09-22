@@ -362,7 +362,8 @@ function Jobs() {
 
   function applyEnrichmentProposal() {
     if (!enrichmentProposal) return;
-    const { improved_description: _improvedDescription, ...profile } = enrichmentProposal;
+    const profile = { ...enrichmentProposal };
+    delete profile.improved_description;
     setDescription(
       formatEnrichmentProposalDescription(enrichmentProposal, description)
       || description
