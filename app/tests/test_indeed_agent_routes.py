@@ -326,6 +326,74 @@ def test_claim_serializes_ephemeral_resume_url_and_lease(api, monkeypatch):
     }
 
 
+def test_sync_route_is_owner_scoped_and_returns_safe_summary(api, monkeypatch):
+    from app.domains.candidate_ingestion import indeed_agent_sync
+
+    client, _ = api
+    seen = {}
+
+    def fake_sync(db, *, owner_sub):
+        seen["owner_sub"] = owner_sub
+        return {
+            "mode": "INCREMENTAL",
+            "discovered": 3,
+            "created": 2,
+            "existing": 1,
+            "needs_review": 0,
+            "skipped": 0,
+            "has_more": False,
+            "reconcile_scanned": 5,
+            "reconcile_ready": 3,
+            "reconcile_provider_pending": 1,
+            "reconcile_covered": 0,
+            "reconcile_queued": 1,
+        }
+
+    monkeypatch.setattr(indeed_agent_sync, "sync_one_page", fake_sync)
+
+    response = client.post("/api/agents/indeed-resume/sync")
+
+    assert response.status_code == 200
+    assert seen["owner_sub"] == "owner-a"
+    assert response.json()["reconcile_queued"] == 1
+
+
+def test_claim_lookup_only_task_does_not_require_gmail(api):
+    client, db = api
+    event = CandidateIngestionEvent(
+        owner_sub="owner-a",
+        source="AGENT",
+        provider="INDEED",
+        source_account="resume-agent",
+        external_id="indeed-candidate-link:1",
+        status="RECEIVED",
+        raw_metadata={
+            "resume_agent_lookup_only": True,
+            "candidate_name": "Ada Candidate",
+            "job_title": "Cloud Engineer",
+        },
+    )
+    db.add(event)
+    db.flush()
+    task = IndeedEmailResumeTask(
+        owner_sub="owner-a",
+        ingestion_event_id=event.id,
+        candidate_name="Ada Candidate",
+        job_title="Cloud Engineer",
+        status="WAITING_DOWNLOAD",
+    )
+    db.add(task)
+    db.commit()
+
+    response = client.post("/api/agents/indeed-resume/claim")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["candidate_name"] == "Ada Candidate"
+    assert payload["job_title"] == "Cloud Engineer"
+    assert payload["resume_url"] == "https://employers.indeed.com/candidates"
+
+
 def test_claim_preserves_specific_parser_failure_code(api, monkeypatch):
     from app.domains.candidate_ingestion import indeed_email_agent_service as service
     from app.integrations.email_ingestion.indeed_email_parser import InvalidIndeedMessage
