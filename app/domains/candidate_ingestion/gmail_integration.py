@@ -456,6 +456,7 @@ def sync_mailbox(
     oauth_store=None,
     mailbox_client=None,
     storage=None,
+    max_results: int = 20,
 ) -> dict:
     """Run one authenticated Gmail sync without exposing OAuth credentials."""
     current = settings or get_gmail_settings()
@@ -478,15 +479,19 @@ def sync_mailbox(
 
     client = mailbox_client or GmailClient(resolved)
     try:
-        result = sync_gmail_mailbox(
-            db,
-            owner_sub=owner_sub,
-            provider=resolved.ingestion_provider,
-            mailbox_client=client,
-            allowed_senders=resolved.allowed_senders,
-            allowed_sender_domains=_sender_domains_from_query(resolved.query),
-            storage=storage,
-        )
+        sync_kwargs = {
+            "owner_sub": owner_sub,
+            "provider": resolved.ingestion_provider,
+            "mailbox_client": client,
+            "allowed_senders": resolved.allowed_senders,
+            "allowed_sender_domains": _sender_domains_from_query(resolved.query),
+            "storage": storage,
+        }
+        # Preserve the established default call contract for existing runtime
+        # integrations/tests; the Resume Agent opts into larger bounded pages.
+        if int(max_results) != 20:
+            sync_kwargs["max_results"] = max_results
+        result = sync_gmail_mailbox(db, **sync_kwargs)
         return asdict(result)
     except GmailTokenRefreshRejected as exc:
         raise GmailRemoteError(

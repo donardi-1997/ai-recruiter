@@ -27,7 +27,13 @@ _SAFE_HUMAN_CODE = re.compile(r"^(?:INDEED|RESUME)_[A-Z0-9_]{2,100}$")
 
 def build_ui_state(snapshot: WorkerSnapshot, stats: QueueStats) -> UiState:
     state = snapshot.state
-    session = "Needs attention" if state in {"WAITING_FOR_HUMAN", "LEASE_LOST", "FAILED"} else "Ready"
+    session = "Needs attention" if state in {
+        "WAITING_FOR_HUMAN",
+        "LEASE_LOST",
+        "FAILED",
+        "FULL_SYNC_ATTENTION",
+        "SYNC_FAILED",
+    } else "Ready"
     labels = {
         "IDLE": "Esperando tareas",
         "DOWNLOADING": "Descargando CV...",
@@ -47,6 +53,11 @@ def build_ui_state(snapshot: WorkerSnapshot, stats: QueueStats) -> UiState:
         "FAILED": "La tarea requiere revisión",
         "STOPPED": "Detenido",
         "ERROR": "Error de conexión con el servicio",
+        "SYNCING": "Revisando todas las vacantes y candidatos de Indeed...",
+        "SYNC_READY": "Fuentes sincronizadas. Procesando la cola completa de CV...",
+        "FULL_SYNC_COMPLETED": "Sincronización completa",
+        "FULL_SYNC_ATTENTION": "Sincronización completada con casos por revisar",
+        "SYNC_FAILED": "No fue posible preparar la sincronización completa",
     }
     status_label = labels.get(state, "Procesando")
     diagnostic_marker = " — Diagnóstico local: "
@@ -58,6 +69,8 @@ def build_ui_state(snapshot: WorkerSnapshot, stats: QueueStats) -> UiState:
         elif _SAFE_HUMAN_CODE.fullmatch(snapshot.last_error):
             status_label = snapshot.last_error
     if state == "DIAGNOSTIC_SAVED" and snapshot.last_error:
+        status_label = snapshot.last_error
+    if state in {"SYNC_READY", "FULL_SYNC_COMPLETED", "FULL_SYNC_ATTENTION"} and snapshot.last_error:
         status_label = snapshot.last_error
 
     if state in {"RETRY", "FAILED", "ERROR"} and snapshot.last_error:
@@ -157,6 +170,11 @@ def run_ui(*, worker, api, browser) -> None:
     ttk.Button(primary_buttons, text="Retry attention", command=lambda: commands.put("retry_attention")).pack(side="left", padx=(8, 0))
     ttk.Button(
         primary_buttons,
+        text="Sincronizar todo",
+        command=lambda: commands.put("sync_all"),
+    ).pack(side="left", padx=(8, 0))
+    ttk.Button(
+        primary_buttons,
         text=f"Open Indeed ({browser.browser_label})",
         command=lambda: commands.put("open"),
     ).pack(side="right")
@@ -180,6 +198,8 @@ def run_ui(*, worker, api, browser) -> None:
     def agent_loop() -> None:
         last_stats = QueueStats(0, 0, 0, 0, 0, 0)
         diagnostic_snapshot: WorkerSnapshot | None = None
+        full_sync_active = False
+        full_sync_provider_pending = 0
         try:
             while not stop_event.is_set():
                 while True:
@@ -216,6 +236,48 @@ def run_ui(*, worker, api, browser) -> None:
                                 worker.resume()
                             except Exception:
                                 pass
+                    elif command == "sync_all":
+                        if browser.diagnostic_active:
+                            continue
+                        diagnostic_snapshot = None
+                        worker.pause()
+                        syncing = WorkerSnapshot(
+                            "SYNCING",
+                            worker.snapshot.active_candidate,
+                            worker.snapshot.processed_session,
+                            None,
+                        )
+                        publish(syncing, last_stats)
+                        try:
+                            result = api.sync_all()
+                            last_stats = api.stats()
+                            full_sync_active = True
+                            full_sync_provider_pending = result.reconcile_provider_pending
+                            detail = (
+                                f"Revisión preparada: {result.reconcile_jobs} vacantes, "
+                                f"{result.reconcile_scanned} candidatos Indeed y "
+                                f"{result.discovered} mensajes auditados; "
+                                f"{result.created + result.reconcile_queued} tareas nuevas. "
+                                f"Cola pendiente: {last_stats.pending}."
+                            )
+                            diagnostic_snapshot = WorkerSnapshot(
+                                "SYNC_READY",
+                                worker.snapshot.active_candidate,
+                                worker.snapshot.processed_session,
+                                detail,
+                            )
+                            publish(diagnostic_snapshot, last_stats)
+                            diagnostic_snapshot = None
+                            worker.resume()
+                        except Exception:
+                            full_sync_active = False
+                            diagnostic_snapshot = WorkerSnapshot(
+                                "SYNC_FAILED",
+                                worker.snapshot.active_candidate,
+                                worker.snapshot.processed_session,
+                                None,
+                            )
+                            publish(diagnostic_snapshot, last_stats)
                     elif command == "retry_failed":
                         if browser.diagnostic_active:
                             continue
@@ -379,6 +441,38 @@ def run_ui(*, worker, api, browser) -> None:
                     try:
                         snapshot = worker.run_once()
                         last_stats = api.stats()
+                        if (
+                            full_sync_active
+                            and snapshot.state == "IDLE"
+                            and last_stats.pending == 0
+                            and last_stats.claimed == 0
+                            and last_stats.retry == 0
+                        ):
+                            if last_stats.needs_human or last_stats.failed or full_sync_provider_pending:
+                                detail = (
+                                    "Revisión masiva terminada con pendientes: "
+                                    f"{last_stats.needs_human} requieren intervención, "
+                                    f"{last_stats.failed} fallaron y "
+                                    f"{full_sync_provider_pending} siguen en procesamiento automático."
+                                )
+                                snapshot = WorkerSnapshot(
+                                    "FULL_SYNC_ATTENTION",
+                                    None,
+                                    worker.snapshot.processed_session,
+                                    detail,
+                                )
+                            else:
+                                detail = (
+                                    "Prueba final completada: la cola está en cero y "
+                                    f"{last_stats.completed} CV de Indeed figuran completados."
+                                )
+                                snapshot = WorkerSnapshot(
+                                    "FULL_SYNC_COMPLETED",
+                                    None,
+                                    worker.snapshot.processed_session,
+                                    detail,
+                                )
+                            full_sync_active = False
                         publish(snapshot, last_stats)
                     except Exception:
                         publish(WorkerSnapshot("ERROR", None, worker.snapshot.processed_session, None), last_stats)

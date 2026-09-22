@@ -206,6 +206,72 @@ def test_unresolved_job_keeps_candidate_and_routes_to_needs_review(db_session, m
         assert persisted.last_error_code == "JOB_UNRESOLVED"
 
 
+def test_prelinked_candidate_is_reused_for_reconciled_resume(db_session, monkeypatch):
+    event, document, job = _seed(db_session)
+    candidate = models.Candidate(
+        name="Existing Candidate",
+        email=None,
+        owner_sub="owner-1",
+        metadata_={},
+    )
+    db_session.add(candidate)
+    db_session.flush()
+    event.candidate_id = candidate.id
+    event.job_id = job.id
+    event.raw_metadata = {
+        "resume_agent_lookup_only": True,
+        "candidate_name": candidate.name,
+        "job_title": job.title,
+    }
+    db_session.commit()
+
+    monkeypatch.setattr(
+        candidate_ingestions.storage,
+        "read_staging_object",
+        lambda _key: b"pdfdata",
+    )
+    monkeypatch.setattr(
+        candidate_ingestions.documents,
+        "extract_document",
+        lambda data, filename: SimpleNamespace(
+            filename=filename,
+            display_name="Different Parsed Name",
+            email=None,
+            phone=None,
+            sha256="a" * 64,
+        ),
+    )
+    monkeypatch.setattr(
+        candidate_ingestions.candidate_identity,
+        "resolve_or_create_candidate",
+        lambda *args, **kwargs: pytest.fail("prelinked candidate must be reused"),
+    )
+    monkeypatch.setattr(
+        candidate_ingestions.storage,
+        "write_canonical_candidate_document",
+        lambda **kwargs: SimpleNamespace(
+            key=f"documents/cv-{kwargs['candidate_id']}.pdf",
+            changed=True,
+        ),
+    )
+
+    outcome = candidate_ingestions._prepare_document(db_session, event)
+
+    db_session.refresh(event)
+    db_session.refresh(document)
+    assert outcome is None
+    assert event.candidate_id == candidate.id
+    assert event.job_id == job.id
+    assert event.status == "INGESTING"
+    assert document.canonical_s3_key == f"documents/cv-{candidate.id}.pdf"
+    assignment = (
+        db_session.query(models.JobCandidate)
+        .filter_by(job_id=job.id, candidate_id=candidate.id)
+        .one()
+    )
+    assert assignment is not None
+
+
 def test_multiple_resume_documents_route_to_needs_review_without_guessing(db_session, monkeypatch):
     event, _document, _job = _seed(db_session)
     db_session.add(

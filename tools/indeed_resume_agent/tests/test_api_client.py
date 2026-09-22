@@ -1,7 +1,7 @@
 import httpx
 import pytest
 
-from tools.indeed_resume_agent.api_client import AgentApiClient, LeaseLost
+from tools.indeed_resume_agent.api_client import AgentApiClient, AgentApiError, LeaseLost
 from tools.indeed_resume_agent.config import AgentConfig
 
 
@@ -145,6 +145,113 @@ def test_retry_attention_uses_agent_only_route_and_returns_count(tmp_path):
 
     assert api.retry_attention() == 1
     assert paths == ["/api/agents/indeed-resume/retry-attention"]
+
+
+def test_sync_all_exhausts_bootstrap_and_runs_incremental_catchup(tmp_path):
+    calls = []
+    payloads = [
+        {
+            "mode": "FULL",
+            "discovered": 100,
+            "created": 60,
+            "existing": 30,
+            "needs_review": 2,
+            "skipped": 8,
+            "has_more": True,
+            "reconcile_jobs": 4,
+            "reconcile_scanned": 10,
+            "reconcile_ready": 4,
+            "reconcile_provider_pending": 2,
+            "reconcile_covered": 1,
+            "reconcile_queued": 3,
+        },
+        {
+            "mode": "FULL_CONTINUE",
+            "discovered": 20,
+            "created": 5,
+            "existing": 10,
+            "needs_review": 1,
+            "skipped": 4,
+            "has_more": False,
+            "reconcile_jobs": 4,
+            "reconcile_scanned": 10,
+            "reconcile_ready": 4,
+            "reconcile_provider_pending": 2,
+            "reconcile_covered": 4,
+            "reconcile_queued": 0,
+        },
+        {
+            "mode": "INCREMENTAL",
+            "discovered": 2,
+            "created": 1,
+            "existing": 1,
+            "needs_review": 0,
+            "skipped": 0,
+            "has_more": False,
+            "reconcile_jobs": 4,
+            "reconcile_scanned": 10,
+            "reconcile_ready": 5,
+            "reconcile_provider_pending": 1,
+            "reconcile_covered": 4,
+            "reconcile_queued": 0,
+        },
+    ]
+
+    def handler(request):
+        calls.append(request.url.path)
+        return httpx.Response(200, json=payloads[len(calls) - 1])
+
+    client = httpx.Client(
+        transport=httpx.MockTransport(handler),
+        base_url="https://agent.test",
+    )
+    api = AgentApiClient(config(tmp_path), "a" * 40, http_client=client)
+
+    result = api.sync_all()
+
+    assert calls == ["/api/agents/indeed-resume/sync"] * 3
+    assert result.pages == 3
+    assert result.discovered == 122
+    assert result.created == 66
+    assert result.existing == 41
+    assert result.needs_review == 3
+    assert result.reconcile_jobs == 4
+    assert result.reconcile_scanned == 10
+    assert result.reconcile_provider_pending == 1
+    assert result.reconcile_queued == 3
+
+
+def test_sync_all_fails_closed_at_page_limit(tmp_path):
+    def handler(request):
+        return httpx.Response(
+            200,
+            json={
+                "mode": "FULL_CONTINUE",
+                "discovered": 100,
+                "created": 100,
+                "existing": 0,
+                "needs_review": 0,
+                "skipped": 0,
+                "has_more": True,
+                "reconcile_jobs": 0,
+                "reconcile_scanned": 0,
+                "reconcile_ready": 0,
+                "reconcile_provider_pending": 0,
+                "reconcile_covered": 0,
+                "reconcile_queued": 0,
+            },
+        )
+
+    client = httpx.Client(
+        transport=httpx.MockTransport(handler),
+        base_url="https://agent.test",
+    )
+    api = AgentApiClient(config(tmp_path), "a" * 40, http_client=client)
+
+    with pytest.raises(AgentApiError) as exc:
+        api.sync_all(max_pages=2)
+
+    assert exc.value.code == "RESUME_SYNC_PAGE_LIMIT"
 
 
 def test_errors_are_sanitized_and_lease_conflict_is_specialized(tmp_path):

@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 
 from app.deps import get_db
 from app.domains.candidate_ingestion import indeed_email_agent_service as service
+from app.domains.candidate_ingestion import indeed_agent_sync
 from app.domains.candidate_ingestion.indeed_agent_auth import (
     AgentPrincipal,
     get_indeed_resume_agent_principal,
@@ -234,6 +235,23 @@ def retry_attention_resume_tasks(
     except Exception as exc:
         raise _translate(exc)
     return {"status": "WAITING_DOWNLOAD", "requeued": count}
+
+
+@router.post("/sync")
+def synchronize_resume_sources(
+    db: Session = Depends(get_db),
+    principal: AgentPrincipal = Depends(get_indeed_resume_agent_principal),
+):
+    """Synchronize one bounded discovery page and reconcile existing Indeed candidates."""
+    try:
+        return indeed_agent_sync.sync_one_page(
+            db,
+            owner_sub=principal.owner_sub,
+        )
+    except HTTPException:
+        raise
+    except Exception:
+        raise HTTPException(status_code=502, detail="RESUME_SYNC_FAILED")
 
 
 @router.get("/stats")
