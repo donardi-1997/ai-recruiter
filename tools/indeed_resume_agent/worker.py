@@ -226,7 +226,9 @@ class ResumeWorker:
         except BrowserFetchStageError as exc:
             status = self._api.fail(task, code=exc.code)
             try:
-                self._browser.close()
+                reset = getattr(self._browser, "reset_session", None)
+                if callable(reset):
+                    reset()
             except Exception:
                 pass
             return self._set(
