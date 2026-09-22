@@ -246,7 +246,9 @@ def write_canonical_candidate_document(
 
 def get_canonical_candidate_document(candidate_id: str) -> dict | None:
     """Return metadata for an existing canonical candidate CV without signing it."""
-    bucket = _require_canonical_bucket()
+    if not CANONICAL_BUCKET:
+        return None
+    bucket = CANONICAL_BUCKET
     for extension in (".pdf", ".docx"):
         key = f"{CANONICAL_PREFIX}/cv-{candidate_id}{extension}"
         head = _head_or_none(bucket, key)
