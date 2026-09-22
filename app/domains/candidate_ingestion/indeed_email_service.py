@@ -127,6 +127,23 @@ def _existing_result(
     return _refresh_result(db, event, created=False)
 
 
+def _mark_job_not_synced(
+    db: Session,
+    *,
+    event: CandidateIngestionEvent,
+    metadata: dict[str, Any],
+) -> None:
+    """Keep an application durable without creating browser work before its job exists."""
+    event.status = "NEEDS_REVIEW"
+    event.raw_metadata = metadata
+    event.job_id = None
+    event.last_error_code = "INDEED_JOB_NOT_SYNCED_YET"
+    event.last_error_message = (
+        "La vacante de Indeed debe sincronizarse antes de procesar esta postulacion."
+    )
+    db.commit()
+
+
 def _backfill_existing_event(
     db: Session,
     *,
@@ -135,7 +152,7 @@ def _backfill_existing_event(
     raw_message: dict[str, Any],
     event: CandidateIngestionEvent,
 ) -> IndeedEmailDiscoveryResult:
-    """Repair an existing Gmail event that predates the Indeed download-task bridge."""
+    """Repair or advance an existing Gmail event once its vacancy becomes available."""
     existing_task = _get_task(db, event_id=event.id)
     if existing_task is not None or repository.list_documents(db, event_id=event.id):
         return _refresh_result(db, event, created=False)
@@ -175,18 +192,21 @@ def _backfill_existing_event(
         owner_sub=owner_sub,
         metadata=metadata,
     )
+    if job is None:
+        _mark_job_not_synced(db, event=event, metadata=metadata)
+        return _refresh_result(db, event, created=False)
 
     try:
         event.status = "RECEIVED"
         event.raw_metadata = metadata
-        event.job_id = job.id if job is not None else None
+        event.job_id = job.id
         event.last_error_code = "RESUME_DOWNLOAD_PENDING"
         event.last_error_message = "El CV de Indeed esta pendiente de descarga."
         db.add(
             IndeedEmailResumeTask(
                 owner_sub=owner_sub,
                 ingestion_event_id=event.id,
-                job_id=job.id if job is not None else None,
+                job_id=job.id,
                 candidate_name=parsed.candidate_name,
                 job_title=parsed.job_title,
                 status="WAITING_DOWNLOAD",
@@ -267,7 +287,7 @@ def discover_indeed_email(
     source_account: str,
     raw_message: dict,
 ) -> IndeedEmailDiscoveryResult | None:
-    """Discover one trusted Indeed application email and create a durable download task."""
+    """Discover one trusted Indeed application without allowing Gmail to create jobs."""
     normalized_source_account = _normalize_source_account(source_account)
     message_id = str(raw_message.get("id") or "").strip()
     if message_id:
@@ -328,10 +348,18 @@ def discover_indeed_email(
             provider="INDEED",
             source_account=normalized_source_account,
             external_id=parsed.message_id,
-            status="RECEIVED",
+            status="RECEIVED" if job is not None else "NEEDS_REVIEW",
             raw_metadata=metadata,
         )
         event.job_id = job.id if job is not None else None
+        if job is None:
+            event.last_error_code = "INDEED_JOB_NOT_SYNCED_YET"
+            event.last_error_message = (
+                "La vacante de Indeed debe sincronizarse antes de procesar esta postulacion."
+            )
+            db.commit()
+            return _refresh_result(db, event, created=True)
+
         event.last_error_code = "RESUME_DOWNLOAD_PENDING"
         event.last_error_message = "El CV de Indeed esta pendiente de descarga."
         db.flush()
@@ -339,7 +367,7 @@ def discover_indeed_email(
         task = IndeedEmailResumeTask(
             owner_sub=owner_sub,
             ingestion_event_id=event.id,
-            job_id=job.id if job is not None else None,
+            job_id=job.id,
             candidate_name=parsed.candidate_name,
             job_title=parsed.job_title,
             status="WAITING_DOWNLOAD",
