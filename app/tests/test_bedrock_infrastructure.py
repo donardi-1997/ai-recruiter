@@ -392,18 +392,104 @@ def test_no_results_returns_failed(monkeypatch):
 # TEST GROUP 12 — NO REQUIREMENTS CONTRACT
 # ============================================================
 
-def test_no_requirements_returns_low_match(monkeypatch):
-    """No explicit requirements behavior is covered by evaluation contracts."""
-    import app.infrastructure.bedrock.clients as clients_module
+class _PromptStub:
+    def __init__(self, name):
+        self.name = name
 
-    mock_client = MagicMock()
-    mock_client.retrieve.return_value = {
-        "retrievalResults": [{"content": {"text": "Some CV content"}}]
-    }
-    monkeypatch.setattr(clients_module, "get_bedrock_agent_runtime", lambda: mock_client)
+    def __or__(self, _other):
+        return self.name
 
+
+def test_no_requirements_returns_failed_not_low_match(monkeypatch):
     import app.infrastructure.bedrock.evaluator as evaluator_module
-    assert callable(evaluator_module.get_llm)
+
+    monkeypatch.setattr(
+        evaluator_module,
+        "REQUIREMENT_EXTRACTION_PROMPT",
+        _PromptStub("extract"),
+    )
+    monkeypatch.setattr(evaluator_module, "get_llm", lambda: object())
+    monkeypatch.setattr(
+        evaluator_module,
+        "invoke_json_prompt",
+        lambda chain, payload, description: {"requirements": []},
+    )
+
+    result = evaluator_module.evaluate_candidate(
+        candidate_id="cand-1",
+        job_description="Vacante ambigua sin requisitos verificables",
+        results=[{"content": {"text": "Some CV content"}}],
+    )
+
+    assert result["status"] == "FAILED"
+    assert result["recommendation"] == "EVALUATION_FAILED"
+    assert result["error_message"] == "JOB_REQUIREMENTS_NOT_FOUND"
+    assert result["match_score"] == 0
+
+
+def test_positive_match_without_evidence_is_downgraded_to_missing(monkeypatch):
+    import app.infrastructure.bedrock.evaluator as evaluator_module
+
+    monkeypatch.setattr(
+        evaluator_module,
+        "REQUIREMENT_EXTRACTION_PROMPT",
+        _PromptStub("extract"),
+    )
+    monkeypatch.setattr(
+        evaluator_module,
+        "CANDIDATE_EVALUATION_PROMPT",
+        _PromptStub("evaluate"),
+    )
+    monkeypatch.setattr(evaluator_module, "get_llm", lambda: object())
+
+    def fake_invoke(chain, payload, description):
+        if chain == "extract":
+            return {"requirements": ["Python", "AWS"]}
+        assert chain == "evaluate"
+        return {
+            "requirements": [
+                {
+                    "requirement": "Python",
+                    "status": "MATCH",
+                    "evidence": "",
+                },
+                {
+                    "requirement": "AWS",
+                    "status": "MATCH",
+                    "evidence": "Implementó servicios productivos sobre AWS.",
+                },
+            ]
+        }
+
+    monkeypatch.setattr(evaluator_module, "invoke_json_prompt", fake_invoke)
+
+    result = evaluator_module.evaluate_candidate(
+        candidate_id="cand-1",
+        job_description="Python y AWS son requisitos explícitos.",
+        results=[
+            {
+                "content": {
+                    "text": (
+                        "Experiencia administrando servicios AWS. "
+                        "No hay evidencia de Python."
+                    )
+                }
+            }
+        ],
+    )
+
+    assert result["match_score"] == 50
+    assert result["recommendation"] == "PARTIAL_MATCH"
+    assert result["requirements"] == [
+        {"requirement": "Python", "status": "MISSING", "evidence": None},
+        {
+            "requirement": "AWS",
+            "status": "MATCH",
+            "evidence": "Implementó servicios productivos sobre AWS.",
+        },
+    ]
+    assert result["strengths"] == ["AWS"]
+    assert result["gaps"] == ["Python"]
 
 
 # ============================================================
