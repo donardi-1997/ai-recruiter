@@ -342,6 +342,7 @@ def test_sync_route_is_owner_scoped_and_returns_safe_summary(api, monkeypatch):
             "needs_review": 0,
             "skipped": 0,
             "has_more": False,
+            "reconcile_jobs": 2,
             "reconcile_scanned": 5,
             "reconcile_ready": 3,
             "reconcile_provider_pending": 1,
