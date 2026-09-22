@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import hashlib
+import ipaddress
+import socket
 from dataclasses import dataclass
 from pathlib import PurePosixPath
 from urllib.parse import urlsplit
@@ -36,13 +38,72 @@ def _safe_pdf_filename(filename: str | None) -> str:
     return f"{stem}.pdf"
 
 
-def _validated_https_url(url: str) -> str:
+def _validated_https_url(
+    url: str,
+    *,
+    resolver=socket.getaddrinfo,
+) -> str:
     parsed = urlsplit(str(url or "").strip())
-    if parsed.scheme.lower() != "https" or not parsed.netloc:
+    if (
+        parsed.scheme.lower() != "https"
+        or not parsed.hostname
+        or parsed.username is not None
+        or parsed.password is not None
+        or parsed.port not in (None, 443)
+    ):
         raise ResumeDownloadError(
             "RESUME_URL_INVALID",
             "La URL temporal del CV no es valida.",
         )
+
+    host = parsed.hostname.strip().casefold().rstrip(".")
+    if host in {"localhost", "localhost.localdomain"} or host.endswith((".localhost", ".local")):
+        raise ResumeDownloadError(
+            "RESUME_URL_INVALID",
+            "La URL temporal del CV no es valida.",
+        )
+
+    try:
+        literal = ipaddress.ip_address(host)
+        addresses = [literal]
+    except ValueError:
+        try:
+            resolved = resolver(host, 443, type=socket.SOCK_STREAM)
+        except OSError as exc:
+            raise ResumeDownloadError(
+                "RESUME_URL_INVALID",
+                "La URL temporal del CV no es valida.",
+            ) from exc
+        addresses = []
+        for entry in resolved:
+            sockaddr = entry[4] if len(entry) > 4 else None
+            raw_ip = sockaddr[0] if sockaddr else None
+            if not raw_ip:
+                continue
+            try:
+                addresses.append(ipaddress.ip_address(raw_ip))
+            except ValueError:
+                continue
+        if not addresses:
+            raise ResumeDownloadError(
+                "RESUME_URL_INVALID",
+                "La URL temporal del CV no es valida.",
+            )
+
+    for address in addresses:
+        if (
+            address.is_private
+            or address.is_loopback
+            or address.is_link_local
+            or address.is_multicast
+            or address.is_reserved
+            or address.is_unspecified
+        ):
+            raise ResumeDownloadError(
+                "RESUME_URL_INVALID",
+                "La URL temporal del CV no es valida.",
+            )
+
     return parsed.geturl()
 
 
@@ -52,9 +113,10 @@ def download_resume(
     *,
     http_client=None,
     max_bytes: int = DEFAULT_MAX_BYTES,
+    host_resolver=socket.getaddrinfo,
 ) -> DownloadedResume:
-    """Download one Indeed PDF with strict URL, redirect, size, and magic checks."""
-    safe_url = _validated_https_url(url)
+    """Download one Indeed PDF with strict URL, SSRF, size, and magic checks."""
+    safe_url = _validated_https_url(url, resolver=host_resolver)
     bounded_max = max(1, int(max_bytes))
     owns_client = http_client is None
     client = http_client or httpx.Client(
