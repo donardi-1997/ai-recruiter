@@ -27,7 +27,6 @@ def test_cors_origins_preserve_public_contract():
         "http://localhost:5173",
         "http://localhost:5174",
         "http://localhost:5175",
-        "http://3.23.27.223",
         "https://ai.adrianguerra.net",
         "https://air.adrianguerra.net",
     )
