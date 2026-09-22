@@ -17,6 +17,20 @@ from app.infrastructure.imports import queue
 
 logger = logging.getLogger(__name__)
 
+
+def _parse_provider_datetime(value) -> datetime | None:
+    raw = str(value or "").strip()
+    if not raw:
+        return None
+    try:
+        parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
 FETCH_ASSETS = """
 mutation FetchAssets($input: FetchAssetsAtsSyncCandidateSyncInput) {
   atsSyncCandidateSync {
@@ -218,6 +232,7 @@ def _process_asset(db, *, owner_sub: str, asset: dict) -> str:
         resume_name=resume_pdf.get("name"),
         resume_url=resume_pdf.get("url"),
         staged_test=bool(metadata.get("stagedTest")),
+        staged_at=_parse_provider_datetime(metadata.get("stagedAt")),
     )
     if link.resume_url:
         resume_repository.get_or_create_resume_ingestion(
