@@ -129,14 +129,14 @@ def get_candidate_details(db, *, owner_sub: str, job_id: str, candidate_id: str)
         owner_sub=owner_sub,
         candidate_link_id=link.id,
     )
-    resume_status = resume_task.status if resume_task is not None else (
-        "PENDING" if link.resume_name else "UNAVAILABLE"
-    )
-    resume_available = bool(
-        resume_task is not None
-        and resume_task.status == "COMPLETED"
-        and resume_task.canonical_s3_key
-    )
+    canonical_document = storage.get_canonical_candidate_document(candidate_id)
+    resume_available = canonical_document is not None
+    if resume_available:
+        resume_status = "COMPLETED"
+    else:
+        resume_status = resume_task.status if resume_task is not None else (
+            "PENDING" if link.resume_name else "UNAVAILABLE"
+        )
 
     return {
         "candidate_id": candidate_id,
