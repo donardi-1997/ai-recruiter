@@ -254,8 +254,9 @@ def run_ui(*, worker, api, browser) -> None:
                             full_sync_active = True
                             full_sync_provider_pending = result.reconcile_provider_pending
                             detail = (
-                                f"Revisión preparada: {result.discovered} mensajes, "
-                                f"{result.reconcile_scanned} candidatos Indeed auditados, "
+                                f"Revisión preparada: {result.reconcile_jobs} vacantes, "
+                                f"{result.reconcile_scanned} candidatos Indeed y "
+                                f"{result.discovered} mensajes auditados; "
                                 f"{result.created + result.reconcile_queued} tareas nuevas. "
                                 f"Cola pendiente: {last_stats.pending}."
                             )
