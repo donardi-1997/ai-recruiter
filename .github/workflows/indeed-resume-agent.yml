@@ -47,6 +47,14 @@ jobs:
           $Exe = ".\dist\ASIATI Resume Agent\ASIATI Resume Agent.exe"
           if (-not (Test-Path $Exe)) { throw "Windows executable was not created" }
           Get-Item $Exe | Format-List Name,Length,FullName
+      - name: Execute packaged binary self-test
+        shell: powershell
+        run: |
+          $Exe = ".\dist\ASIATI Resume Agent\ASIATI Resume Agent.exe"
+          $Process = Start-Process -FilePath $Exe -ArgumentList "--self-test" -Wait -PassThru
+          if ($Process.ExitCode -ne 0) {
+            throw "Packaged Resume Agent self-test failed with exit code $($Process.ExitCode)"
+          }
       - uses: actions/upload-artifact@v4
         with:
           name: ASIATI-Resume-Agent-Windows
