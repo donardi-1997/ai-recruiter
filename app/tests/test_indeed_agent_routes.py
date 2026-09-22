@@ -80,9 +80,7 @@ def _task(db: Session, *, owner_sub: str, status: str = "WAITING_DOWNLOAD"):
 def test_empty_owner_scoped_queue_returns_204(api):
     client, db = api
     _task(db, owner_sub="owner-b")
-
     response = client.post("/api/agents/indeed-resume/claim")
-
     assert response.status_code == 204
     assert response.content == b""
 
@@ -91,16 +89,11 @@ def test_stats_are_owner_scoped(api):
     client, db = api
     _task(db, owner_sub="owner-a")
     _task(db, owner_sub="owner-b")
-
     response = client.get("/api/agents/indeed-resume/stats")
-
     assert response.status_code == 200
     payload = response.json()
     assert payload["pending"] == 1
-    assert sum(
-        payload[key]
-        for key in ("pending", "claimed", "completed", "needs_human", "retry", "failed")
-    ) == 1
+    assert sum(payload[key] for key in ("pending", "claimed", "completed", "needs_human", "retry", "failed")) == 1
     assert payload["last_error_code"] is None
     assert payload["last_error_candidate"] is None
     assert payload["last_error_status"] is None
@@ -115,9 +108,7 @@ def test_stats_surface_latest_owner_scoped_error_without_secret_fields(api):
     other.candidate_name = "Other Owner"
     other.last_error_code = "SHOULD_NOT_LEAK"
     db.commit()
-
     response = client.get("/api/agents/indeed-resume/stats")
-
     assert response.status_code == 200
     payload = response.json()
     assert payload["last_error_code"] == "RESUME_UPLOAD_FAILED"
@@ -132,12 +123,10 @@ def test_mutating_other_owner_task_returns_404(api):
     task.lease_token = "owner-b-lease"
     task.lease_expires_at = datetime(2099, 1, 1, tzinfo=timezone.utc)
     db.commit()
-
     response = client.post(
         f"/api/agents/indeed-resume/{task.id}/heartbeat",
         headers={"X-ASIATI-Lease-Token": "owner-b-lease"},
     )
-
     assert response.status_code == 404
 
 
@@ -147,12 +136,10 @@ def test_wrong_lease_token_returns_409(api):
     task.lease_token = "current-lease"
     task.lease_expires_at = datetime(2099, 1, 1, tzinfo=timezone.utc)
     db.commit()
-
     response = client.post(
         f"/api/agents/indeed-resume/{task.id}/heartbeat",
         headers={"X-ASIATI-Lease-Token": "stale-lease"},
     )
-
     assert response.status_code == 409
     assert "lease" in response.json()["detail"].casefold()
 
@@ -167,41 +154,24 @@ def test_resume_upload_route_preserves_docx_filename_and_mime(api, monkeypatch):
     db.commit()
     seen = {}
 
-    def fake_store(
-        db,
-        *,
-        owner_sub,
-        task_id,
-        lease_token,
-        filename,
-        content_type,
-        data,
-    ):
-        seen.update(
-            {
-                "owner_sub": owner_sub,
-                "task_id": task_id,
-                "lease_token": lease_token,
-                "filename": filename,
-                "content_type": content_type,
-                "data": data,
-            }
-        )
-        return SimpleNamespace(
-            id="document-1",
-            filename=filename,
-            document_sha256="abc123",
-        )
+    def fake_store(db, *, owner_sub, task_id, lease_token, filename, content_type, data):
+        seen.update({
+            "owner_sub": owner_sub,
+            "task_id": task_id,
+            "lease_token": lease_token,
+            "filename": filename,
+            "content_type": content_type,
+            "data": data,
+        })
+        return SimpleNamespace(id="document-1", filename=filename, document_sha256="abc123")
 
     monkeypatch.setattr(service, "store_resume_document", fake_store)
-
     mime = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
     response = client.post(
         f"/api/agents/indeed-resume/{task.id}/resume",
         headers={"X-ASIATI-Lease-Token": "lease-1"},
         files={"file": ("CVAlejandracamachosaenz.docx", b"PK-docx", mime)},
     )
-
     assert response.status_code == 200
     assert response.json()["filename"] == "CVAlejandracamachosaenz.docx"
     assert seen == {
@@ -220,13 +190,11 @@ def test_failure_code_rejects_unbounded_or_freeform_agent_input(api):
     task.lease_token = "lease-1"
     task.lease_expires_at = datetime(2099, 1, 1, tzinfo=timezone.utc)
     db.commit()
-
     response = client.post(
         f"/api/agents/indeed-resume/{task.id}/fail",
         headers={"X-ASIATI-Lease-Token": "lease-1"},
         json={"code": "bad code with spaces"},
     )
-
     assert response.status_code == 422
     db.refresh(task)
     assert task.status == "CLAIMED"
@@ -242,16 +210,12 @@ def test_retry_failed_requeues_only_current_owner_and_resets_terminal_fields(api
     owned.lease_token = "stale"
     owned.lease_expires_at = datetime(2099, 1, 1, tzinfo=timezone.utc)
     owned.claimed_at = datetime(2026, 9, 20, tzinfo=timezone.utc)
-
     other = _task(db, owner_sub="owner-b", status="FAILED")
     other.attempt_count = 3
     db.commit()
-
     response = client.post("/api/agents/indeed-resume/retry-failed")
-
     assert response.status_code == 200
     assert response.json() == {"status": "WAITING_DOWNLOAD", "requeued": 1}
-
     db.refresh(owned)
     db.refresh(other)
     assert owned.status == "WAITING_DOWNLOAD"
@@ -272,16 +236,12 @@ def test_retry_attention_requeues_only_current_owner_needs_human(api):
     owned.attempt_count = 2
     owned.last_error_code = "INDEED_UI_REQUIRES_REVIEW"
     owned.last_error_message = "manual review"
-
     other = _task(db, owner_sub="owner-b", status="NEEDS_HUMAN")
     waiting = _task(db, owner_sub="owner-a", status="WAITING_DOWNLOAD")
     db.commit()
-
     response = client.post("/api/agents/indeed-resume/retry-attention")
-
     assert response.status_code == 200
     assert response.json() == {"status": "WAITING_DOWNLOAD", "requeued": 1}
-
     db.refresh(owned)
     db.refresh(other)
     db.refresh(waiting)
@@ -295,7 +255,6 @@ def test_retry_attention_requeues_only_current_owner_needs_human(api):
 
 def test_claim_serializes_ephemeral_resume_url_and_lease(api, monkeypatch):
     from app.domains.candidate_ingestion import indeed_email_agent_service as service
-
     client, _ = api
 
     class Claimed:
@@ -306,15 +265,8 @@ def test_claim_serializes_ephemeral_resume_url_and_lease(api, monkeypatch):
         lease_token = "opaque-lease"
         lease_expires_at = datetime(2026, 9, 17, 23, 10, tzinfo=timezone.utc)
 
-    monkeypatch.setattr(
-        service,
-        "claim_next_task_with_resume_url",
-        lambda db, *, owner_sub: Claimed(),
-        raising=False,
-    )
-
+    monkeypatch.setattr(service, "claim_next_task_with_resume_url", lambda db, *, owner_sub: Claimed(), raising=False)
     response = client.post("/api/agents/indeed-resume/claim")
-
     assert response.status_code == 200
     assert response.json() == {
         "task_id": "task-1",
@@ -328,7 +280,6 @@ def test_claim_serializes_ephemeral_resume_url_and_lease(api, monkeypatch):
 
 def test_sync_route_is_owner_scoped_and_returns_safe_summary(api, monkeypatch):
     from app.domains.candidate_ingestion import indeed_agent_sync
-
     client, _ = api
     seen = {}
 
@@ -351,9 +302,7 @@ def test_sync_route_is_owner_scoped_and_returns_safe_summary(api, monkeypatch):
         }
 
     monkeypatch.setattr(indeed_agent_sync, "sync_one_page", fake_sync)
-
     response = client.post("/api/agents/indeed-resume/sync")
-
     assert response.status_code == 200
     assert seen["owner_sub"] == "owner-a"
     assert response.json()["reconcile_queued"] == 1
@@ -385,9 +334,7 @@ def test_claim_lookup_only_task_does_not_require_gmail(api):
     )
     db.add(task)
     db.commit()
-
     response = client.post("/api/agents/indeed-resume/claim")
-
     assert response.status_code == 200
     payload = response.json()
     assert payload["candidate_name"] == "Ada Candidate"
@@ -398,7 +345,6 @@ def test_claim_lookup_only_task_does_not_require_gmail(api):
 def test_claim_preserves_specific_parser_failure_code(api, monkeypatch):
     from app.domains.candidate_ingestion import indeed_email_agent_service as service
     from app.integrations.email_ingestion.indeed_email_parser import InvalidIndeedMessage
-
     client, db = api
     task = _task(db, owner_sub="owner-a")
 
@@ -411,19 +357,35 @@ def test_claim_preserves_specific_parser_failure_code(api, monkeypatch):
 
     monkeypatch.setattr(service, "parse_indeed_application_email", fail_parser)
     monkeypatch.setattr(service, "_gmail_client_from_oauth", lambda: Mailbox())
-
     response = client.post("/api/agents/indeed-resume/claim")
-
     assert response.status_code == 502
     db.refresh(task)
     assert task.status == "NEEDS_HUMAN"
     assert task.last_error_code == "INDEED_APPLICATION_FIELDS_MISSING"
 
 
-def test_claim_historical_task_auto_creates_and_links_indeed_job(api, monkeypatch):
+def test_claim_historical_task_reuses_previously_synced_indeed_job(api, monkeypatch):
     from app.domains.candidate_ingestion import indeed_email_agent_service as service
 
     client, db = api
+    job = Job(
+        title="Líder de Contact Center Comercial",
+        description="Descripción completa de Indeed",
+        indeed_description="Descripción completa de Indeed",
+        active_description_source="indeed",
+        owner_sub="owner-a",
+    )
+    db.add(job)
+    db.flush()
+    db.add(
+        IndeedJobLink(
+            job_id=job.id,
+            owner_sub="owner-a",
+            discovery_key="employer-ui:provider-job-cesar",
+            sourced_posting_id="JK-CESAR-123",
+            external_status={"origin": "EMPLOYER_UI"},
+        )
+    )
     task = _task(db, owner_sub="owner-a")
 
     class Mailbox:
@@ -442,27 +404,16 @@ def test_claim_historical_task_auto_creates_and_links_indeed_job(api, monkeypatc
         internal_date_ms = None
 
     monkeypatch.setattr(service, "_gmail_client_from_oauth", lambda: Mailbox())
-    monkeypatch.setattr(
-        service,
-        "parse_indeed_application_email",
-        lambda *args, **kwargs: Parsed(),
-    )
-
+    monkeypatch.setattr(service, "parse_indeed_application_email", lambda *args, **kwargs: Parsed())
     response = client.post("/api/agents/indeed-resume/claim")
-
     assert response.status_code == 200
     assert response.json()["candidate_name"] == "CESAR ARCILA"
     assert response.json()["job_title"] == "Líder de Contact Center Comercial"
 
     db.refresh(task)
-    assert task.job_id is not None
+    assert task.job_id == job.id
     assert task.job_title == "Líder de Contact Center Comercial"
-
-    job = db.query(Job).filter(Job.id == task.job_id).one()
-    assert job.title == "Líder de Contact Center Comercial"
-    assert job.owner_sub == "owner-a"
-
+    assert db.query(Job).filter(Job.owner_sub == "owner-a").count() == 1
     link = db.query(IndeedJobLink).filter(IndeedJobLink.job_id == job.id).one()
-    assert link.discovery_key == "posting:jk-cesar-123"
     assert link.sourced_posting_id == "JK-CESAR-123"
-    assert link.external_status["auto_created"] is True
+    assert link.external_status["origin"] == "EMPLOYER_UI"
