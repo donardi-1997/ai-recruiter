@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import re
-from urllib.parse import parse_qs, urljoin, urlsplit
+from urllib.parse import parse_qs, urlsplit
 
 
 INDEED_JOBS_URL = (
@@ -142,7 +142,7 @@ async def _detail_state(browser, cdp) -> dict:
     'h1',
     '[role="heading"][aria-level="1"]'
   ]);
-  const location = firstText([
+  const locationText = firstText([
     '[data-testid*="location" i]',
     '[class*="location" i]'
   ]);
@@ -153,10 +153,10 @@ async def _detail_state(browser, cdp) -> dict:
   ]);
   const time = document.querySelector('time[datetime]');
   return {
-    url: location.href,
+    url: window.location.href,
     title,
     description: descriptionCandidates[0] || '',
-    location,
+    location: locationText,
     status,
     postedAt: String(time?.getAttribute?.('datetime') || '')
   };
