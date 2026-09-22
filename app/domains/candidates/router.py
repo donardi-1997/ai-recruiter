@@ -16,6 +16,7 @@ from app.domains.candidates.exceptions import (
 from app.domains.candidates.schemas import ApplicationStatusRequest
 from app.domains.jobs.schemas import AssignCandidatesRequest
 from app.infrastructure.imports.documents import MAX_DOCUMENT_BYTES
+from app.infrastructure.imports import storage as import_storage
 
 logger = logging.getLogger(__name__)
 
@@ -339,7 +340,16 @@ def download_candidate_cv(
     _user: dict = Depends(get_current_user),
 ):
     _require_candidate(db, candidate_id, _user["sub"])
-    return {"download_url": None, "detail": "CV storage not configured."}
+    download = import_storage.create_canonical_candidate_download(
+        candidate_id,
+        expires_in=300,
+    )
+    if download is None:
+        raise HTTPException(status_code=404, detail="CV no disponible.")
+    return {
+        "download_url": download["url"],
+        "expires_in": download["expires_in"],
+    }
 
 
 @router.get("/{candidate_id}/evaluations")
