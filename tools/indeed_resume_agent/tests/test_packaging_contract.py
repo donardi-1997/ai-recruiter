@@ -67,4 +67,4 @@ def test_production_ui_starts_paused_before_agent_thread():
     pause_at = text.index("worker.pause()", text.index("def run_ui"))
     thread_at = text.index("threading.Thread", text.index("def run_ui"))
     assert pause_at < thread_at
-    assert "Ciérralo completamente antes de pulsar Resume" in text
+    assert "mantén Chrome abierto y luego pulsa Resume" in text

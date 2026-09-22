@@ -259,3 +259,88 @@ def test_network_response_body_becomes_original_docx_without_download_folder(tmp
         assert result.data == payload
     finally:
         driver.close()
+
+
+def test_stale_managed_browser_session_is_recreated_once(tmp_path):
+    class DeadBrowser:
+        agent_focus_target_id = "dead-target"
+
+        def __init__(self):
+            self.stopped = False
+
+        async def get_or_create_cdp_session(self, *_args, **_kwargs):
+            raise RuntimeError("dead CDP session")
+
+        async def stop(self):
+            self.stopped = True
+
+    class Domain:
+        async def enable(self, *, session_id):
+            assert session_id == "session-2"
+
+    class NetworkRegister:
+        def responseReceived(self, _callback):
+            return None
+
+        def loadingFinished(self, _callback):
+            return None
+
+        def loadingFailed(self, _callback):
+            return None
+
+    class Register:
+        def __init__(self):
+            self.Network = NetworkRegister()
+
+    class Send:
+        def __init__(self):
+            self.Page = Domain()
+            self.Runtime = Domain()
+            self.Network = Domain()
+
+    class Client:
+        def __init__(self):
+            self.send = Send()
+            self.register = Register()
+
+    class Cdp:
+        session_id = "session-2"
+
+        def __init__(self, client):
+            self.cdp_client = client
+
+    class ReplacementBrowser:
+        instances = []
+
+        def __init__(self, **_kwargs):
+            self.agent_focus_target_id = "fresh-target"
+            self.cdp_client = Client()
+            self.started = False
+            self.stopped = False
+            self.__class__.instances.append(self)
+
+        async def start(self):
+            self.started = True
+
+        async def get_or_create_cdp_session(self, *_args, **_kwargs):
+            return Cdp(self.cdp_client)
+
+        async def stop(self):
+            self.stopped = True
+
+    driver = IndeedBrowserUse(
+        config(tmp_path),
+        browser_session_class=ReplacementBrowser,
+        browser_executable_resolver=lambda: "chrome.exe",
+    )
+    dead = DeadBrowser()
+    driver._browser = dead
+    try:
+        cdp = driver._call(driver._ensure_started(), timeout=2)
+        assert dead.stopped is True
+        assert cdp.session_id == "session-2"
+        assert len(ReplacementBrowser.instances) == 1
+        assert ReplacementBrowser.instances[0].started is True
+        assert driver._browser is ReplacementBrowser.instances[0]
+    finally:
+        driver.close()

@@ -56,8 +56,9 @@ def test_active_and_paused_labels():
 def test_browser_ready_keeps_same_chrome_open_for_manual_login():
     ui=build_ui_state(snap("BROWSER_READY"), stats())
     assert "Chrome está abierto" in ui.status_label
+    assert "mantén Chrome abierto" in ui.status_label
     assert "pulsa Resume" in ui.status_label
-    assert "Cierra" not in ui.status_label
+    assert "cierra chrome" not in ui.status_label.casefold()
     assert ui.session_label == "Ready"
 
 
@@ -126,3 +127,10 @@ def test_ui_surfaces_only_sanitized_indeed_diagnostic_path():
         stats(needs_human=1),
     )
     assert ui.status_label == detail
+
+
+def test_diagnostic_browser_failure_has_specific_recovery_instruction():
+    ui = build_ui_state(snap("DIAGNOSTIC_BROWSER_FAILED"), stats())
+    assert "Chrome" in ui.status_label
+    assert "Open Indeed (Google Chrome)" in ui.status_label
+    assert "conexión con el servicio" not in ui.status_label

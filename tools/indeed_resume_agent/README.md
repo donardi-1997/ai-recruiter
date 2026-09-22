@@ -41,9 +41,9 @@ Para iniciar:
 3. Pulse **Open Indeed (Google Chrome)**. Este botón abre Chrome normal, no Playwright.
 4. Inicie sesión manualmente en Indeed dentro de esa ventana si hace falta. Si usa Google, hágalo únicamente aquí.
 5. Complete MFA/CAPTCHA manualmente cuando Indeed lo solicite.
-6. Cierre completamente esa ventana de Chrome antes de usar **Resume** o **Diagnostic mode**.
+6. Mantenga abierta esa ventana de Chrome: es la misma sesión administrada por Browser Use que utilizará **Resume** y **Diagnostic mode**. No la cierre manualmente mientras el agente esté abierto.
 7. Mantenga el perfil dedicado en `%LOCALAPPDATA%\ASIATI\ResumeAgent\browser-profile-chrome`.
-7. Active y pruebe **una sola aplicación real** antes de procesar un lote.
+8. Active y pruebe **una sola aplicación real** antes de procesar un lote.
 
 El agente trabaja con una sola tarea a la vez. Si se cierra el PC o el proceso, el backend recupera una tarea cuando vence su lease; no borre tareas completadas.
 

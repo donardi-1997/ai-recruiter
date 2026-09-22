@@ -33,13 +33,14 @@ def build_ui_state(snapshot: WorkerSnapshot, stats: QueueStats) -> UiState:
         "DOWNLOADING": "Descargando CV...",
         "COMPLETED": "CV cargado correctamente",
         "PAUSED": "En pausa",
-        "BROWSER_READY": "Chrome está abierto con el perfil del agente. Inicia sesión o resuelve la verificación, cierra Chrome completamente y luego pulsa Resume",
-        "MANUAL_BROWSER_OPEN": "Chrome sigue abierto. Ciérralo completamente antes de pulsar Resume",
+        "BROWSER_READY": "Chrome está abierto con el perfil del agente. Inicia sesión o resuelve la verificación, mantén Chrome abierto y luego pulsa Resume",
+        "MANUAL_BROWSER_OPEN": "Chrome está abierto con el perfil persistente del agente",
         "MANUAL_LOGIN_REQUIRED": "Indeed requiere verificación. Pulsa Open Indeed (Google Chrome), inicia sesión o resuelve el CAPTCHA y luego pulsa Resume",
         "MANUAL_OPEN_FAILED": "No se pudo abrir Google Chrome con el perfil del agente",
         "DIAGNOSTIC_ANCHOR_FAILED": "Chrome no creó la pestaña de respaldo. Cierra Chrome y vuelve a abrir Diagnostic mode",
         "DIAGNOSTIC_MODE": "Modo diagnóstico activo: usa Indeed normalmente y luego pulsa Guardar diagnóstico",
         "DIAGNOSTIC_SAVED": "Diagnóstico guardado",
+        "DIAGNOSTIC_BROWSER_FAILED": "No se pudo recuperar la sesión de Chrome del agente. Pulsa Open Indeed (Google Chrome) y vuelve a intentar Diagnostic mode",
         "WAITING_FOR_HUMAN": "Indeed requiere intervención manual",
         "LEASE_LOST": "La tarea será reclamada de forma segura",
         "RETRY": "Reintento programado",
@@ -264,7 +265,7 @@ def run_ui(*, worker, api, browser) -> None:
                             )
                         except Exception:
                             diagnostic_snapshot = WorkerSnapshot(
-                                "ERROR",
+                                "DIAGNOSTIC_BROWSER_FAILED",
                                 worker.snapshot.active_candidate,
                                 worker.snapshot.processed_session,
                                 None,
