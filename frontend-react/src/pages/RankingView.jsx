@@ -132,8 +132,12 @@ async function loadRanking(
       return { ok: false, data: null, candidates: [], scopeMismatch: false };
     }
 
+    rankingAbortRef.current?.abort();
+    const controller = new AbortController();
+    rankingAbortRef.current = controller;
+    setLoading(true);
+
     try {
-      setLoading(true);
       const params = {
         min_score: minScore,
         max_score: maxScore,
@@ -143,9 +147,6 @@ async function loadRanking(
       };
       if (targetRecommendation) params.recommendation = targetRecommendation;
 
-      rankingAbortRef.current?.abort();
-      const controller = new AbortController();
-      rankingAbortRef.current = controller;
       const response = await api.get(`/jobs/${targetJob}/ranking`, {
         params,
         signal: controller.signal,
@@ -223,7 +224,8 @@ async function loadRanking(
       });
       return { ok: false, data: null, candidates: [], scopeMismatch: false };
     } finally {
-      if (!rankingAbortRef.current?.signal.aborted) {
+      if (rankingAbortRef.current === controller) {
+        rankingAbortRef.current = null;
         setLoading(false);
       }
     }
