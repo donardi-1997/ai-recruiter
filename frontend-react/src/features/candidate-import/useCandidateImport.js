@@ -10,7 +10,6 @@ const TERMINAL_STATUSES = new Set([
 const FOREGROUND_POLL_MS = 2000;
 const HIDDEN_POLL_MS = 10000;
 const UPLOAD_CONCURRENCY = 4;
-const STORAGE_KEY = "candidate_import_batch_id";
 
 function isTerminal(batch) {
   return Boolean(batch && TERMINAL_STATUSES.has(batch.status));
@@ -29,15 +28,8 @@ function phaseForBatch(batch) {
 function publicError(error) {
   return (
     error?.response?.data?.detail ||
-    error?.message ||
     "No fue posible continuar la importación."
   );
-}
-
-function persistBatchId(batchId) {
-  if (typeof localStorage === "undefined") return;
-  if (batchId) localStorage.setItem(STORAGE_KEY, batchId);
-  else localStorage.removeItem(STORAGE_KEY);
 }
 
 export function useCandidateImport(jobId = null) {
@@ -91,7 +83,6 @@ export function useCandidateImport(jobId = null) {
         if (isTerminal(nextBatch)) {
           clearPolling();
           currentBatchIdRef.current = null;
-          persistBatchId(null);
         } else {
           schedulePoll(batchId);
         }
@@ -115,7 +106,6 @@ export function useCandidateImport(jobId = null) {
     async (batchId) => {
       clearPolling();
       currentBatchIdRef.current = batchId;
-      persistBatchId(batchId);
       setError(null);
       return refreshBatch(batchId);
     },
@@ -134,8 +124,7 @@ export function useCandidateImport(jobId = null) {
         const created = await candidateImportApi.createImportBatch(selectedJobId, files);
         const batchId = created.batch_id;
         currentBatchIdRef.current = batchId;
-        persistBatchId(batchId);
-        setBatch({ ...created, id: batchId, job_id: selectedJobId });
+          setBatch({ ...created, id: batchId, job_id: selectedJobId });
 
         const totalBytes = files.reduce((sum, file) => sum + file.size, 0);
         const uploadedBytes = new Array(files.length).fill(0);
@@ -199,7 +188,6 @@ export function useCandidateImport(jobId = null) {
 
         if (isTerminal(nextBatch)) {
           currentBatchIdRef.current = null;
-          persistBatchId(null);
           clearPolling();
         } else {
           schedulePoll(batchId);
@@ -220,7 +208,6 @@ export function useCandidateImport(jobId = null) {
   const reset = useCallback(() => {
     clearPolling();
     currentBatchIdRef.current = null;
-    persistBatchId(null);
     setPhase("idle");
     setBatch(null);
     setItems([]);
