@@ -73,6 +73,33 @@ def _job_by_sourced_posting_id(
     )
 
 
+def _job_by_employer_ui_key(
+    db: Session,
+    *,
+    owner_sub: str,
+    external_job_id: str,
+) -> Job | None:
+    """Match the browser-synced job identity without overloading sourced_posting_id."""
+    raw = str(external_job_id or "").strip()
+    if not raw:
+        return None
+    keys = [f"employer-ui:{raw}"]
+    folded = f"employer-ui:{raw.casefold()}"
+    if folded not in keys:
+        keys.append(folded)
+    return (
+        db.query(Job)
+        .join(IndeedJobLink, IndeedJobLink.job_id == Job.id)
+        .filter(
+            IndeedJobLink.owner_sub == owner_sub,
+            IndeedJobLink.discovery_key.in_(keys),
+            Job.owner_sub == owner_sub,
+        )
+        .order_by(IndeedJobLink.created_at.asc())
+        .first()
+    )
+
+
 def _ensure_discovery_link(
     db: Session,
     *,
@@ -225,6 +252,14 @@ def resolve_or_create_indeed_job(
                 external_job_id=external_job_id,
                 auto_created=False,
             )
+
+        employer_ui_job = _job_by_employer_ui_key(
+            db,
+            owner_sub=owner_sub,
+            external_job_id=external_job_id,
+        )
+        if employer_ui_job is not None:
+            return employer_ui_job
 
     resolved = resolve_job(
         db,
