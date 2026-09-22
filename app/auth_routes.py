@@ -5,7 +5,7 @@ import logging
 
 import boto3
 from botocore.exceptions import ClientError
-from fastapi import APIRouter, Cookie, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
@@ -31,6 +31,11 @@ def get_admin_cognito_client():
 
 
 class LoginRequest(BaseModel):
+    email: str
+    password: str
+
+
+class RegisterRequest(BaseModel):
     email: str
     password: str
 
@@ -74,7 +79,9 @@ def login(body: LoginRequest):
 
 
 @router.post("/register")
-def register(email: str = Query(...), password: str = Query(...)):
+def register(body: RegisterRequest):
+    email = body.email
+    password = body.password
     if not COGNITO_USER_POOL_ID:
         logger.error("COGNITO_USER_POOL_ID is required for automatic registration confirmation")
         raise HTTPException(status_code=500, detail="No fue posible crear la cuenta.")
