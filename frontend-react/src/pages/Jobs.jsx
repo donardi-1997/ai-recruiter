@@ -390,12 +390,16 @@ function Jobs() {
   async function saveJob(event) {
     event.preventDefault();
     setError("");
+    if (!String(activeDescription || "").trim()) {
+      setError("La descripción activa debe tener contenido antes de guardar.");
+      return;
+    }
     setSaving(true);
     const payload = {
       title,
       description: activeDescription,
-      indeed_description: indeedDescription || null,
-      ai_description: aiDescription || null,
+      indeed_description: indeedDescription,
+      ai_description: aiDescription,
       active_description_source: activeDescriptionSource,
       country_code: countryCode,
       city,
@@ -561,6 +565,8 @@ function Jobs() {
                     aria-checked={activeDescriptionSource === "indeed"}
                     className={`job-source-option ${activeDescriptionSource === "indeed" ? "is-active" : ""}`}
                     onClick={() => setActiveDescriptionSource("indeed")}
+                    disabled={!indeedDescription.trim() && activeDescriptionSource !== "indeed"}
+                    title={!indeedDescription.trim() && activeDescriptionSource !== "indeed" ? "Escribe primero una descripción original" : undefined}
                   >
                     Original · Indeed
                   </button>
