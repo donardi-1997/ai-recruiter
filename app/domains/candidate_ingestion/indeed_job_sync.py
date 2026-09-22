@@ -10,10 +10,17 @@ from datetime import datetime, timezone
 
 from sqlalchemy.orm import Session
 
+from app.domains.candidate_ingestion import job_resolution
+from app.domains.candidate_ingestion.models import (
+    CandidateIngestionEvent,
+    IndeedEmailResumeTask,
+)
 from app.domains.jobs import service as jobs_service
 from app.models import IndeedJobLink, Job
 
 DISCOVERY_PREFIX = "employer-ui:"
+_JOB_NOT_SYNCED_CODE = "INDEED_JOB_NOT_SYNCED_YET"
+_RESUME_PENDING_CODE = "RESUME_DOWNLOAD_PENDING"
 
 
 def _clean(value) -> str:
@@ -103,6 +110,89 @@ def _update_existing_job(
     return updated, (not had_description and bool(description))
 
 
+def _existing_resume_task(
+    db: Session,
+    *,
+    event_id: str,
+) -> IndeedEmailResumeTask | None:
+    return (
+        db.query(IndeedEmailResumeTask)
+        .filter(IndeedEmailResumeTask.ingestion_event_id == event_id)
+        .one_or_none()
+    )
+
+
+def _recover_waiting_applications(db: Session, *, owner_sub: str) -> int:
+    """Wake Gmail applications parked until their canonical Indeed job exists.
+
+    Gmail history is incremental and may never replay an old notification after
+    the vacancy later appears. Vacancy refresh therefore owns the deterministic
+    repair path. The operation is owner-scoped and idempotent by ingestion event.
+    """
+    events = (
+        db.query(CandidateIngestionEvent)
+        .filter(
+            CandidateIngestionEvent.owner_sub == owner_sub,
+            CandidateIngestionEvent.source == "EMAIL",
+            CandidateIngestionEvent.provider == "INDEED",
+            CandidateIngestionEvent.status == "NEEDS_REVIEW",
+            CandidateIngestionEvent.last_error_code == _JOB_NOT_SYNCED_CODE,
+        )
+        .order_by(CandidateIngestionEvent.created_at.asc())
+        .all()
+    )
+    recovered = 0
+    for event in events:
+        metadata = dict(event.raw_metadata or {})
+        job = job_resolution.resolve_or_create_indeed_job(
+            db,
+            owner_sub=owner_sub,
+            metadata=metadata,
+        )
+        if job is None:
+            continue
+
+        candidate_name = _clean(metadata.get("candidate_name"))
+        job_title = _clean(metadata.get("job_title")) or _clean(job.title)
+        if not candidate_name or not job_title:
+            continue
+
+        task = _existing_resume_task(db, event_id=event.id)
+        if task is None:
+            task = IndeedEmailResumeTask(
+                owner_sub=owner_sub,
+                ingestion_event_id=event.id,
+                job_id=job.id,
+                candidate_name=candidate_name,
+                job_title=job_title,
+                status="WAITING_DOWNLOAD",
+            )
+            db.add(task)
+        else:
+            task.job_id = job.id
+            task.candidate_name = candidate_name
+            task.job_title = job_title
+            task.status = "WAITING_DOWNLOAD"
+            task.attempt_count = 0
+            task.available_at = None
+            task.lease_token = None
+            task.lease_expires_at = None
+            task.claimed_at = None
+            task.completed_at = None
+            task.last_error_code = None
+            task.last_error_message = None
+
+        event.job_id = job.id
+        event.status = "RECEIVED"
+        event.last_error_code = _RESUME_PENDING_CODE
+        event.last_error_message = "El CV de Indeed esta pendiente de descarga."
+        recovered += 1
+
+    if recovered:
+        db.commit()
+    return recovered
+
+
 def sync_vacancy_snapshots(
     db: Session,
     *,
@@ -126,6 +216,7 @@ def sync_vacancy_snapshots(
         "missing_description": 0,
         "ambiguous": 0,
         "descriptions_recovered": 0,
+        "applications_recovered": 0,
     }
 
     for raw in snapshots or []:
@@ -243,4 +334,8 @@ def sync_vacancy_snapshots(
         counts["created"] += 1
         counts["descriptions_recovered"] += 1
 
+    counts["applications_recovered"] = _recover_waiting_applications(
+        db,
+        owner_sub=owner_sub,
+    )
     return counts
