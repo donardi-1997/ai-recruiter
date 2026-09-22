@@ -73,16 +73,19 @@ def _seed_job(db, *, title="Country Manager Chile", owner_sub="owner-1", sourced
     )
     db.add(job)
     db.flush()
-    if sourced_posting_id:
-        db.add(
-            IndeedJobLink(
-                job_id=job.id,
-                owner_sub=owner_sub,
-                discovery_key=f"employer-ui:{sourced_posting_id}",
-                sourced_posting_id=sourced_posting_id,
-                external_status={"origin": "EMPLOYER_UI"},
-            )
+    db.add(
+        IndeedJobLink(
+            job_id=job.id,
+            owner_sub=owner_sub,
+            discovery_key=(
+                f"employer-ui:{sourced_posting_id}"
+                if sourced_posting_id
+                else f"employer-ui:seed-{job.id}"
+            ),
+            sourced_posting_id=sourced_posting_id,
+            external_status={"origin": "EMPLOYER_UI"},
         )
+    )
     db.commit()
     return job
 
