@@ -127,7 +127,6 @@ SAFE_LISTING_STATE_SCRIPT = r"""
     let externalJobKey = jobKeyFromElement(root);
     const clickable = chooseClickable(root);
     if (!clickable) continue;
-
     const href = clean(clickable.href || clickable.getAttribute?.('href') || '');
     if (!externalJobKey && href) externalJobKey = jobKeyFromHref(href);
 
@@ -203,23 +202,45 @@ async def _visible_page_state(self, cdp) -> dict:
 
 async def _visibility_aware_requires_human(self, cdp) -> bool:
     state = await self._page_state(cdp)
-    url = str(state.get('url') or '').casefold()
+    url = str(state.get("url") or "").casefold()
     if any(marker in url for marker in _URL_CHALLENGE_MARKERS):
         return True
 
-    for frame in state.get('iframes') or []:
+    for frame in state.get("iframes") or []:
         if isinstance(frame, dict):
-            if not frame.get('visible'):
+            if not frame.get("visible"):
                 continue
-            candidate = str(frame.get('src') or '').casefold()
+            candidate = str(frame.get("src") or "").casefold()
         else:
             # Backward-compatible handling for test/diagnostic snapshots made
             # before iframe visibility was captured.
-            candidate = str(frame or '').casefold()
+            candidate = str(frame or "").casefold()
         if any(marker in candidate for marker in _URL_CHALLENGE_MARKERS):
             return True
 
-    body = str(state.get('body') or '').casefold()
+    body = str(state.get("body") or "").casefold()
+    hard_body_markers = (
+        "captcha",
+        "security challenge",
+        "verify you are human",
+        "verifica que eres humano",
+        "mfa",
+        "two-step",
+        "two factor",
+    )
+    if any(marker in body for marker in hard_body_markers):
+        return True
+
+    title = str(state.get("title") or "").casefold()
+    on_jobs_workspace = url.startswith("https://employers.indeed.com/jobs")
+    has_jobs_identity = "indeed" in title and ("empleos" in title or "jobs" in title)
+    has_jobs_controls = (
+        ("publicar un empleo" in body and "todos los empleos" in body)
+        or ("post a job" in body and "all jobs" in body)
+    )
+    if on_jobs_workspace and has_jobs_identity and has_jobs_controls:
+        return False
+
     return any(marker in body for marker in _CHALLENGE_MARKERS)
 
 
