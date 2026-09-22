@@ -182,7 +182,7 @@ def test_needs_human_preserves_safe_code_without_diagnostic_path(tmp_path):
 
 def test_external_attention_retry_clears_local_human_state(tmp_path):
     api=FakeApi([task()])
-    browser=FakeBrowser(BrowserResult(BrowserOutcome.NEEDS_HUMAN, human_code="INDEED_UI_REQUIRES_REVIEW"))
+    browser=FakeBrowser(BrowserResult(BrowserOutcome.NEEDS_HUMAN, human_code="INDEED_AUTH_REQUIRED"))
     worker=ResumeWorker(
         config=config(tmp_path),
         api=api,
@@ -253,7 +253,7 @@ def test_needs_human_surfaces_only_local_diagnostic_path(tmp_path):
     browser=FakeBrowser(
         BrowserResult(
             BrowserOutcome.NEEDS_HUMAN,
-            human_code="INDEED_UI_REQUIRES_REVIEW",
+            human_code="INDEED_AUTH_REQUIRED",
             diagnostic_path=diagnostic,
         )
     )
@@ -267,5 +267,5 @@ def test_needs_human_surfaces_only_local_diagnostic_path(tmp_path):
     snap=worker.run_once()
 
     assert snap.state == "WAITING_FOR_HUMAN"
-    assert snap.last_error == f"INDEED_UI_REQUIRES_REVIEW — Diagnóstico local: {diagnostic}"
-    assert api.human == [("t1","INDEED_UI_REQUIRES_REVIEW")]
+    assert snap.last_error == f"INDEED_AUTH_REQUIRED — Diagnóstico local: {diagnostic}"
+    assert api.human == [("t1","INDEED_AUTH_REQUIRED")]
