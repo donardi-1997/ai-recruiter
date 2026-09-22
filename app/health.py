@@ -37,7 +37,7 @@ def _check_db() -> bool:
         engine.dispose()
         return True
     except Exception as exc:
-        logger.warning("DB health check failed: %s", exc)
+        logger.warning("DB health check failed: %s", type(exc).__name__)
         return False
 
 
