@@ -90,6 +90,34 @@ def test_spa_listing_keeps_clickable_job_until_detail_exposes_stable_identity():
     assert detail_state["externalJobKey"] == "job-detail-456"
 
 
+def test_spa_listing_accepts_job_list_card_without_identity_until_detail():
+    html = """
+    <main>
+      <ul>
+        <li class="job-card">
+          <input type="checkbox" aria-label="Seleccionar empleo" />
+          <button type="button" role="link">AUXILIAR DE BODEGA</button>
+          <span>12 Todos · 4 Nuevos</span>
+          <span>Bogotá, Cundinamarca</span>
+          <span>Abierto</span>
+          <button type="button" aria-label="Más opciones">...</button>
+        </li>
+      </ul>
+    </main>
+    """
+    with sync_playwright() as playwright:
+        browser = playwright.chromium.launch(headless=True)
+        page = browser.new_page()
+        page.set_content(html)
+        state = page.evaluate(SAFE_LISTING_STATE_SCRIPT)
+        browser.close()
+
+    assert len(state["rows"]) == 1
+    assert state["rows"][0]["externalJobKey"] == ""
+    assert state["rows"][0]["title"] == "AUXILIAR DE BODEGA"
+    assert state["rows"][0]["clickToken"]
+
+
 def test_spa_listing_ignores_non_job_navigation_and_legal_links():
     html = """
     <nav>
@@ -119,6 +147,7 @@ def test_spa_listing_ignores_non_job_navigation_and_legal_links():
     assert len(state["rows"]) == 1
     assert state["rows"][0]["title"] == "VENDEDOR PUNTO DE VENTA"
     assert "Condiciones del servicio" not in [row["title"] for row in state["rows"]]
+    assert "Mensajes" not in [row["title"] for row in state["rows"]]
 
 
 def test_detail_state_reports_loading_until_spa_job_detail_is_hydrated():
