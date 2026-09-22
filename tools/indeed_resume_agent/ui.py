@@ -40,6 +40,7 @@ def build_ui_state(snapshot: WorkerSnapshot, stats: QueueStats) -> UiState:
         "DIAGNOSTIC_ANCHOR_FAILED": "Chrome no creó la pestaña de respaldo. Cierra Chrome y vuelve a abrir Diagnostic mode",
         "DIAGNOSTIC_MODE": "Modo diagnóstico activo: usa Indeed normalmente y luego pulsa Guardar diagnóstico",
         "DIAGNOSTIC_SAVED": "Diagnóstico guardado",
+        "DIAGNOSTIC_BROWSER_FAILED": "No se pudo recuperar la sesión de Chrome del agente. Pulsa Open Indeed (Google Chrome) y vuelve a intentar Diagnostic mode",
         "WAITING_FOR_HUMAN": "Indeed requiere intervención manual",
         "LEASE_LOST": "La tarea será reclamada de forma segura",
         "RETRY": "Reintento programado",
@@ -264,7 +265,7 @@ def run_ui(*, worker, api, browser) -> None:
                             )
                         except Exception:
                             diagnostic_snapshot = WorkerSnapshot(
-                                "ERROR",
+                                "DIAGNOSTIC_BROWSER_FAILED",
                                 worker.snapshot.active_candidate,
                                 worker.snapshot.processed_session,
                                 None,
