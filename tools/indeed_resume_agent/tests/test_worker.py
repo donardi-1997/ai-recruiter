@@ -41,15 +41,15 @@ class FakeBrowser:
         self.urls=[]
         self.candidate_names=[]
         self.job_titles=[]
-        self.close_calls=0
+        self.reset_calls=0
     def fetch_resume(self, url, *, candidate_name=None, job_title=None):
         self.urls.append(url)
         self.candidate_names.append(candidate_name)
         self.job_titles.append(job_title)
         if self.error: raise self.error
         return self.result
-    def close(self):
-        self.close_calls += 1
+    def reset_session(self):
+        self.reset_calls += 1
 
 
 class FakeHeartbeat:
@@ -219,7 +219,7 @@ def test_technical_browser_failure_is_reported_to_backend(tmp_path):
     assert api.failures == [("t1","RESUME_BROWSER_FETCH_FAILED")]
     assert snap.last_error == "RESUME_BROWSER_FETCH_FAILED"
     assert "secret URL" not in (snap.last_error or "")
-    assert browser.close_calls == 1
+    assert browser.reset_calls == 1
 
 
 def test_browser_stage_failure_code_is_preserved(tmp_path):
