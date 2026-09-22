@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
+
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 
@@ -137,6 +139,214 @@ def test_reconciliation_is_owner_scoped():
         tasks = db.query(IndeedEmailResumeTask).all()
         assert len(tasks) == 1
         assert tasks[0].owner_sub == "owner-1"
+    finally:
+        db.close()
+        engine.dispose()
+
+
+def test_duplicate_same_candidate_same_job_keeps_only_newest_active_application():
+    engine, db = _db()
+    try:
+        job = Job(title="Operations Coordinator", description="Ops", owner_sub="owner-1")
+        db.add(job)
+        db.flush()
+
+        old_event = CandidateIngestionEvent(
+            owner_sub="owner-1",
+            source="EMAIL",
+            provider="INDEED",
+            source_account="gmail",
+            external_id="old-message",
+            status="RECEIVED",
+            job_id=job.id,
+            raw_metadata={"internal_date_ms": 1000},
+        )
+        new_event = CandidateIngestionEvent(
+            owner_sub="owner-1",
+            source="EMAIL",
+            provider="INDEED",
+            source_account="gmail",
+            external_id="new-message",
+            status="RECEIVED",
+            job_id=job.id,
+            raw_metadata={"internal_date_ms": 2000},
+        )
+        db.add_all([old_event, new_event])
+        db.flush()
+        old_task = IndeedEmailResumeTask(
+            owner_sub="owner-1",
+            ingestion_event_id=old_event.id,
+            job_id=job.id,
+            candidate_name="Edwar Lisandro",
+            job_title=job.title,
+            status="WAITING_DOWNLOAD",
+        )
+        new_task = IndeedEmailResumeTask(
+            owner_sub="owner-1",
+            ingestion_event_id=new_event.id,
+            job_id=job.id,
+            candidate_name="EDWAR LISANDRO",
+            job_title=job.title,
+            status="WAITING_DOWNLOAD",
+        )
+        db.add_all([old_task, new_task])
+        db.commit()
+
+        result = indeed_agent_sync.compact_duplicate_application_tasks(
+            db,
+            owner_sub="owner-1",
+        )
+
+        db.refresh(old_task)
+        db.refresh(new_task)
+        assert result["superseded"] == 1
+        assert old_task.status == "IGNORED"
+        assert old_task.last_error_code == "SUPERSEDED_BY_NEWER_APPLICATION"
+        assert new_task.status == "WAITING_DOWNLOAD"
+    finally:
+        db.close()
+        engine.dispose()
+
+
+def test_same_candidate_name_in_different_jobs_is_not_collapsed():
+    engine, db = _db()
+    try:
+        first_job = Job(title="Backend Developer", description="API", owner_sub="owner-1")
+        second_job = Job(title="Frontend Developer", description="React", owner_sub="owner-1")
+        db.add_all([first_job, second_job])
+        db.flush()
+
+        for index, job in enumerate((first_job, second_job), start=1):
+            event = CandidateIngestionEvent(
+                owner_sub="owner-1",
+                source="EMAIL",
+                provider="INDEED",
+                source_account="gmail",
+                external_id=f"message-{index}",
+                status="RECEIVED",
+                job_id=job.id,
+                raw_metadata={"internal_date_ms": index * 1000},
+            )
+            db.add(event)
+            db.flush()
+            db.add(
+                IndeedEmailResumeTask(
+                    owner_sub="owner-1",
+                    ingestion_event_id=event.id,
+                    job_id=job.id,
+                    candidate_name="Ana Perez",
+                    job_title=job.title,
+                    status="WAITING_DOWNLOAD",
+                )
+            )
+        db.commit()
+
+        result = indeed_agent_sync.compact_duplicate_application_tasks(
+            db,
+            owner_sub="owner-1",
+        )
+
+        assert result["superseded"] == 0
+        assert db.query(IndeedEmailResumeTask).filter_by(status="WAITING_DOWNLOAD").count() == 2
+    finally:
+        db.close()
+        engine.dispose()
+
+
+def test_candidate_ambiguity_is_requeued_after_latest_application_logic():
+    engine, db = _db()
+    try:
+        job = Job(title="Operations Coordinator", description="Ops", owner_sub="owner-1")
+        db.add(job)
+        db.flush()
+        event = CandidateIngestionEvent(
+            owner_sub="owner-1",
+            source="EMAIL",
+            provider="INDEED",
+            source_account="gmail",
+            external_id="ambiguous-message",
+            status="NEEDS_REVIEW",
+            job_id=job.id,
+            raw_metadata={"internal_date_ms": 3000},
+        )
+        db.add(event)
+        db.flush()
+        task = IndeedEmailResumeTask(
+            owner_sub="owner-1",
+            ingestion_event_id=event.id,
+            job_id=job.id,
+            candidate_name="Edwar Lisandro",
+            job_title=job.title,
+            status="NEEDS_HUMAN",
+            attempt_count=2,
+            last_error_code="INDEED_CANDIDATE_AMBIGUOUS",
+        )
+        db.add(task)
+        db.commit()
+
+        result = indeed_agent_sync.compact_duplicate_application_tasks(
+            db,
+            owner_sub="owner-1",
+        )
+
+        db.refresh(task)
+        assert result["requeued_ambiguity"] == 1
+        assert task.status == "WAITING_DOWNLOAD"
+        assert task.attempt_count == 0
+        assert task.last_error_code is None
+    finally:
+        db.close()
+        engine.dispose()
+
+
+def test_reconciliation_prefers_latest_indeed_application_link():
+    engine, db = _db()
+    try:
+        job = Job(title="Operations Coordinator", description="Ops", owner_sub="owner-1")
+        candidate = Candidate(name="Edwar Lisandro", owner_sub="owner-1", metadata_={})
+        db.add_all([job, candidate])
+        db.flush()
+        old_link = IndeedCandidateLink(
+            owner_sub="owner-1",
+            candidate_id=candidate.id,
+            job_id=job.id,
+            asset_id="asset-old",
+            source_name="Indeed",
+            staged_at=datetime(2026, 5, 1, tzinfo=timezone.utc),
+        )
+        new_link = IndeedCandidateLink(
+            owner_sub="owner-1",
+            candidate_id=candidate.id,
+            job_id=job.id,
+            asset_id="asset-new",
+            source_name="Indeed",
+            staged_at=datetime(2026, 9, 20, tzinfo=timezone.utc),
+        )
+        db.add_all([old_link, new_link])
+        db.flush()
+        db.add_all([
+            IndeedResumeIngestion(
+                owner_sub="owner-1",
+                candidate_link_id=old_link.id,
+                status="FAILED",
+            ),
+            IndeedResumeIngestion(
+                owner_sub="owner-1",
+                candidate_link_id=new_link.id,
+                status="FAILED",
+            ),
+        ])
+        db.commit()
+
+        result = indeed_agent_sync.reconcile_existing_indeed_candidates(
+            db,
+            owner_sub="owner-1",
+        )
+
+        assert result["scanned"] == 1
+        task = db.query(IndeedEmailResumeTask).one()
+        event = db.query(CandidateIngestionEvent).filter_by(id=task.ingestion_event_id).one()
+        assert event.raw_metadata["indeed_candidate_link_id"] == new_link.id
     finally:
         db.close()
         engine.dispose()
