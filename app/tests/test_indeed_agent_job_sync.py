@@ -187,7 +187,7 @@ def test_empty_refresh_never_erases_existing_indeed_description():
         engine.dispose()
 
 
-def test_vacancy_refresh_recovers_waiting_application_without_replaying_gmail():
+def test_vacancy_refresh_stays_jobs_only_and_application_repair_is_separate():
     engine, db = _db()
     try:
         event = CandidateIngestionEvent(
@@ -217,27 +217,35 @@ def test_vacancy_refresh_recovers_waiting_application_without_replaying_gmail():
         )
 
         db.refresh(event)
+        assert "applications_recovered" not in result
+        assert event.status == "NEEDS_REVIEW"
+        assert event.job_id is None
+        assert db.query(IndeedEmailResumeTask).count() == 0
+
+        recovered = indeed_job_sync.recover_waiting_applications(
+            db,
+            owner_sub="owner-1",
+        )
+
+        db.refresh(event)
         task = db.query(IndeedEmailResumeTask).filter_by(
             ingestion_event_id=event.id
-        ).one_or_none()
+        ).one()
         job = db.query(Job).one()
 
-        assert result["applications_recovered"] == 1
+        assert recovered == 1
         assert event.status == "RECEIVED"
         assert event.job_id == job.id
         assert event.last_error_code == "RESUME_DOWNLOAD_PENDING"
-        assert task is not None
         assert task.job_id == job.id
         assert task.candidate_name == "Ada Candidate"
         assert task.job_title == "Cloud Engineer"
         assert task.status == "WAITING_DOWNLOAD"
 
-        repeated = indeed_job_sync.sync_vacancy_snapshots(
+        assert indeed_job_sync.recover_waiting_applications(
             db,
             owner_sub="owner-1",
-            snapshots=[snapshot()],
-        )
-        assert repeated["applications_recovered"] == 0
+        ) == 0
         assert db.query(IndeedEmailResumeTask).filter_by(
             ingestion_event_id=event.id
         ).count() == 1
