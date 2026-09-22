@@ -48,6 +48,7 @@ def build_ui_state(snapshot: WorkerSnapshot, stats: QueueStats) -> UiState:
         "DIAGNOSTIC_SAVED": "Diagnóstico guardado",
         "DIAGNOSTIC_BROWSER_FAILED": "No se pudo recuperar la sesión de Chrome del agente. Pulsa Open Indeed (Google Chrome) y vuelve a intentar Diagnostic mode",
         "WAITING_FOR_HUMAN": "Indeed requiere intervención manual",
+        "NEEDS_REVIEW_CONTINUE": "Caso apartado para revisión manual; continuando con la cola",
         "LEASE_LOST": "La tarea será reclamada de forma segura",
         "RETRY": "Reintento programado",
         "FAILED": "La tarea requiere revisión",
@@ -61,7 +62,7 @@ def build_ui_state(snapshot: WorkerSnapshot, stats: QueueStats) -> UiState:
     }
     status_label = labels.get(state, "Procesando")
     diagnostic_marker = " — Diagnóstico local: "
-    if state == "WAITING_FOR_HUMAN" and snapshot.last_error:
+    if state in {"WAITING_FOR_HUMAN", "NEEDS_REVIEW_CONTINUE"} and snapshot.last_error:
         if diagnostic_marker in snapshot.last_error:
             code, diagnostic_path = snapshot.last_error.split(diagnostic_marker, 1)
             if _SAFE_HUMAN_CODE.fullmatch(code) and diagnostic_path:
