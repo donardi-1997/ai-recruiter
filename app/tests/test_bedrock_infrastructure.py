@@ -470,7 +470,7 @@ def test_positive_match_without_evidence_is_downgraded_to_missing(monkeypatch):
             {
                 "content": {
                     "text": (
-                        "Experiencia administrando servicios AWS. "
+                        "Implementó servicios productivos sobre AWS. "
                         "No hay evidencia de Python."
                     )
                 }
@@ -490,6 +490,59 @@ def test_positive_match_without_evidence_is_downgraded_to_missing(monkeypatch):
     ]
     assert result["strengths"] == ["AWS"]
     assert result["gaps"] == ["Python"]
+
+
+def test_hallucinated_positive_evidence_does_not_inflate_score(monkeypatch):
+    import app.infrastructure.bedrock.evaluator as evaluator_module
+
+    monkeypatch.setattr(
+        evaluator_module,
+        "REQUIREMENT_EXTRACTION_PROMPT",
+        _PromptStub("extract"),
+    )
+    monkeypatch.setattr(
+        evaluator_module,
+        "CANDIDATE_EVALUATION_PROMPT",
+        _PromptStub("evaluate"),
+    )
+    monkeypatch.setattr(evaluator_module, "get_llm", lambda: object())
+
+    def fake_invoke(chain, payload, description):
+        if chain == "extract":
+            return {"requirements": ["Kubernetes"]}
+        return {
+            "requirements": [
+                {
+                    "requirement": "Kubernetes",
+                    "status": "MATCH",
+                    "evidence": "Administró clusters Kubernetes en producción.",
+                }
+            ]
+        }
+
+    monkeypatch.setattr(evaluator_module, "invoke_json_prompt", fake_invoke)
+
+    result = evaluator_module.evaluate_candidate(
+        candidate_id="cand-1",
+        job_description="Kubernetes",
+        results=[
+            {
+                "content": {
+                    "text": "Experiencia en Python y APIs REST."
+                }
+            }
+        ],
+    )
+
+    assert result["match_score"] == 0
+    assert result["recommendation"] == "LOW_MATCH"
+    assert result["requirements"] == [
+        {
+            "requirement": "Kubernetes",
+            "status": "MISSING",
+            "evidence": None,
+        }
+    ]
 
 
 # ============================================================
