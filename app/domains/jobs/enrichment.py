@@ -34,6 +34,10 @@ REGLAS ABSOLUTAS:
 - Si una implicacion del cargo es incierta, incluyela en assumptions_to_validate.
 - Separa tecnologias y certificaciones requeridas de las preferidas.
 - No uses atributos protegidos ni criterios personales no relacionados con el cargo.
+- Redacta EN ESPAÑOL todos los valores de texto generados para la propuesta.
+- Usa español profesional y natural para equipos de RR. HH. en Latinoamérica.
+- Conserva sin traducir nombres oficiales de tecnologías, productos, certificaciones, siglas y marcas (por ejemplo: AWS, Terraform, Power BI).
+- Las claves JSON deben conservar exactamente los nombres definidos en el contrato de salida; solo sus valores de lenguaje natural deben estar en español.
 - Devuelve unicamente JSON que cumpla exactamente el contrato de salida.
 {_retry_instruction}
 """.strip()
@@ -59,6 +63,11 @@ def _build_prompt(request: JobEnrichmentRequest, company_context: dict) -> str:
         [
             "COMPANY_CONTEXT\n" + json.dumps(company_context, ensure_ascii=False, sort_keys=True),
             "JOB_DRAFT\n" + json.dumps(request.model_dump(mode="json"), ensure_ascii=False, sort_keys=True),
+            (
+                "OUTPUT_LANGUAGE\n"
+                "es-CO: todos los valores de lenguaje natural deben redactarse en español. "
+                "Conserva nombres oficiales de tecnologías, productos, certificaciones, siglas y marcas."
+            ),
             "OUTPUT_CONTRACT\n" + json.dumps(output_contract, ensure_ascii=False, sort_keys=True),
         ]
     )
