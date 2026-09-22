@@ -12,9 +12,9 @@ vi.mock("../api/client", () => ({
 
 import api from "../api/client";
 
-function renderDetail() {
+function renderDetail(initialEntry = "/candidates/candidate-1?job_id=job-1") {
   return render(
-    <MemoryRouter initialEntries={["/candidates/candidate-1?job_id=job-1"]}>
+    <MemoryRouter initialEntries={[initialEntry]}>
       <Routes>
         <Route path="/candidates/:candidate_id" element={<CandidateDetail />} />
       </Routes>
@@ -154,10 +154,10 @@ describe("CandidateDetail Indeed canonical resume", () => {
           },
         });
       }
-      if (url === "/jobs/job-1/candidates/candidate-1/resume") {
+      if (url === "/candidates/candidate-1/download") {
         return Promise.resolve({
           data: {
-            url: "https://canonical.invalid/download",
+            download_url: "https://canonical.invalid/download",
             expires_in: 300,
           },
         });
@@ -170,9 +170,40 @@ describe("CandidateDetail Indeed canonical resume", () => {
     fireEvent.click(button);
 
     await waitFor(() => {
-      expect(api.get).toHaveBeenCalledWith("/jobs/job-1/candidates/candidate-1/resume");
+      expect(api.get).toHaveBeenCalledWith("/candidates/candidate-1/download");
       expect(window.open).toHaveBeenCalledWith(
         "https://canonical.invalid/download",
+        "_blank",
+        "noopener,noreferrer"
+      );
+    });
+  });
+
+  it("opens the canonical CV for candidates that do not come from Indeed", async () => {
+    api.get.mockImplementation((url) => {
+      if (url === "/candidates/candidate-1") return Promise.resolve(candidateResponse());
+      if (url === "/candidates/candidate-1/evaluations") {
+        return Promise.resolve({ data: { evaluations: [] } });
+      }
+      if (url === "/candidates/candidate-1/download") {
+        return Promise.resolve({
+          data: {
+            download_url: "https://canonical.invalid/manual-cv",
+            expires_in: 300,
+          },
+        });
+      }
+      return Promise.reject(new Error(`Unexpected URL ${url}`));
+    });
+
+    renderDetail("/candidates/candidate-1");
+    const button = await screen.findByRole("button", { name: /Ver CV/i });
+    fireEvent.click(button);
+
+    await waitFor(() => {
+      expect(api.get).toHaveBeenCalledWith("/candidates/candidate-1/download");
+      expect(window.open).toHaveBeenCalledWith(
+        "https://canonical.invalid/manual-cv",
         "_blank",
         "noopener,noreferrer"
       );
