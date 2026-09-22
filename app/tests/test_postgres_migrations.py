@@ -133,6 +133,11 @@ def test_alembic_head_builds_current_postgres_schema():
             "updated_at",
         }.issubset(indeed_email_task_columns)
 
+        indeed_candidate_link_columns = {
+            column["name"] for column in inspector.get_columns("indeed_candidate_links")
+        }
+        assert "staged_at" in indeed_candidate_link_columns
+
         indeed_job_link_columns = {
             column["name"] for column in inspector.get_columns("indeed_job_links")
         }
@@ -175,6 +180,6 @@ def test_alembic_head_builds_current_postgres_schema():
         job_columns = {column["name"] for column in inspector.get_columns("jobs")}
         assert {"indeed_description", "ai_description", "active_description_source"}.issubset(job_columns)
 
-        assert revision == "014"
+        assert revision == "015"
     finally:
         engine.dispose()
