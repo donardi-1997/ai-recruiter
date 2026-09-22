@@ -44,6 +44,7 @@ class UploadResponse(BaseModel):
     document_id: str
     filename: str
     document_sha256: str | None = None
+    ingestion_queued: bool
 
 
 def _translate(exc: Exception) -> HTTPException:
@@ -138,12 +139,18 @@ async def upload_resume(
             content_type=file.content_type or "",
             data=data,
         )
+        ingestion_queued = service.dispatch_stored_resume_ingestion(
+            db,
+            owner_sub=principal.owner_sub,
+            document=document,
+        )
     except Exception as exc:
         raise _translate(exc)
     return UploadResponse(
         document_id=document.id,
         filename=document.filename,
         document_sha256=document.document_sha256,
+        ingestion_queued=ingestion_queued,
     )
 
 
