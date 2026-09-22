@@ -1,10 +1,6 @@
 import axios from "axios";
 
-// Feature flag: if USE_NEW_BACKEND=true, use REEMPLAZAR_API_BASE; else use legacy VITE_API_URL
-const USE_NEW_BACKEND = import.meta.env.VITE_USE_NEW_BACKEND === "true";
-const BASE_URL = USE_NEW_BACKEND
-  ? import.meta.env.REEMPLAZAR_API_BASE
-  : import.meta.env.VITE_API_URL;
+const BASE_URL = import.meta.env.VITE_API_URL || "/api";
 
 const api = axios.create({
   baseURL: BASE_URL,
