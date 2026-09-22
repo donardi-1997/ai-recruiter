@@ -56,7 +56,7 @@ LISTING_STATE_SCRIPT = r"""
   const ignoredClickable = /^(todos|nuevos|patrocinar empleo|abierto|pausado|cerrado|más|more)$/i;
   const chooseClickable = (root) => {
     const preferred = Array.from(root.querySelectorAll(
-      '[data-testid*="title" i], a[href], button[role="link"], [role="link"], button'
+      '[data-testid*="title" i], a, button[role="link"], [role="link"], button'
     ));
     for (const node of preferred) {
       const text = clean(node.getAttribute?.('aria-label') || node.innerText || '');
@@ -82,7 +82,6 @@ LISTING_STATE_SCRIPT = r"""
     if (!clickable) continue;
     const href = String(clickable.href || '');
     const externalJobKey = jobKeyFromHref(href) || jobKeyFromElement(root);
-    if (!externalJobKey) continue;
     const title = clean(
       clickable.getAttribute?.('aria-label')
       || clickable.innerText
@@ -90,7 +89,10 @@ LISTING_STATE_SCRIPT = r"""
       || ''
     );
     if (!title) continue;
-    const dedupeKey = `${externalJobKey}|${title}`;
+    const rowText = clean(root.innerText || '');
+    const dedupeKey = externalJobKey
+      ? `stable|${externalJobKey}`
+      : `pending|${title}|${rowText}`;
     if (seen.has(dedupeKey)) continue;
     seen.add(dedupeKey);
     const clickToken = `asiati-vacancy-${Date.now()}-${tokenCounter++}`;
@@ -98,10 +100,11 @@ LISTING_STATE_SCRIPT = r"""
     rows.push({
       href,
       title,
-      rowText: clean(root.innerText || ''),
+      rowText,
       externalJobKey,
       clickToken,
-      scrollY: Number(window.scrollY || 0)
+      scrollY: Number(window.scrollY || 0),
+      listingUrl: String(window.location.href || '')
     });
   }
 
@@ -113,7 +116,7 @@ LISTING_STATE_SCRIPT = r"""
     if (!externalJobKey) continue;
     const title = clean(anchor.getAttribute('aria-label') || anchor.innerText || '');
     if (!title) continue;
-    const dedupeKey = `${externalJobKey}|${title}`;
+    const dedupeKey = `stable|${externalJobKey}`;
     if (seen.has(dedupeKey)) continue;
     seen.add(dedupeKey);
     const clickToken = `asiati-vacancy-${Date.now()}-${tokenCounter++}`;
@@ -124,7 +127,8 @@ LISTING_STATE_SCRIPT = r"""
       rowText: clean(anchor.closest('tr,li,article,[role="row"]')?.innerText || anchor.innerText || ''),
       externalJobKey,
       clickToken,
-      scrollY: Number(window.scrollY || 0)
+      scrollY: Number(window.scrollY || 0),
+      listingUrl: String(window.location.href || '')
     });
   }
 
@@ -164,6 +168,41 @@ DETAIL_STATE_SCRIPT = r"""
     .replace(/\n[ \t]+/g, '\n')
     .replace(/\n{3,}/g, '\n\n')
     .trim();
+  const validKey = (v) => /^[A-Za-z0-9_-]{3,200}$/.test(String(v || '').trim());
+  const jobKeyFromHref = (rawHref) => {
+    const href = String(rawHref || '').trim();
+    if (!href) return '';
+    try {
+      const url = new URL(href, location.href);
+      if (String(url.hostname || '').toLowerCase() !== 'employers.indeed.com') return '';
+      for (const key of ['jobId', 'jobid', 'id', 'jk', 'jobKey', 'jobkey']) {
+        const value = oneLine(url.searchParams.get(key));
+        if (validKey(value)) return value;
+      }
+      const match = String(url.pathname || '').match(/\/(?:jobs?|job)\/(?:view\/)?([A-Za-z0-9_-]{3,200})(?:\/|$)/i);
+      if (match && validKey(match[1]) && !['view', 'open', 'paused', 'create', 'new'].includes(match[1].toLowerCase())) {
+        return match[1];
+      }
+    } catch (_) {}
+    return '';
+  };
+  const jobKeyFromElement = (element) => {
+    if (!element) return '';
+    const nodes = [element, ...Array.from(element.querySelectorAll?.('*') || [])];
+    for (const node of nodes) {
+      if (node.href) {
+        const hrefKey = jobKeyFromHref(node.href);
+        if (hrefKey) return hrefKey;
+      }
+      for (const attr of Array.from(node.attributes || [])) {
+        const name = String(attr.name || '').toLowerCase();
+        const value = oneLine(attr.value);
+        const looksLikeJobIdentity = name.includes('job') && (name.includes('id') || name.includes('key'));
+        if (looksLikeJobIdentity && validKey(value)) return value;
+      }
+    }
+    return '';
+  };
   const firstText = (selectors, multiline = false) => {
     for (const selector of selectors) {
       const nodes = Array.from(document.querySelectorAll(selector));
@@ -216,9 +255,12 @@ DETAIL_STATE_SCRIPT = r"""
     '[aria-label*="status" i]',
     '[aria-label*="estado" i]'
   ]);
+  const detailRoot = document.querySelector('[role="dialog"], [data-testid*="job-detail" i], main') || document.body;
+  const externalJobKey = jobKeyFromHref(window.location.href) || jobKeyFromElement(detailRoot);
   const time = document.querySelector('time[datetime]');
   return {
     url: window.location.href,
+    externalJobKey,
     title,
     description: descriptionCandidates[0] || '',
     location: locationText,
@@ -269,6 +311,10 @@ def _safe_job_url(raw_url: str | None) -> str:
     return value
 
 
+def _normalized_discovery_text(value: object) -> str:
+    return " ".join(str(value or "").casefold().split())
+
+
 async def _listing_state(browser, cdp) -> dict:
     value = await browser._evaluate(cdp, LISTING_STATE_SCRIPT)
     return value if isinstance(value, dict) else {"rows": [], "nextHref": ""}
@@ -280,7 +326,7 @@ async def _detail_state(browser, cdp) -> dict:
 
 
 async def _wait_for_detail(browser, cdp, expected_title: str) -> dict:
-    normalized_expected = " ".join(str(expected_title or "").casefold().split())
+    normalized_expected = _normalized_discovery_text(expected_title)
     last_state: dict = {}
     deadline = asyncio.get_running_loop().time() + max(
         8.0,
@@ -289,14 +335,10 @@ async def _wait_for_detail(browser, cdp, expected_title: str) -> dict:
     while asyncio.get_running_loop().time() < deadline:
         last_state = await _detail_state(browser, cdp)
         if not last_state.get("loading"):
-            title = " ".join(str(last_state.get("title") or "").casefold().split())
+            title = _normalized_discovery_text(last_state.get("title"))
             has_expected_title = bool(normalized_expected and normalized_expected in title)
-            has_detail_content = bool(
-                str(last_state.get("description") or "").strip()
-                or str(last_state.get("location") or "").strip()
-                or str(last_state.get("status") or "").strip()
-            )
-            if has_expected_title or has_detail_content:
+            has_description = bool(str(last_state.get("description") or "").strip())
+            if has_expected_title or has_description:
                 return last_state
         await asyncio.sleep(0.2)
     return last_state
@@ -351,8 +393,7 @@ async def _close_spa_detail(browser, cdp) -> bool:
   const selectors = [
     'button[aria-label*="close" i]',
     'button[aria-label*="cerrar" i]',
-    '[data-testid*="close" i]',
-    '[role="dialog"] button:last-of-type'
+    '[data-testid*="close" i]'
   ];
   for (const selector of selectors) {
     const candidate = document.querySelector(selector);
@@ -400,12 +441,25 @@ async def _collect_async(browser) -> list[dict]:
                 external_job_key = str(row.get("externalJobKey") or "").strip()
                 if not external_job_key:
                     external_job_key = _job_key_from_url(href)
-                if not external_job_key:
+                title = " ".join(str(row.get("title") or "").split()).strip()
+                if not title:
                     continue
+                row_text = " ".join(str(row.get("rowText") or "").split()).strip()
                 normalized = dict(row)
                 normalized["href"] = href
+                normalized["title"] = title
+                normalized["rowText"] = row_text
                 normalized["externalJobKey"] = external_job_key[:200]
-                rows_by_key[external_job_key[:200]] = normalized
+                normalized["listingUrl"] = _safe_job_url(row.get("listingUrl")) or page_url
+                if external_job_key:
+                    discovery_key = f"stable:{external_job_key[:200]}"
+                else:
+                    discovery_key = (
+                        "pending:"
+                        f"{_normalized_discovery_text(title)}|"
+                        f"{_normalized_discovery_text(row_text)}"
+                    )
+                rows_by_key[discovery_key] = normalized
 
             latest_next = _safe_job_url(state.get("nextHref"))
             current_count = len(rows_by_key)
@@ -426,16 +480,24 @@ async def _collect_async(browser) -> list[dict]:
             break
         page_url = latest_next
 
-    snapshots: list[dict] = []
-    active_listing_url = INDEED_JOBS_URL
-    for external_job_key, row in rows_by_key.items():
+    snapshots_by_key: dict[str, dict] = {}
+    current_listing_url = ""
+    for row in rows_by_key.values():
         href = _safe_job_url(row.get("href"))
         expected_title = " ".join(str(row.get("title") or "").split()).strip()
+        listing_url = _safe_job_url(row.get("listingUrl")) or INDEED_JOBS_URL
+        external_job_key = str(row.get("externalJobKey") or "").strip()
         used_spa_click = False
 
         if href and _job_key_from_url(href):
             await browser._navigate(cdp, href)
+            current_listing_url = ""
         else:
+            if current_listing_url != listing_url:
+                await browser._navigate(cdp, listing_url)
+                current_listing_url = listing_url
+                if await browser._requires_human(cdp):
+                    raise RuntimeError("INDEED_AUTH_REQUIRED")
             used_spa_click = await _click_listing_row(browser, cdp, row)
             if not used_spa_click:
                 continue
@@ -444,28 +506,29 @@ async def _collect_async(browser) -> list[dict]:
             raise RuntimeError("INDEED_AUTH_REQUIRED")
         detail = await _wait_for_detail(browser, cdp, expected_title)
         detail_url = _safe_job_url(detail.get("url")) or href
-        stable_key = _job_key_from_url(detail_url) or external_job_key
+        detail_job_key = str(detail.get("externalJobKey") or "").strip()
+        stable_key = _job_key_from_url(detail_url) or detail_job_key or external_job_key
         title = " ".join(str(detail.get("title") or expected_title).split()).strip()
         description = str(detail.get("description") or "").strip()
         if stable_key and title:
-            snapshots.append(
-                {
-                    "external_job_key": stable_key[:200],
-                    "title": title,
-                    "description": description,
-                    "status": str(detail.get("status") or "").strip() or None,
-                    "location": str(detail.get("location") or "").strip() or None,
-                    "posted_at": str(detail.get("postedAt") or "").strip() or None,
-                }
-            )
+            snapshots_by_key[stable_key[:200]] = {
+                "external_job_key": stable_key[:200],
+                "title": title,
+                "description": description,
+                "status": str(detail.get("status") or "").strip() or None,
+                "location": str(detail.get("location") or "").strip() or None,
+                "posted_at": str(detail.get("postedAt") or "").strip() or None,
+            }
 
         if used_spa_click:
             if not await _close_spa_detail(browser, cdp):
-                await browser._navigate(cdp, active_listing_url)
+                await browser._navigate(cdp, listing_url)
+            current_listing_url = listing_url
         else:
-            await browser._navigate(cdp, active_listing_url)
+            await browser._navigate(cdp, listing_url)
+            current_listing_url = listing_url
 
-    return snapshots
+    return list(snapshots_by_key.values())
 
 
 def collect_vacancy_snapshots(browser) -> list[dict]:
