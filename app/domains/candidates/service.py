@@ -19,6 +19,7 @@ from app.infrastructure.imports.documents import (
     PDF_CONTENT_TYPE,
     extract_document,
 )
+from app.infrastructure.imports.storage import create_canonical_candidate_download
 from app.infrastructure.storage.candidate_documents import index_candidate_document
 
 class LegacyCandidateUploadError(ValueError):
@@ -168,6 +169,16 @@ def get_candidate_evaluations(
     return evaluations_repository.get_evaluations_for_candidate(db, candidate_id)
 
 
+def get_candidate_download(
+    db: Session,
+    candidate_id: str,
+    owner_sub: str,
+) -> dict | None:
+    """Return a short-lived URL only after owner-scoped candidate authorization."""
+    require_candidate(db, candidate_id, owner_sub)
+    return create_canonical_candidate_download(candidate_id)
+
+
 def delete_candidate(
     db: Session,
     candidate_id: str,
@@ -247,6 +258,7 @@ __all__ = [
     "set_application_status",
     "get_job_candidate_evaluation",
     "get_candidate_evaluations",
+    "get_candidate_download",
     "delete_candidate",
     "delete_all_candidates",
     "create_and_index_candidate",
