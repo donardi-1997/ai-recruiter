@@ -158,6 +158,7 @@ def test_sync_all_exhausts_bootstrap_and_runs_incremental_catchup(tmp_path):
             "needs_review": 2,
             "skipped": 8,
             "has_more": True,
+            "reconcile_jobs": 4,
             "reconcile_scanned": 10,
             "reconcile_ready": 4,
             "reconcile_provider_pending": 2,
@@ -172,6 +173,7 @@ def test_sync_all_exhausts_bootstrap_and_runs_incremental_catchup(tmp_path):
             "needs_review": 1,
             "skipped": 4,
             "has_more": False,
+            "reconcile_jobs": 4,
             "reconcile_scanned": 10,
             "reconcile_ready": 4,
             "reconcile_provider_pending": 2,
@@ -186,6 +188,7 @@ def test_sync_all_exhausts_bootstrap_and_runs_incremental_catchup(tmp_path):
             "needs_review": 0,
             "skipped": 0,
             "has_more": False,
+            "reconcile_jobs": 4,
             "reconcile_scanned": 10,
             "reconcile_ready": 5,
             "reconcile_provider_pending": 1,
@@ -212,6 +215,7 @@ def test_sync_all_exhausts_bootstrap_and_runs_incremental_catchup(tmp_path):
     assert result.created == 66
     assert result.existing == 41
     assert result.needs_review == 3
+    assert result.reconcile_jobs == 4
     assert result.reconcile_scanned == 10
     assert result.reconcile_provider_pending == 1
     assert result.reconcile_queued == 3
@@ -229,6 +233,7 @@ def test_sync_all_fails_closed_at_page_limit(tmp_path):
                 "needs_review": 0,
                 "skipped": 0,
                 "has_more": True,
+                "reconcile_jobs": 0,
                 "reconcile_scanned": 0,
                 "reconcile_ready": 0,
                 "reconcile_provider_pending": 0,
