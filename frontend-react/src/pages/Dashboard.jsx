@@ -15,6 +15,7 @@ function Dashboard() {
   const [candidates, setCandidates] = useState([]);
   const [loading, setLoading] = useState(true);
   const [greeting, setGreeting] = useState(() => getGreeting());
+  const [loadError, setLoadError] = useState("");
 
   useEffect(() => {
     const updateGreeting = () => setGreeting(getGreeting());
@@ -35,6 +36,7 @@ function Dashboard() {
         setJobs(Array.isArray(jobsData) ? jobsData : jobsData.jobs || []);
         setCandidates(Array.isArray(candidatesData) ? candidatesData : candidatesData.candidates || []);
       } catch {
+        setLoadError("No fue posible cargar el resumen.");
       } finally {
         setLoading(false);
       }
@@ -57,6 +59,13 @@ function Dashboard() {
           <p>Así avanza tu proceso de selección hoy.</p>
         </div>
        </header>
+
+      {loadError && (
+        <div className="empty-state" role="alert">
+          <strong>No se pudo cargar el resumen</strong>
+          <p>{loadError}</p>
+        </div>
+      )}
 
       <section className="metrics-grid" aria-label="Indicadores principales">
         <MetricCard icon="▤" label="Vacantes activas" value={jobs.length} detail="Procesos en seguimiento" tone="blue" />
