@@ -94,6 +94,9 @@ describe("Jobs Indeed integration", () => {
       expect(api.post).toHaveBeenCalledWith("/jobs", {
         title: "KAM Colombia",
         description: "Lead strategic accounts in Colombia with strong commercial ownership.",
+        indeed_description: "Lead strategic accounts in Colombia with strong commercial ownership.",
+        ai_description: "",
+        active_description_source: "indeed",
         country_code: "CO",
         city: "Bogotá",
         employment_type: "FULL_TIME",
