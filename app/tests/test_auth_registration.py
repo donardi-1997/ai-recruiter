@@ -1,6 +1,7 @@
 """Registration behavior for Cognito-backed accounts."""
 
 from app import auth_routes
+from botocore.exceptions import ClientError
 
 
 class FakeSignupClient:
@@ -91,3 +92,54 @@ def test_register_contract_keeps_password_out_of_query_parameters():
 
     source = inspect.getsource(auth_routes.register)
     assert "Query(" not in source
+
+
+def test_register_normalizes_email_before_provider_call(monkeypatch):
+    signup_client = FakeSignupClient()
+    admin_client = FakeAdminClient()
+    session = FakeSession(admin_client)
+
+    monkeypatch.setattr(auth_routes, "cognito_client", signup_client)
+    monkeypatch.setattr(auth_routes, "get_cached_session", lambda: session)
+    monkeypatch.setattr(auth_routes, "COGNITO_USER_POOL_ID", "us-east-2_TestPool")
+
+    auth_routes.register(
+        auth_routes.RegisterRequest(
+            email="  Recruiter@Example.COM ",
+            password="StrongPass123",
+        )
+    )
+
+    assert signup_client.sign_up_call["Username"] == "recruiter@example.com"
+
+
+def test_register_does_not_expose_provider_error_message(monkeypatch):
+    class RejectingSignupClient:
+        def sign_up(self, **kwargs):
+            raise ClientError(
+                {
+                    "Error": {
+                        "Code": "InternalErrorException",
+                        "Message": "secret provider detail token=abc123",
+                    }
+                },
+                "SignUp",
+            )
+
+    monkeypatch.setattr(auth_routes, "cognito_client", RejectingSignupClient())
+    monkeypatch.setattr(auth_routes, "COGNITO_USER_POOL_ID", "us-east-2_TestPool")
+
+    import pytest
+    from fastapi import HTTPException
+
+    with pytest.raises(HTTPException) as exc_info:
+        auth_routes.register(
+            auth_routes.RegisterRequest(
+                email="recruiter@example.com",
+                password="StrongPass123",
+            )
+        )
+
+    assert exc_info.value.status_code == 500
+    assert exc_info.value.detail == "No fue posible crear la cuenta."
+    assert "secret provider detail" not in exc_info.value.detail
