@@ -34,6 +34,20 @@ Para iniciar:
 .\tools\indeed_resume_agent\run.ps1
 ```
 
+## Prueba final: sincronizar todo
+
+El botón **Sincronizar todo** ejecuta la revisión integral del tenant asociado a la credencial del agente:
+
+1. Recorre el histórico de Gmail/Indeed por páginas hasta agotar el bootstrap y ejecuta una pasada incremental final.
+2. Revisa todas las vacantes locales del tenant y todos los candidatos vinculados a Indeed.
+3. Conserva los CV ya completados y no duplica ingestas del proveedor que siguen activas.
+4. Cuando una descarga automática de Indeed falló o no existe, crea una tarea local de búsqueda determinística por **candidato + vacante** en Gestionar candidatos.
+5. Procesa la cola de CV de uno en uno con la sesión visible de Chrome.
+6. Si Indeed solicita login, MFA o CAPTCHA, el agente se detiene en **Needs attention**; la intervención sigue siendo manual.
+7. La prueba solo muestra **Prueba final completada** cuando la cola local queda en cero y no existen tareas `FAILED`, `NEEDS_HUMAN` ni CVs aún pendientes en el pipeline automático de Indeed.
+
+La operación es idempotente: volver a ejecutar **Sincronizar todo** no debe duplicar candidatos, asignaciones ni tareas ya cubiertas.
+
 ## Primer uso
 
 1. Verifique que Google Chrome esté instalado.
