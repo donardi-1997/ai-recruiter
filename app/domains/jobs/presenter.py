@@ -10,6 +10,18 @@ def job_payload(job, *, candidate_count: int | None = None) -> dict:
         "created_at": job.created_at.isoformat() if job.created_at else None,
     }
 
+    if hasattr(job, "active_description_source"):
+        source = getattr(job, "active_description_source", None) or "indeed"
+        indeed_description = getattr(job, "indeed_description", None)
+        ai_description = getattr(job, "ai_description", None)
+        if indeed_description is None and source == "indeed":
+            indeed_description = job.description
+        if ai_description is None and source == "ai":
+            ai_description = job.description
+        payload["indeed_description"] = indeed_description
+        payload["ai_description"] = ai_description
+        payload["active_description_source"] = source
+
     optional_fields = {
         "country_code": getattr(job, "country_code", None),
         "city": getattr(job, "city", None),
