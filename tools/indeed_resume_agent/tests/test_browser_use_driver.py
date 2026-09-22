@@ -1,4 +1,5 @@
 import asyncio
+import os
 import base64
 import io
 import zipfile
@@ -15,6 +16,7 @@ from tools.indeed_resume_agent.browser_use_driver import (
     _is_resume_download_url,
     _normalize_lookup_text,
     _safe_indeed_url,
+    _configure_browser_use_environment,
 )
 from tools.indeed_resume_agent.config import AgentConfig
 
@@ -95,21 +97,91 @@ def test_duplicate_candidates_are_fail_closed_and_job_can_disambiguate(tmp_path)
             "href": "https://employers.indeed.com/candidates/view?id=2",
         },
     ]
-    href, error = IndeedBrowserUse._select_candidate(
+    target, error = IndeedBrowserUse._select_candidate(
         rows,
         "Alejándra Camacho Sáenz",
         "Developer",
     )
     assert error is None
-    assert href and href.endswith("id=1")
+    assert target and str(target["href"]).endswith("id=1")
 
-    href, error = IndeedBrowserUse._select_candidate(
+    target, error = IndeedBrowserUse._select_candidate(
         rows,
         "Alejandra Camacho Saenz",
         None,
     )
-    assert href is None
+    assert target is None
     assert error == "INDEED_CANDIDATE_AMBIGUOUS"
+
+
+def test_row_only_namecell_remains_clickable_without_anchor():
+    rows = [
+        {
+            "name": "Alejandra Camacho Saenz",
+            "rowText": "Alejandra Camacho Saenz Developer",
+            "href": "",
+            "index": 7,
+        }
+    ]
+
+    target, error = IndeedBrowserUse._select_candidate(
+        rows,
+        "Alejándra Camacho Sáenz",
+        "Developer",
+    )
+
+    assert error is None
+    assert target is not None
+    assert target["href"] == ""
+    assert target["index"] == 7
+
+
+def test_download_control_wait_tolerates_delayed_spa_mount(tmp_path):
+    driver = IndeedBrowserUse(
+        config(tmp_path),
+        browser_session_class=object,
+        browser_executable_resolver=lambda: "chrome.exe",
+    )
+    attempts = {"count": 0}
+
+    async def no_human(_cdp):
+        return False
+
+    async def delayed_control(_cdp):
+        attempts["count"] += 1
+        return attempts["count"] >= 3
+
+    driver._requires_human = no_human
+    driver._click_download_control = delayed_control
+    try:
+        clicked = driver._call(
+            driver._click_download_when_ready(object(), timeout_seconds=1.5),
+            timeout=2,
+        )
+        assert clicked is True
+        assert attempts["count"] == 3
+    finally:
+        driver.close()
+
+
+def test_download_label_normalization_collapses_whitespace():
+    import inspect
+
+    source = inspect.getsource(IndeedBrowserUse._click_download_control)
+    assert r".replace(/\s+/g, ' ')" in source
+    assert ".replace(/s+/g, ' ')" not in source
+
+
+def test_browser_use_environment_disables_telemetry_and_cloud_sync(monkeypatch):
+    monkeypatch.setenv("BROWSER_USE_SETUP_LOGGING", "true")
+    monkeypatch.setenv("ANONYMIZED_TELEMETRY", "true")
+    monkeypatch.setenv("BROWSER_USE_CLOUD_SYNC", "true")
+
+    _configure_browser_use_environment()
+
+    assert os.environ["BROWSER_USE_SETUP_LOGGING"] == "false"
+    assert os.environ["ANONYMIZED_TELEMETRY"] == "false"
+    assert os.environ["BROWSER_USE_CLOUD_SYNC"] == "false"
 
 
 def test_browser_use_driver_uses_single_managed_chrome_semantics(tmp_path):
