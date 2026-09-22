@@ -118,7 +118,6 @@ def recalculate_ranking(
 
                     if evaluation.status == "FAILED":
                         failed_count += 1
-                        error_msg = internal_error or evaluation.error_message or "EVALUATION_FAILED"
                         failures.append({"candidate_id": candidate.id, "error": FAILED_EVALUATION_PUBLIC_MESSAGE})
                     else:
                         evaluated_count += 1
