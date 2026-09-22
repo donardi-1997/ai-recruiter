@@ -6,6 +6,11 @@ from types import SimpleNamespace
 import pytest
 
 from app.domains.jobs import presenter, service
+from app.domains.jobs.schemas import (
+    CreateJobRequest,
+    EvaluationProfile,
+    JobEnrichmentRequest,
+)
 
 
 def _job(**overrides):
@@ -186,3 +191,26 @@ def test_delete_job_payload_preserves_exact_public_contract():
         "delete_candidates": True,
         "deleted_candidates": 4,
     }
+
+
+def test_job_request_schemas_bound_prompt_sized_inputs():
+    from pydantic import ValidationError
+
+    with pytest.raises(ValidationError):
+        CreateJobRequest(title="x" * 201)
+
+    with pytest.raises(ValidationError):
+        JobEnrichmentRequest(
+            title="Backend",
+            description="x" * 20_001,
+        )
+
+    with pytest.raises(ValidationError):
+        EvaluationProfile(
+            responsibilities=["item"] * 101,
+        )
+
+    with pytest.raises(ValidationError):
+        EvaluationProfile(
+            responsibilities=["x" * 1_001],
+        )
