@@ -62,8 +62,51 @@ describe("Candidates evaluation", () => {
         });
       }
 
+      if (url === "/candidates/candidate-1/download") {
+        return Promise.resolve({
+          data: {
+            download_url: "https://signed.example/candidate-1",
+            expires_in: 300,
+          },
+        });
+      }
+
       return Promise.resolve({ data: [] });
     });
+  });
+
+  it("opens Ver CV in a separate tab without replacing the current page", async () => {
+    const replace = vi.fn();
+    const close = vi.fn();
+    const viewer = {
+      opener: window,
+      location: { replace },
+      close,
+    };
+    const open = vi.spyOn(window, "open").mockReturnValue(viewer);
+
+    renderCandidates();
+    await screen.findByText("Ana Test");
+
+    expect(
+      screen.queryByRole("button", { name: /Descargar CV/i }),
+    ).not.toBeInTheDocument();
+
+    fireEvent.click(
+      screen.getByRole("button", { name: /Ver CV/i }),
+    );
+
+    await waitFor(() => {
+      expect(open).toHaveBeenCalledWith("about:blank", "_blank");
+      expect(api.get).toHaveBeenCalledWith(
+        "/candidates/candidate-1/download",
+      );
+      expect(replace).toHaveBeenCalledWith(
+        "https://signed.example/candidate-1",
+      );
+    });
+    expect(viewer.opener).toBeNull();
+    expect(close).not.toHaveBeenCalled();
   });
 
   it("shows FAILED without 0% or Sin clasificación", async () => {
