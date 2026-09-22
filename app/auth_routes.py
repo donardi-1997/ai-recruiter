@@ -66,9 +66,16 @@ def login(body: LoginRequest):
             },
         )
         auth = response.get("AuthenticationResult", {})
+        access_token = auth.get("AccessToken")
+        if not access_token:
+            challenge = str(response.get("ChallengeName") or "").strip()
+            logger.warning("Cognito login did not return an access token; challenge=%s", challenge)
+            raise HTTPException(
+                status_code=403,
+                detail="El inicio de sesion requiere un paso adicional no soportado.",
+            )
         resp = JSONResponse({
-            "access_token": auth.get("AccessToken"),
-            "id_token": auth.get("IdToken"),
+            "access_token": access_token,
             "expires_in": auth.get("ExpiresIn"),
         })
         if auth.get("RefreshToken"):
@@ -77,7 +84,7 @@ def login(body: LoginRequest):
                 auth["RefreshToken"],
                 httponly=True,
                 secure=True,
-                samesite="none",
+                samesite="lax",
                 max_age=86400 * 30,
                 path="/",
             )
@@ -157,9 +164,14 @@ def refresh(request: Request):
             AuthParameters={"REFRESH_TOKEN": refresh_token},
         )
         auth = response.get("AuthenticationResult", {})
+        access_token = auth.get("AccessToken")
+        if not access_token:
+            raise HTTPException(
+                status_code=401,
+                detail="La sesion expiro. Inicia sesion nuevamente.",
+            )
         resp = JSONResponse({
-            "access_token": auth.get("AccessToken"),
-            "id_token": auth.get("IdToken"),
+            "access_token": access_token,
             "expires_in": auth.get("ExpiresIn"),
         })
         if auth.get("RefreshToken"):
