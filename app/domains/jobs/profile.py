@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 
@@ -21,7 +22,7 @@ PROFILE_LIST_FIELDS = (
 
 
 _NON_SCORING_VALIDATION_SECTION = re.compile(
-    r"(?:\\r?\\n){2,}Preguntas por validar \\(no son requisitos de evaluación\\)\\s*:?(?:\\r?\\n|$)",
+    r"(?:\r?\n){2,}Preguntas por validar \(no son requisitos de evaluación\)\s*:?(?:\r?\n|$)",
     re.IGNORECASE,
 )
 
