@@ -121,11 +121,25 @@ def _prepare_document(db: Session, event) -> str | None:
         )
 
     try:
-        candidate, _outcome = candidate_identity.resolve_or_create_candidate(
-            db,
-            owner_sub=event.owner_sub,
-            parsed_document=parsed,
-        )
+        if event.candidate_id:
+            candidate = candidates_repository.get_candidate(
+                db,
+                event.candidate_id,
+                owner_sub=event.owner_sub,
+            )
+            if candidate is None:
+                return _needs_review(
+                    db,
+                    event,
+                    code="CANDIDATE_UNRESOLVED",
+                    message="El candidato preasignado ya no esta disponible.",
+                )
+        else:
+            candidate, _outcome = candidate_identity.resolve_or_create_candidate(
+                db,
+                owner_sub=event.owner_sub,
+                parsed_document=parsed,
+            )
     except candidate_identity.CandidateIdentityConflict:
         return _needs_review(
             db,
