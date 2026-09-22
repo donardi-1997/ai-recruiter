@@ -8,6 +8,7 @@ from app.domains.evaluations.presenter import public_evaluation_payload
 from app.domains.evaluations.schemas import EvaluateRequest
 from app.domains.evaluations.service import (
     CandidateNotFound,
+    EvaluationCriteriaMissing,
     JobNotFound,
     evaluate_candidate_for_owner,
 )
@@ -33,5 +34,13 @@ def evaluate_candidate_endpoint(
         raise HTTPException(status_code=404, detail="Candidato no encontrado.") from exc
     except JobNotFound as exc:
         raise HTTPException(status_code=404, detail="Vacante no encontrada.") from exc
+    except EvaluationCriteriaMissing as exc:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                "La vacante no tiene descripción ni criterios de evaluación. "
+                "Complétala o usa 'Enriquecer con IA' en Vacantes antes de evaluar."
+            ),
+        ) from exc
 
     return public_evaluation_payload(evaluation)
