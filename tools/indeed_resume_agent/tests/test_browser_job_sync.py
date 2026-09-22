@@ -90,6 +90,37 @@ def test_spa_listing_keeps_clickable_job_until_detail_exposes_stable_identity():
     assert detail_state["externalJobKey"] == "job-detail-456"
 
 
+def test_spa_listing_ignores_non_job_navigation_and_legal_links():
+    html = """
+    <nav>
+      <ul>
+        <li><a href="https://co.indeed.com/legal?hl=es&co=CO">Condiciones del servicio</a></li>
+        <li><a href="https://employers.indeed.com/messages">Mensajes</a></li>
+      </ul>
+    </nav>
+    <table>
+      <tbody>
+        <tr>
+          <td><button type="button" role="link">VENDEDOR PUNTO DE VENTA</button></td>
+          <td>7 Todos · 7 Nuevos</td>
+          <td>Bogotá, Cundinamarca</td>
+          <td>Abierto</td>
+        </tr>
+      </tbody>
+    </table>
+    """
+    with sync_playwright() as playwright:
+        browser = playwright.chromium.launch(headless=True)
+        page = browser.new_page()
+        page.set_content(html)
+        state = page.evaluate(LISTING_STATE_SCRIPT)
+        browser.close()
+
+    assert len(state["rows"]) == 1
+    assert state["rows"][0]["title"] == "VENDEDOR PUNTO DE VENTA"
+    assert "Condiciones del servicio" not in [row["title"] for row in state["rows"]]
+
+
 def test_detail_state_reports_loading_until_spa_job_detail_is_hydrated():
     loading_html = """
     <main>
