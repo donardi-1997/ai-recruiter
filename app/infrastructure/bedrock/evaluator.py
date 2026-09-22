@@ -107,11 +107,13 @@ def evaluate_candidate(
     if not requirements_from_job:
         return {
             "match_score": 0,
-            "recommendation": "LOW_MATCH",
+            "recommendation": "EVALUATION_FAILED",
             "requirements": [],
             "strengths": [],
             "gaps": [],
             "summary": FAILED_EVALUATION_SUMMARY_NO_REQUIREMENTS,
+            "status": "FAILED",
+            "error_message": "JOB_REQUIREMENTS_NOT_FOUND",
         }
 
     # STEP 2: Prepare requirements text
@@ -143,11 +145,17 @@ def evaluate_candidate(
         evidence = item.get("evidence")
         if status == "MISSING":
             evidence = None
-        elif evidence is not None:
-            evidence = str(evidence).strip()
-            words = evidence.split()
-            if len(words) > 30:
-                evidence = " ".join(words[:30]) + "..."
+        else:
+            evidence = str(evidence or "").strip()
+            if not evidence:
+                # A positive match without supporting CV evidence must never
+                # contribute to the deterministic score.
+                status = "MISSING"
+                evidence = None
+            else:
+                words = evidence.split()
+                if len(words) > 30:
+                    evidence = " ".join(words[:30]) + "..."
         key = normalized_requirement.lower().strip()
         evaluated[key] = {
             "requirement": normalized_requirement,
