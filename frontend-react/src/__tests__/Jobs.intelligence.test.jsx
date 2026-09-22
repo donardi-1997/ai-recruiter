@@ -159,7 +159,7 @@ describe("Jobs AI enrichment", () => {
         expect.objectContaining({
           title: "Cloud Engineer",
           description: EXPECTED_APPLIED_DESCRIPTION,
-          indeed_description: null,
+          indeed_description: "",
           ai_description: EXPECTED_APPLIED_DESCRIPTION,
           active_description_source: "ai",
           evaluation_profile: expect.objectContaining({
