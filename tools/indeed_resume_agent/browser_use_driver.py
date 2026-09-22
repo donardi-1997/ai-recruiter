@@ -155,8 +155,16 @@ def _sanitize_browser_use_args() -> None:
         args.remove("--extensions-on-chrome-urls")
 
 
+def _configure_browser_use_environment() -> None:
+    # This desktop agent does not use Browser Use cloud services or product
+    # telemetry. Keep recruiter browsing/session metadata local to the machine.
+    os.environ["BROWSER_USE_SETUP_LOGGING"] = "false"
+    os.environ["ANONYMIZED_TELEMETRY"] = "false"
+    os.environ["BROWSER_USE_CLOUD_SYNC"] = "false"
+
+
 def _load_browser_session_class():
-    os.environ.setdefault("BROWSER_USE_SETUP_LOGGING", "false")
+    _configure_browser_use_environment()
     _sanitize_browser_use_args()
     from browser_use.browser.session import BrowserSession
 
