@@ -6,6 +6,10 @@ from sqlalchemy.orm import Session
 import app.models  # noqa: F401
 from app.db import Base
 from app.domains.candidate_ingestion import indeed_job_sync
+from app.domains.candidate_ingestion.models import (
+    CandidateIngestionEvent,
+    IndeedEmailResumeTask,
+)
 from app.models import IndeedJobLink, Job
 
 
@@ -178,6 +182,65 @@ def test_empty_refresh_never_erases_existing_indeed_description():
         assert result["missing_description"] == 1
         assert job.indeed_description == "Stored Indeed description"
         assert job.description == "Stored Indeed description"
+    finally:
+        db.close()
+        engine.dispose()
+
+
+def test_vacancy_refresh_recovers_waiting_application_without_replaying_gmail():
+    engine, db = _db()
+    try:
+        event = CandidateIngestionEvent(
+            owner_sub="owner-1",
+            source="EMAIL",
+            provider="INDEED",
+            source_account="katherine@example.com",
+            external_id="gmail-waiting-1",
+            status="NEEDS_REVIEW",
+            raw_metadata={
+                "gmail_message_id": "gmail-waiting-1",
+                "candidate_name": "Ada Candidate",
+                "job_title": "Cloud Engineer",
+                "external_job_id": "abc-123",
+                "internal_date_ms": 1789574400000,
+            },
+            last_error_code="INDEED_JOB_NOT_SYNCED_YET",
+            last_error_message="La vacante de Indeed debe sincronizarse antes de procesar esta postulacion.",
+        )
+        db.add(event)
+        db.commit()
+
+        result = indeed_job_sync.sync_vacancy_snapshots(
+            db,
+            owner_sub="owner-1",
+            snapshots=[snapshot()],
+        )
+
+        db.refresh(event)
+        task = db.query(IndeedEmailResumeTask).filter_by(
+            ingestion_event_id=event.id
+        ).one_or_none()
+        job = db.query(Job).one()
+
+        assert result["applications_recovered"] == 1
+        assert event.status == "RECEIVED"
+        assert event.job_id == job.id
+        assert event.last_error_code == "RESUME_DOWNLOAD_PENDING"
+        assert task is not None
+        assert task.job_id == job.id
+        assert task.candidate_name == "Ada Candidate"
+        assert task.job_title == "Cloud Engineer"
+        assert task.status == "WAITING_DOWNLOAD"
+
+        repeated = indeed_job_sync.sync_vacancy_snapshots(
+            db,
+            owner_sub="owner-1",
+            snapshots=[snapshot()],
+        )
+        assert repeated["applications_recovered"] == 0
+        assert db.query(IndeedEmailResumeTask).filter_by(
+            ingestion_event_id=event.id
+        ).count() == 1
     finally:
         db.close()
         engine.dispose()
