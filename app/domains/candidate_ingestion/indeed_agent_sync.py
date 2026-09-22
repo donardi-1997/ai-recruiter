@@ -45,11 +45,31 @@ def _application_sort_key(task: IndeedEmailResumeTask, event: CandidateIngestion
 
 
 def compact_duplicate_application_tasks(db, *, owner_sub: str) -> dict[str, int]:
-    """Keep only the newest active Gmail task for one candidate + one vacancy.
+    """Keep the newest active application only when canonical identity is known.
 
-    Historical completed tasks remain untouched. Different vacancies are separate
-    groups, so one canonical candidate can still belong to multiple jobs.
+    Names are deliberately not used as identity: two people can share the same
+    name. Different vacancies remain independent associations for the same
+    candidate.
     """
+    ambiguous = (
+        db.query(IndeedEmailResumeTask)
+        .filter(
+            IndeedEmailResumeTask.owner_sub == owner_sub,
+            IndeedEmailResumeTask.status == "NEEDS_HUMAN",
+            IndeedEmailResumeTask.last_error_code == "INDEED_CANDIDATE_AMBIGUOUS",
+        )
+        .all()
+    )
+    for task in ambiguous:
+        task.status = "WAITING_DOWNLOAD"
+        task.available_at = None
+        task.attempt_count = 0
+        task.last_error_code = None
+        task.last_error_message = None
+        task.lease_token = None
+        task.lease_expires_at = None
+        task.claimed_at = None
+
     rows = (
         db.query(IndeedEmailResumeTask, CandidateIngestionEvent)
         .join(
@@ -59,6 +79,7 @@ def compact_duplicate_application_tasks(db, *, owner_sub: str) -> dict[str, int]
         .filter(
             IndeedEmailResumeTask.owner_sub == owner_sub,
             IndeedEmailResumeTask.job_id.is_not(None),
+            CandidateIngestionEvent.candidate_id.is_not(None),
             IndeedEmailResumeTask.status.in_(
                 ("WAITING_DOWNLOAD", "RETRY", "NEEDS_HUMAN", "FAILED")
             ),
@@ -67,12 +88,13 @@ def compact_duplicate_application_tasks(db, *, owner_sub: str) -> dict[str, int]
     )
     groups: dict[tuple[str, str], list[tuple[IndeedEmailResumeTask, CandidateIngestionEvent]]] = {}
     for task, event in rows:
-        key = (str(task.job_id), _normalized_name(task.candidate_name))
+        key = (str(task.job_id), str(event.candidate_id))
         groups.setdefault(key, []).append((task, event))
 
     superseded = 0
-    requeued_ambiguity = 0
     for group in groups.values():
+        if len(group) < 2:
+            continue
         winner_task, _winner_event = max(
             group,
             key=lambda pair: _application_sort_key(pair[0], pair[1]),
@@ -93,22 +115,11 @@ def compact_duplicate_application_tasks(db, *, owner_sub: str) -> dict[str, int]
                 event.last_error_message = task.last_error_message
             superseded += 1
 
-        if (
-            winner_task.status == "NEEDS_HUMAN"
-            and winner_task.last_error_code == "INDEED_CANDIDATE_AMBIGUOUS"
-        ):
-            winner_task.status = "WAITING_DOWNLOAD"
-            winner_task.available_at = None
-            winner_task.attempt_count = 0
-            winner_task.last_error_code = None
-            winner_task.last_error_message = None
-            requeued_ambiguity += 1
-
-    if superseded or requeued_ambiguity:
+    if superseded or ambiguous:
         db.commit()
     return {
         "superseded": superseded,
-        "requeued_ambiguity": requeued_ambiguity,
+        "requeued_ambiguity": len(ambiguous),
     }
 
 
