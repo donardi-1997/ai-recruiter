@@ -51,6 +51,16 @@ export async function refreshAccessToken() {
   return refreshPromise;
 }
 
+function skipsAutomaticRefresh(url) {
+  const path = String(url || "");
+  return (
+    path.includes("/auth/login")
+    || path.includes("/auth/register")
+    || path.includes("/auth/refresh")
+    || path.includes("/auth/logout")
+  );
+}
+
 api.interceptors.response.use(
   (response) => response,
   async (error) => {
@@ -58,7 +68,7 @@ api.interceptors.response.use(
     if (
       error.response?.status !== 401
       || request?._retry
-      || request?.url?.includes("/auth/")
+      || skipsAutomaticRefresh(request?.url)
     ) {
       return Promise.reject(error);
     }
