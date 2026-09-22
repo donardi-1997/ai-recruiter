@@ -172,6 +172,9 @@ def test_alembic_head_builds_current_postgres_schema():
             revision = connection.execute(
                 text("SELECT version_num FROM alembic_version")
             ).scalar_one()
-        assert revision == "013"
+        job_columns = {column["name"] for column in inspector.get_columns("jobs")}
+        assert {"indeed_description", "ai_description", "active_description_source"}.issubset(job_columns)
+
+        assert revision == "014"
     finally:
         engine.dispose()
