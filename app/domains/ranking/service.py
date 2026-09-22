@@ -143,7 +143,7 @@ def recalculate_ranking(
                         strengths=[],
                         gaps=[],
                         status="FAILED",
-                        error_message=str(exc),
+                        error_message="EVALUATION_INTERNAL_ERROR",
                     )
             else:
                 evaluated_count += 1
