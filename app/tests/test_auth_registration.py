@@ -54,8 +54,10 @@ def test_register_auto_confirms_cognito_user_with_signed_session(monkeypatch):
     )
 
     response = auth_routes.register(
-        email="recruiter@example.com",
-        password="StrongPass123",
+        auth_routes.RegisterRequest(
+            email="recruiter@example.com",
+            password="StrongPass123",
+        )
     )
 
     assert signup_client.sign_up_call == {
@@ -78,3 +80,14 @@ def test_register_auto_confirms_cognito_user_with_signed_session(monkeypatch):
         "message": "Usuario creado correctamente. Ya puedes iniciar sesion.",
         "user_sub": "user-sub-123",
     }
+
+
+def test_register_contract_keeps_password_out_of_query_parameters():
+    import inspect
+
+    signature = inspect.signature(auth_routes.register)
+    assert list(signature.parameters) == ["body"]
+    assert signature.parameters["body"].annotation is auth_routes.RegisterRequest
+
+    source = inspect.getsource(auth_routes.register)
+    assert "Query(" not in source
