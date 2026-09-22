@@ -376,54 +376,54 @@ def oauth_callback(
     owns_client = http_client is None
     client = http_client or httpx.Client(timeout=current.request_timeout_seconds)
     try:
-        token_response = client.post(
-            resolved_oauth.token_url,
-            data={
-                "code": code,
-                "client_id": str(payload["client_id"]),
-                "client_secret": str(payload["client_secret"]),
-                "redirect_uri": resolved_oauth.redirect_uri,
-                "grant_type": "authorization_code",
-            },
+        try:
+            token_response = client.post(
+                resolved_oauth.token_url,
+                data={
+                    "code": code,
+                    "client_id": str(payload["client_id"]),
+                    "client_secret": str(payload["client_secret"]),
+                    "redirect_uri": resolved_oauth.redirect_uri,
+                    "grant_type": "authorization_code",
+                },
+            )
+            token_response.raise_for_status()
+            token_payload = token_response.json()
+            access_token = str(token_payload.get("access_token") or "").strip()
+            refresh_token = str(
+                token_payload.get("refresh_token") or payload.get("refresh_token") or ""
+            ).strip()
+            if not access_token or not refresh_token:
+                raise GmailRemoteError("Google OAuth did not return the required tokens.")
+
+            profile_response = client.get(
+                f"{current.api_base_url}/users/me/profile",
+                headers={"Authorization": f"Bearer {access_token}"},
+            )
+            profile_response.raise_for_status()
+            connected_email = str(
+                profile_response.json().get("emailAddress") or ""
+            ).strip().casefold()
+            if not connected_email:
+                raise GmailRemoteError("Gmail profile did not include an email address.")
+        except GmailRemoteError:
+            raise
+        except Exception as exc:
+            raise GmailRemoteError("Google OAuth callback failed.") from exc
+
+        existing_email = str(payload.get("connected_email") or "").strip().casefold()
+        if not owner and existing_email and connected_email != existing_email:
+            raise GmailOAuthOwnershipError("GMAIL_OAUTH_MAILBOX_MISMATCH")
+
+        updated = dict(payload)
+        updated.update(
+            {
+                "refresh_token": refresh_token,
+                "connected_email": connected_email,
+                "connected_by_sub": owner_sub,
+                "connected_at": datetime.now(timezone.utc).isoformat(),
+            }
         )
-        token_response.raise_for_status()
-        token_payload = token_response.json()
-        access_token = str(token_payload.get("access_token") or "").strip()
-        refresh_token = str(
-            token_payload.get("refresh_token") or payload.get("refresh_token") or ""
-        ).strip()
-        if not access_token or not refresh_token:
-            raise GmailRemoteError("Google OAuth did not return the required tokens.")
-
-        profile_response = client.get(
-            f"{current.api_base_url}/users/me/profile",
-            headers={"Authorization": f"Bearer {access_token}"},
-        )
-        profile_response.raise_for_status()
-        connected_email = str(
-            profile_response.json().get("emailAddress") or ""
-        ).strip().casefold()
-        if not connected_email:
-            raise GmailRemoteError("Gmail profile did not include an email address.")
-    except GmailRemoteError:
-        raise
-    except Exception as exc:
-        raise GmailRemoteError("Google OAuth callback failed.") from exc
-
-    existing_email = str(payload.get("connected_email") or "").strip().casefold()
-    if not owner and existing_email and connected_email != existing_email:
-        raise GmailOAuthOwnershipError("GMAIL_OAUTH_MAILBOX_MISMATCH")
-
-    updated = dict(payload)
-    updated.update(
-        {
-            "refresh_token": refresh_token,
-            "connected_email": connected_email,
-            "connected_by_sub": owner_sub,
-            "connected_at": datetime.now(timezone.utc).isoformat(),
-        }
-    )
-    try:
         store.write(updated)
         return {
             "connected": True,
