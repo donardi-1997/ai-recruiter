@@ -24,7 +24,7 @@ PUBLIC_RECOMMENDATIONS = {
 
 def is_valid_match_score(score: float | None) -> bool:
     """Check if match_score is a valid 0-100 numeric value."""
-    if score is None:
+    if score is None or isinstance(score, bool):
         return False
     try:
         numeric = float(score)
@@ -55,6 +55,8 @@ def validate_completed_evaluation_result(result: dict) -> tuple[bool, str | None
     recommendation = result.get("recommendation")
     if not is_valid_recommendation(recommendation):
         return False, "INVALID_EVALUATION_RECOMMENDATION"
+    if recommendation != recommendation_for_score(float(match_score)):
+        return False, "INCONSISTENT_EVALUATION_RECOMMENDATION"
 
     # summary
     summary = str(result.get("summary") or "").strip()
@@ -63,18 +65,36 @@ def validate_completed_evaluation_result(result: dict) -> tuple[bool, str | None
 
     # strengths
     strengths = result.get("strengths")
-    if not isinstance(strengths, list):
+    if (
+        not isinstance(strengths, list)
+        or any(not isinstance(item, str) or not item.strip() for item in strengths)
+    ):
         return False, "INVALID_EVALUATION_STRENGTHS"
 
     # gaps
     gaps = result.get("gaps")
-    if not isinstance(gaps, list):
+    if (
+        not isinstance(gaps, list)
+        or any(not isinstance(item, str) or not item.strip() for item in gaps)
+    ):
         return False, "INVALID_EVALUATION_GAPS"
 
     # requirements
     requirements = result.get("requirements")
     if not isinstance(requirements, list):
         return False, "INVALID_EVALUATION_REQUIREMENTS"
+    for item in requirements:
+        if not isinstance(item, dict):
+            return False, "INVALID_EVALUATION_REQUIREMENTS"
+        requirement = item.get("requirement")
+        status = item.get("status")
+        evidence = item.get("evidence")
+        if not isinstance(requirement, str) or not requirement.strip():
+            return False, "INVALID_EVALUATION_REQUIREMENTS"
+        if status not in {"MATCH", "PARTIAL", "MISSING"}:
+            return False, "INVALID_EVALUATION_REQUIREMENTS"
+        if evidence is not None and not isinstance(evidence, str):
+            return False, "INVALID_EVALUATION_REQUIREMENTS"
 
     return True, None
 
