@@ -1,4 +1,4 @@
-from tools.indeed_resume_agent.browser_use_driver import (
+from tools.indeed_resume_agent.vacancy_sync import (
     INDEED_JOBS_URL,
     _job_key_from_url,
 )
