@@ -230,6 +230,20 @@ def claim_next_task_with_resume_url(
         owner_sub=owner_sub,
     )
     metadata = dict(event.raw_metadata or {}) if event is not None else {}
+
+    # Reconciliation tasks are allowed to start from the stable Indeed candidates
+    # workspace. The browser driver will deterministically locate the exact
+    # candidate by name + job title and never requires a persisted provider URL.
+    if event is not None and metadata.get("resume_agent_lookup_only") is True:
+        return ClaimedResumeTaskWithUrl(
+            task_id=claimed.task_id,
+            candidate_name=claimed.candidate_name,
+            job_title=claimed.job_title,
+            resume_url="https://employers.indeed.com/candidates",
+            lease_token=claimed.lease_token,
+            lease_expires_at=claimed.lease_expires_at,
+        )
+
     message_id = str(metadata.get("gmail_message_id") or "").strip()
     if event is None or not message_id:
         _safe_resolution_failure(
