@@ -10,6 +10,7 @@ from sqlalchemy.orm import sessionmaker
 from app.config import IndeedSettings
 from app.db import Base
 from app.domains.indeed import service
+from app.domains.indeed import router as indeed_router
 from app.domains.indeed.client import IndeedClient
 from app.domains.indeed.exceptions import IndeedLinkNotFound, IndeedRemoteError, IndeedValidationError
 from app.domains.indeed.mapper import build_job_input
@@ -230,3 +231,14 @@ def test_status_requires_existing_indeed_link(db_session):
             client=FakeIndeedClient(),
             settings=settings(),
         )
+
+
+def test_router_never_exposes_remote_provider_error_details():
+    exc = IndeedRemoteError(
+        "Indeed GraphQL error: secret provider detail token=abc123"
+    )
+    translated = indeed_router._translate(exc)
+
+    assert translated.status_code == 502
+    assert "secret provider detail" not in translated.detail
+    assert "token=abc123" not in translated.detail
