@@ -1,3 +1,5 @@
+import json
+
 """Registration behavior for Cognito-backed accounts."""
 
 from app import auth_routes
@@ -143,3 +145,64 @@ def test_register_does_not_expose_provider_error_message(monkeypatch):
     assert exc_info.value.status_code == 500
     assert exc_info.value.detail == "No fue posible crear la cuenta."
     assert "secret provider detail" not in exc_info.value.detail
+
+
+class FakeLoginClient:
+    def __init__(self, response):
+        self.response = response
+        self.calls = []
+
+    def initiate_auth(self, **kwargs):
+        self.calls.append(kwargs)
+        return dict(self.response)
+
+
+def test_login_returns_only_access_token_and_sets_lax_refresh_cookie(monkeypatch):
+    client = FakeLoginClient(
+        {
+            "AuthenticationResult": {
+                "AccessToken": "access-token",
+                "IdToken": "id-token-should-not-be-returned",
+                "RefreshToken": "refresh-token",
+                "ExpiresIn": 3600,
+            }
+        }
+    )
+    monkeypatch.setattr(auth_routes, "cognito_client", client)
+
+    response = auth_routes.login(
+        auth_routes.LoginRequest(
+            email="Recruiter@Example.COM",
+            password="pw",
+        )
+    )
+
+    payload = json.loads(response.body.decode("utf-8"))
+    assert payload == {
+        "access_token": "access-token",
+        "expires_in": 3600,
+    }
+    set_cookie = response.headers["set-cookie"].casefold()
+    assert "httponly" in set_cookie
+    assert "secure" in set_cookie
+    assert "samesite=lax" in set_cookie
+    assert "id-token-should-not-be-returned" not in response.body.decode("utf-8")
+
+
+def test_login_rejects_challenge_without_access_token(monkeypatch):
+    client = FakeLoginClient({"ChallengeName": "SMS_MFA"})
+    monkeypatch.setattr(auth_routes, "cognito_client", client)
+
+    import pytest
+    from fastapi import HTTPException
+
+    with pytest.raises(HTTPException) as exc_info:
+        auth_routes.login(
+            auth_routes.LoginRequest(
+                email="recruiter@example.com",
+                password="pw",
+            )
+        )
+
+    assert exc_info.value.status_code == 403
+    assert "paso adicional" in exc_info.value.detail
