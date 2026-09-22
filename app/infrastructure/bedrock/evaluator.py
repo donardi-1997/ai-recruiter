@@ -5,6 +5,8 @@ Contains the canonical evaluation pipeline using Bedrock LLM.
 
 import json
 import logging
+import re
+import unicodedata
 
 from langchain_core.prompts import ChatPromptTemplate
 
@@ -38,6 +40,25 @@ FAILED_EVALUATION_SUMMARY_NO_REQUIREMENTS = (
 EVALUATION_FAILED_SUMMARY = (
     "No fue posible completar la evaluación. Intenta nuevamente."
 )
+
+
+def _evidence_key(value: object) -> str:
+    text = unicodedata.normalize("NFKD", str(value or ""))
+    text = "".join(
+        character
+        for character in text
+        if not unicodedata.combining(character)
+    )
+    text = text.casefold()
+    return re.sub(r"\s+", " ", text).strip()
+
+
+def _evidence_is_grounded(evidence: str, context: str) -> bool:
+    """Require positive evidence to be a literal normalized CV fragment."""
+    evidence_key = _evidence_key(evidence)
+    if len(evidence_key) < 8:
+        return False
+    return evidence_key in _evidence_key(context)
 
 
 def evaluate_candidate(
@@ -147,9 +168,9 @@ def evaluate_candidate(
             evidence = None
         else:
             evidence = str(evidence or "").strip()
-            if not evidence:
-                # A positive match without supporting CV evidence must never
-                # contribute to the deterministic score.
+            if not evidence or not _evidence_is_grounded(evidence, context):
+                # Positive evidence is only creditable when the cited fragment
+                # can be found in the retrieved CV context itself.
                 status = "MISSING"
                 evidence = None
             else:
