@@ -11,6 +11,7 @@ from sqlalchemy import create_engine, event
 from sqlalchemy.orm import sessionmaker
 
 from app.db import Base
+from app.domains.ranking import repository as ranking_repository
 from app.domains.ranking import service as ranking_service
 from app.models import Candidate, Evaluation, Job, JobCandidate, RankingItem
 
@@ -159,7 +160,10 @@ def test_materialize_ranking_preserves_completed_failed_pending_order(db_session
     assert result["evaluated"] == 1
     assert result["failed"] == 1
     assert result["failures"] == [
-        {"candidate_id": failed.id, "error": "provider failed"}
+        {
+            "candidate_id": failed.id,
+            "error": ranking_service.FAILED_EVALUATION_PUBLIC_MESSAGE,
+        }
     ]
 
     items = db_session.query(RankingItem).order_by(RankingItem.position).all()
@@ -169,3 +173,13 @@ def test_materialize_ranking_preserves_completed_failed_pending_order(db_session
         pending.id,
     ]
     assert [item.score for item in items] == [80.0, 0.0, 0.0]
+
+
+def test_public_ranking_error_sanitizer_never_returns_provider_details():
+    raw = "provider failed at /internal/path with token=secret"
+    sanitized = ranking_repository._sanitize_error_message(raw)
+
+    assert sanitized
+    assert "provider failed" not in sanitized
+    assert "/internal/path" not in sanitized
+    assert "token=secret" not in sanitized
