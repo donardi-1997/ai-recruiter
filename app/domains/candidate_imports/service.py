@@ -27,6 +27,7 @@ MIB = 1024 * 1024
 MAX_DOCUMENT_BYTES = 15 * MIB
 MAX_ARCHIVE_BYTES = 500 * MIB
 MAX_DIRECT_DOCUMENTS = 500
+MAX_TOP_LEVEL_UPLOADS = 500
 
 PDF_CONTENT_TYPE = "application/pdf"
 DOCX_CONTENT_TYPE = (
@@ -104,6 +105,8 @@ def create_batch(
     _require_job(db, owner_sub=owner_sub, job_id=job_id)
     if not uploads:
         raise InvalidImportManifest("EMPTY_IMPORT_MANIFEST")
+    if len(uploads) > MAX_TOP_LEVEL_UPLOADS:
+        raise InvalidImportManifest("UPLOAD_LIMIT_EXCEEDED")
 
     validated: list[tuple[dict, str]] = []
     direct_documents = 0
