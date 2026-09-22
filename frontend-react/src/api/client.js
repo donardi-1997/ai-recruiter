@@ -51,7 +51,7 @@ export async function refreshAccessToken() {
   return refreshPromise;
 }
 
-function skipsAutomaticRefresh(url) {
+export function skipsAutomaticRefresh(url) {
   const path = String(url || "");
   return (
     path.includes("/auth/login")
