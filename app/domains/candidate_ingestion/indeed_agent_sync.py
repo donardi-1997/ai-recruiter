@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from app.domains.candidate_ingestion import gmail_integration, repository
+from app.domains.candidate_ingestion import gmail_integration, indeed_job_sync, repository
 from app.domains.candidate_ingestion.models import (
     CandidateIngestionEvent,
     IndeedEmailResumeTask,
@@ -278,11 +278,16 @@ def sync_one_page(
 ) -> dict:
     """Synchronize one bounded Gmail page without re-traversing completed people.
 
-    Gmail's durable cursor is the source of incremental truth. The expensive
-    owner-wide provider reconciliation runs once on the initial FULL bootstrap;
-    subsequent FULL_CONTINUE and INCREMENTAL pages operate only on newly created
-    email work already placed in the durable task queue.
+    Gmail's durable cursor is the source of incremental truth. Applications that
+    were previously parked until their vacancy existed are repaired first. The
+    expensive owner-wide provider reconciliation runs once on the initial FULL
+    bootstrap; subsequent FULL_CONTINUE and INCREMENTAL pages operate only on
+    newly created or explicitly recovered durable queue work.
     """
+    applications_recovered = indeed_job_sync.recover_waiting_applications(
+        db,
+        owner_sub=owner_sub,
+    )
     gmail = gmail_integration.sync_mailbox(
         db,
         owner_sub=owner_sub,
@@ -294,7 +299,7 @@ def sync_one_page(
 
     compact = (
         compact_duplicate_application_tasks(db, owner_sub=owner_sub)
-        if created > 0
+        if created > 0 or applications_recovered > 0
         else {"superseded": 0, "requeued_ambiguity": 0}
     )
     reconcile = (
@@ -311,6 +316,7 @@ def sync_one_page(
         "needs_review": int(gmail.get("needs_review") or 0),
         "skipped": int(gmail.get("skipped") or 0),
         "has_more": cursor.startswith(BOOTSTRAP_CURSOR_PREFIX),
+        "applications_recovered": applications_recovered,
         "reconcile_jobs": reconcile["jobs_scanned"],
         "reconcile_scanned": reconcile["scanned"],
         "reconcile_ready": reconcile["ready"],
