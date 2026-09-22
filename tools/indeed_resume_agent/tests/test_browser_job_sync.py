@@ -1,9 +1,9 @@
 from playwright.sync_api import sync_playwright
 
+from tools.indeed_resume_agent.runtime_compat import SAFE_LISTING_STATE_SCRIPT
 from tools.indeed_resume_agent.vacancy_sync import (
     DETAIL_STATE_SCRIPT,
     INDEED_JOBS_URL,
-    LISTING_STATE_SCRIPT,
     _job_key_from_url,
 )
 
@@ -43,7 +43,7 @@ def test_spa_listing_discovers_clickable_job_without_job_href():
         browser = playwright.chromium.launch(headless=True)
         page = browser.new_page()
         page.set_content(html)
-        state = page.evaluate(LISTING_STATE_SCRIPT)
+        state = page.evaluate(SAFE_LISTING_STATE_SCRIPT)
         browser.close()
 
     assert len(state["rows"]) == 1
@@ -79,7 +79,7 @@ def test_spa_listing_keeps_clickable_job_until_detail_exposes_stable_identity():
         browser = playwright.chromium.launch(headless=True)
         page = browser.new_page()
         page.set_content(listing_html)
-        listing_state = page.evaluate(LISTING_STATE_SCRIPT)
+        listing_state = page.evaluate(SAFE_LISTING_STATE_SCRIPT)
         page.set_content(detail_html)
         detail_state = page.evaluate(DETAIL_STATE_SCRIPT)
         browser.close()
@@ -113,7 +113,7 @@ def test_spa_listing_ignores_non_job_navigation_and_legal_links():
         browser = playwright.chromium.launch(headless=True)
         page = browser.new_page()
         page.set_content(html)
-        state = page.evaluate(LISTING_STATE_SCRIPT)
+        state = page.evaluate(SAFE_LISTING_STATE_SCRIPT)
         browser.close()
 
     assert len(state["rows"]) == 1
