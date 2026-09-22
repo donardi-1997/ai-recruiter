@@ -181,9 +181,14 @@ def sync_one_page(
     *,
     owner_sub: str,
     mailbox_client=None,
-    max_results: int = 100,
+    max_results: int = 20,
 ) -> dict:
-    """Synchronize one bounded Gmail page and reconcile existing Indeed candidates."""
+    """Synchronize one bounded Gmail page and reconcile existing Indeed candidates.
+
+    Keep each HTTP request comfortably below the desktop agent's 30-second timeout.
+    The client exhausts the durable Gmail bootstrap cursor by calling this endpoint
+    repeatedly, so smaller pages preserve correctness while avoiding long requests.
+    """
     gmail = gmail_integration.sync_mailbox(
         db,
         owner_sub=owner_sub,
