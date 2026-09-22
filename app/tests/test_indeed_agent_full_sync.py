@@ -148,7 +148,8 @@ def test_duplicate_same_candidate_same_job_keeps_only_newest_active_application(
     engine, db = _db()
     try:
         job = Job(title="Operations Coordinator", description="Ops", owner_sub="owner-1")
-        db.add(job)
+        candidate = Candidate(name="Edwar Lisandro", owner_sub="owner-1", metadata_={})
+        db.add_all([job, candidate])
         db.flush()
 
         old_event = CandidateIngestionEvent(
@@ -159,6 +160,7 @@ def test_duplicate_same_candidate_same_job_keeps_only_newest_active_application(
             external_id="old-message",
             status="RECEIVED",
             job_id=job.id,
+            candidate_id=candidate.id,
             raw_metadata={"internal_date_ms": 1000},
         )
         new_event = CandidateIngestionEvent(
@@ -169,6 +171,7 @@ def test_duplicate_same_candidate_same_job_keeps_only_newest_active_application(
             external_id="new-message",
             status="RECEIVED",
             job_id=job.id,
+            candidate_id=candidate.id,
             raw_metadata={"internal_date_ms": 2000},
         )
         db.add_all([old_event, new_event])
@@ -213,7 +216,8 @@ def test_same_candidate_name_in_different_jobs_is_not_collapsed():
     try:
         first_job = Job(title="Backend Developer", description="API", owner_sub="owner-1")
         second_job = Job(title="Frontend Developer", description="React", owner_sub="owner-1")
-        db.add_all([first_job, second_job])
+        candidate = Candidate(name="Ana Perez", owner_sub="owner-1", metadata_={})
+        db.add_all([first_job, second_job, candidate])
         db.flush()
 
         for index, job in enumerate((first_job, second_job), start=1):
@@ -225,6 +229,7 @@ def test_same_candidate_name_in_different_jobs_is_not_collapsed():
                 external_id=f"message-{index}",
                 status="RECEIVED",
                 job_id=job.id,
+                candidate_id=candidate.id,
                 raw_metadata={"internal_date_ms": index * 1000},
             )
             db.add(event)
