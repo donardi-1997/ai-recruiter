@@ -10,7 +10,7 @@ from app.config import IndeedSettings
 from app.db import Base
 from app.domains.candidate_imports.exceptions import IdentityConflict
 from app.domains.candidates import service as candidate_service
-from app.domains.indeed import dispositions, service
+from app.domains.indeed import dispositions, repository as indeed_repository, service
 from app.domains.indeed.exceptions import IndeedValidationError
 from app.models import (
     Candidate,
@@ -177,6 +177,93 @@ def test_candidate_sync_creates_candidate_assignment_link_and_new_disposition(db
     assert event.local_status == "APPLIED"
     assert event.indeed_status == "NEW"
     assert event.sync_status == "PENDING"
+
+
+def test_same_candidate_across_two_jobs_reuses_candidate_and_creates_two_assignments(db_session):
+    first_job = seed_job(
+        db_session,
+        sourced="sourced-1",
+        employer_job="employer-job-1",
+    )
+    second_job = seed_job(
+        db_session,
+        sourced="sourced-2",
+        employer_job="employer-job-2",
+    )
+    first = interested_asset(
+        asset_id="asset-1",
+        sourced="sourced-1",
+        email="ana@example.com",
+        phone="+573001112233",
+        name="Ana Perez",
+    )
+    second = interested_asset(
+        asset_id="asset-2",
+        sourced="sourced-2",
+        email="ana@example.com",
+        phone="+573001112233",
+        name="Ana Perez",
+    )
+    fake = CandidateSyncClient([fetch_response([first, second], None)])
+
+    result = service.sync_candidates(
+        db_session,
+        owner_sub="owner-1",
+        client=fake,
+        settings=settings(),
+    )
+
+    assert result["created"] == 1
+    assert result["reused"] == 1
+    assert db_session.query(Candidate).count() == 1
+    assignments = db_session.query(JobCandidate).all()
+    assert len(assignments) == 2
+    assert {item.job_id for item in assignments} == {first_job.id, second_job.id}
+    assert len({item.candidate_id for item in assignments}) == 1
+    assert db_session.query(IndeedCandidateLink).count() == 2
+
+
+def test_duplicate_application_same_candidate_same_job_uses_latest_link(db_session):
+    job = seed_job(db_session)
+    old = interested_asset(
+        asset_id="asset-old",
+        sourced="sourced-1",
+        email="ana@example.com",
+        phone="+573001112233",
+        name="Ana Perez",
+    )
+    old["metadata"]["stagedAt"] = "2026-05-01T10:00:00Z"
+    new = interested_asset(
+        asset_id="asset-new",
+        sourced="sourced-1",
+        email="ana@example.com",
+        phone="+573001112233",
+        name="Ana Perez",
+    )
+    new["metadata"]["stagedAt"] = "2026-09-20T10:00:00Z"
+    fake = CandidateSyncClient([fetch_response([old, new], None)])
+
+    service.sync_candidates(
+        db_session,
+        owner_sub="owner-1",
+        client=fake,
+        settings=settings(),
+    )
+
+    candidate = db_session.query(Candidate).one()
+    assert db_session.query(JobCandidate).count() == 1
+    assert db_session.query(IndeedCandidateLink).count() == 2
+
+    active_link = indeed_repository.get_candidate_link(
+        db_session,
+        owner_sub="owner-1",
+        job_id=job.id,
+        candidate_id=candidate.id,
+    )
+
+    assert active_link is not None
+    assert active_link.asset_id == "asset-new"
+    assert active_link.staged_at == datetime(2026, 9, 20, 10, 0, tzinfo=timezone.utc)
 
 
 def test_candidate_sync_acknowledges_previous_batch_on_next_fetch(db_session):
