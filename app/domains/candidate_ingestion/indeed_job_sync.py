@@ -8,6 +8,7 @@ import re
 import unicodedata
 from datetime import datetime, timezone
 
+from sqlalchemy import and_, or_
 from sqlalchemy.orm import Session
 
 from app.domains.candidate_ingestion import job_resolution
@@ -122,23 +123,36 @@ def _existing_resume_task(
     )
 
 
-def _recover_waiting_applications(db: Session, *, owner_sub: str) -> int:
-    """Wake Gmail applications parked until their canonical Indeed job exists.
+def recover_waiting_applications(db: Session, *, owner_sub: str) -> int:
+    """Wake applications whose canonical Indeed vacancy now exists.
 
-    Gmail history is incremental and may never replay an old notification after
-    the vacancy later appears. Vacancy refresh therefore owns the deterministic
-    repair path. The operation is owner-scoped and idempotent by ingestion event.
+    This repair belongs to the full/incremental application sync, not to the
+    standalone vacancy refresh action. It also repairs historical unresolved
+    tasks created before Gmail stopped creating vacancies.
     """
     events = (
         db.query(CandidateIngestionEvent)
+        .outerjoin(
+            IndeedEmailResumeTask,
+            IndeedEmailResumeTask.ingestion_event_id == CandidateIngestionEvent.id,
+        )
         .filter(
             CandidateIngestionEvent.owner_sub == owner_sub,
             CandidateIngestionEvent.source == "EMAIL",
             CandidateIngestionEvent.provider == "INDEED",
-            CandidateIngestionEvent.status == "NEEDS_REVIEW",
-            CandidateIngestionEvent.last_error_code == _JOB_NOT_SYNCED_CODE,
+            or_(
+                and_(
+                    CandidateIngestionEvent.status == "NEEDS_REVIEW",
+                    CandidateIngestionEvent.last_error_code == _JOB_NOT_SYNCED_CODE,
+                ),
+                and_(
+                    IndeedEmailResumeTask.job_id.is_(None),
+                    IndeedEmailResumeTask.status.in_(("WAITING_DOWNLOAD", "RETRY", "CLAIMED")),
+                ),
+            ),
         )
         .order_by(CandidateIngestionEvent.created_at.asc())
+        .distinct()
         .all()
     )
     recovered = 0
@@ -205,6 +219,7 @@ def sync_vacancy_snapshots(
     when exactly one unlinked owner-scoped match exists. Empty provider content
     never erases stored descriptions, and an active AI description remains the
     effective evaluation description while the original Indeed copy refreshes.
+    This function deliberately does not read Gmail or mutate candidate tasks.
     """
     counts = {
         "discovered": len(snapshots or []),
@@ -216,7 +231,6 @@ def sync_vacancy_snapshots(
         "missing_description": 0,
         "ambiguous": 0,
         "descriptions_recovered": 0,
-        "applications_recovered": 0,
     }
 
     for raw in snapshots or []:
@@ -334,8 +348,4 @@ def sync_vacancy_snapshots(
         counts["created"] += 1
         counts["descriptions_recovered"] += 1
 
-    counts["applications_recovered"] = _recover_waiting_applications(
-        db,
-        owner_sub=owner_sub,
-    )
     return counts
