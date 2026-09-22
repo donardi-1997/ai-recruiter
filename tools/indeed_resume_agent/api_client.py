@@ -23,6 +23,21 @@ class ClaimedTask:
 
 
 @dataclass(frozen=True)
+class FullSyncResult:
+    pages: int
+    discovered: int
+    created: int
+    existing: int
+    needs_review: int
+    skipped: int
+    reconcile_scanned: int
+    reconcile_ready: int
+    reconcile_provider_pending: int
+    reconcile_covered: int
+    reconcile_queued: int
+
+
+@dataclass(frozen=True)
 class QueueStats:
     pending: int
     claimed: int
@@ -158,6 +173,65 @@ class AgentApiClient:
     def retry_attention(self) -> int:
         response = self._request("POST", f"{BASE_PATH}/retry-attention")
         return int(response.json().get("requeued", 0))
+
+    def sync_all(self, *, max_pages: int = 200) -> FullSyncResult:
+        """Exhaust bounded historical discovery, then perform one incremental catch-up."""
+        limit = max(1, min(int(max_pages), 500))
+        totals = {
+            "discovered": 0,
+            "created": 0,
+            "existing": 0,
+            "needs_review": 0,
+            "skipped": 0,
+            "reconcile_queued": 0,
+        }
+        latest = {
+            "reconcile_scanned": 0,
+            "reconcile_ready": 0,
+            "reconcile_provider_pending": 0,
+            "reconcile_covered": 0,
+        }
+        pages = 0
+        catchup_required = False
+
+        while pages < limit:
+            payload = dict(self._request("POST", f"{BASE_PATH}/sync").json())
+            pages += 1
+            for key in totals:
+                if key == "reconcile_queued":
+                    totals[key] += int(payload.get(key) or 0)
+                else:
+                    totals[key] += int(payload.get(key) or 0)
+            for key in latest:
+                latest[key] = int(payload.get(key) or 0)
+
+            mode = str(payload.get("mode") or "")
+            has_more = bool(payload.get("has_more"))
+            if has_more:
+                continue
+
+            if mode in {"FULL", "FULL_CONTINUE", "FULL_RECOVERY"} and not catchup_required:
+                # The next call uses the captured baseline history id and catches
+                # messages that arrived while the historical pages were scanned.
+                catchup_required = True
+                continue
+            break
+        else:
+            raise AgentApiError(409, "RESUME_SYNC_PAGE_LIMIT")
+
+        return FullSyncResult(
+            pages=pages,
+            discovered=totals["discovered"],
+            created=totals["created"],
+            existing=totals["existing"],
+            needs_review=totals["needs_review"],
+            skipped=totals["skipped"],
+            reconcile_scanned=latest["reconcile_scanned"],
+            reconcile_ready=latest["reconcile_ready"],
+            reconcile_provider_pending=latest["reconcile_provider_pending"],
+            reconcile_covered=latest["reconcile_covered"],
+            reconcile_queued=totals["reconcile_queued"],
+        )
 
     def stats(self) -> QueueStats:
         payload = self._request("GET", f"{BASE_PATH}/stats").json()
