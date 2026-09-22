@@ -53,16 +53,19 @@ def test_active_and_paused_labels():
     assert paused.status_label == "En pausa"
 
 
-def test_manual_browser_open_has_explicit_safe_status():
-    ui=build_ui_state(snap("MANUAL_BROWSER_OPEN"), stats())
-    assert ui.status_label == "Cierra el navegador manual para continuar"
+def test_browser_ready_keeps_same_chrome_open_for_manual_login():
+    ui=build_ui_state(snap("BROWSER_READY"), stats())
+    assert "Chrome está abierto" in ui.status_label
+    assert "pulsa Resume" in ui.status_label
+    assert "Cierra" not in ui.status_label
     assert ui.session_label == "Ready"
 
 
 def test_manual_login_required_has_explicit_instruction():
     ui=build_ui_state(snap("MANUAL_LOGIN_REQUIRED"), stats())
     assert "Open Indeed (Google Chrome)" in ui.status_label
-    assert "Inicia sesión" in ui.status_label
+    assert "inicia sesión" in ui.status_label
+    assert "pulsa Resume" in ui.status_label
 
 
 def test_diagnostic_anchor_failure_is_explicit():

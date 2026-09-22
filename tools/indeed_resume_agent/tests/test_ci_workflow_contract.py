@@ -32,3 +32,5 @@ def test_agent_workflow_builds_windows_onedir_and_uploads_artifact():
     assert "tools\\indeed_resume_agent\\build.ps1" in text
     assert "actions/upload-artifact@v4" in text
     assert "ASIATI-Resume-Agent-Windows" in text
+    assert "--self-test" in text
+    assert "Execute packaged binary self-test" in text

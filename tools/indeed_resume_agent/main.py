@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections.abc import Callable
 
 from .api_client import AgentApiClient
-from .browser import IndeedBrowser
+from .browser_use_driver import IndeedBrowserUse
 from .config import load_config
 from .credential_store import (
     AgentCredentialMissing,
@@ -71,7 +71,7 @@ def main() -> None:
         return
 
     api = AgentApiClient(config, token)
-    browser = IndeedBrowser(config)
+    browser = IndeedBrowserUse(config)
     worker = ResumeWorker(config=config, api=api, browser=browser)
     try:
         run_ui(worker=worker, api=api, browser=browser)

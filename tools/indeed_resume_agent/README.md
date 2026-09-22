@@ -1,6 +1,6 @@
 # ASIATI Resume Agent
 
-Cliente Windows local para descargar de forma controlada los CV enlazados desde correos de Indeed y entregarlos al AI Recruiter. Conserva el formato original compatible (**PDF o DOCX**) en lugar de forzar conversiones locales. El agente usa una sesión visible de **Google Chrome**, un perfil de navegador exclusivo y una credencial de máquina almacenada en **Windows Credential Manager**.
+Cliente Windows local para descargar de forma controlada los CV enlazados desde correos de Indeed y entregarlos al AI Recruiter. Conserva el formato original compatible (**PDF o DOCX**) en lugar de forzar conversiones locales. El agente usa **Browser Use 0.13.10 + CDP** sobre una única sesión visible de **Google Chrome**, un perfil de navegador exclusivo y una credencial de máquina almacenada en **Windows Credential Manager**. La navegación crítica es determinística y no usa un LLM.
 
 ## Requisitos
 
@@ -51,8 +51,8 @@ El agente trabaja con una sola tarea a la vez. Si se cierra el PC o el proceso, 
 
 - **Pause**: evita reclamar la siguiente tarea; no interrumpe una descarga determinística ya iniciada.
 - **Resume**: reanuda la cola y, si había una tarea en `NEEDS_HUMAN`, solicita al backend volverla a `WAITING_DOWNLOAD`.
-- **Open Indeed (Google Chrome)**: abre Indeed usando exclusivamente el perfil persistente de Chrome del agente.
-- **Diagnostic mode**: abre una sesión visible controlada por Playwright para capturar metadatos sanitizados del flujo de descarga. Requiere que la sesión de Indeed ya se haya autenticado previamente en **Open Indeed (Google Chrome)**; el agente no intenta Google OAuth dentro de Playwright.
+- **Open Indeed (Google Chrome)**: abre Indeed en la misma sesión persistente administrada por Browser Use que después ejecutará el flujo determinístico.
+- **Diagnostic mode**: reutiliza esa sesión Browser Use/CDP para capturar metadatos sanitizados de navegación y red. Login, Google OAuth, MFA y CAPTCHA siguen siendo acciones manuales.
 - **Guardar diagnóstico**: guarda el JSON y la captura local en `%LOCALAPPDATA%\\ASIATI\\ResumeAgent\\diagnostics`.
 
 La interfaz nunca muestra tokens de máquina, lease tokens, URL temporal del CV, cookies ni errores backend sin sanitizar.
@@ -71,7 +71,7 @@ El resultado queda en:
 dist\ASIATI Resume Agent\
 ```
 
-Se usa PyInstaller `--onedir`, se incluye Playwright y se reutiliza el canal `chrome` instalado. **No** es necesario ejecutar `playwright install chromium` en el PC de producción.
+Se usa PyInstaller `--onedir` y se empaquetan Browser Use, `cdp-use` y sus dependencias. El runtime abre el **Google Chrome instalado** mediante el mismo patrón Browser Use usado por el bot de Computrabajo; no usa Browser Use Agent ni consume tokens de IA. **No** es necesario instalar un Chromium separado en el PC de producción.
 
 En GitHub, los pull requests ejecutan un único workflow de validación (`CI — Tests & Build`). El artefacto Windows se genera una sola vez después de cambios validados que llegan a `main`, o manualmente mediante `workflow_dispatch`.
 
