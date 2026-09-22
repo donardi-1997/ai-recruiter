@@ -14,22 +14,19 @@ LEASE_SECONDS = 600
 
 
 def _eligible(now: datetime):
-    return and_(
-        IndeedEmailResumeTask.job_id.is_not(None),
-        or_(
-            IndeedEmailResumeTask.status == "WAITING_DOWNLOAD",
-            and_(
-                IndeedEmailResumeTask.status == "RETRY",
-                or_(
-                    IndeedEmailResumeTask.available_at.is_(None),
-                    IndeedEmailResumeTask.available_at <= now,
-                ),
+    return or_(
+        IndeedEmailResumeTask.status == "WAITING_DOWNLOAD",
+        and_(
+            IndeedEmailResumeTask.status == "RETRY",
+            or_(
+                IndeedEmailResumeTask.available_at.is_(None),
+                IndeedEmailResumeTask.available_at <= now,
             ),
-            and_(
-                IndeedEmailResumeTask.status == "CLAIMED",
-                IndeedEmailResumeTask.lease_expires_at.is_not(None),
-                IndeedEmailResumeTask.lease_expires_at < now,
-            ),
+        ),
+        and_(
+            IndeedEmailResumeTask.status == "CLAIMED",
+            IndeedEmailResumeTask.lease_expires_at.is_not(None),
+            IndeedEmailResumeTask.lease_expires_at < now,
         ),
     )
 
@@ -57,7 +54,7 @@ def claim_next_eligible_task(
     now: datetime,
     lease_seconds: int = LEASE_SECONDS,
 ) -> IndeedEmailResumeTask | None:
-    """Claim the oldest vacancy-resolved task, using SKIP LOCKED on PostgreSQL."""
+    """Claim the oldest eligible task, using SKIP LOCKED on PostgreSQL."""
     query = (
         db.query(IndeedEmailResumeTask)
         .filter(
