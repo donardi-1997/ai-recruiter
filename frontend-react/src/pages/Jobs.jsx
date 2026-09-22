@@ -33,7 +33,7 @@ function appendProposalSection(blocks, label, values) {
   blocks.push(`${label}\n${items.map((item) => `- ${item}`).join("\n")}`);
 }
 
-export function formatEnrichmentProposalDescription(proposal, fallbackDescription = "") {
+function formatEnrichmentProposalDescription(proposal, fallbackDescription = "") {
   const source = proposal || {};
   const blocks = [];
   const introduction = String(
