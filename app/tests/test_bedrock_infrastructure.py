@@ -189,12 +189,12 @@ class TestCleanJson:
 
     def test_missing_opening_brace(self):
         from app.infrastructure.bedrock.parser import clean_json
-        with pytest.raises(ValueError, match="No se encontr"):
+        with pytest.raises(ValueError, match="MODEL_JSON_OBJECT_NOT_FOUND"):
             clean_json("no json here")
 
     def test_missing_closing_brace(self):
         from app.infrastructure.bedrock.parser import clean_json
-        with pytest.raises(ValueError, match="El JSON est"):
+        with pytest.raises(ValueError, match="MODEL_JSON_INCOMPLETE"):
             clean_json('{"a":1')
 
 
@@ -236,19 +236,38 @@ class TestInvokeJsonPrompt:
         assert mock_chain.invoke.call_count == 2
 
 
-def test_invalid_both_attempts():
-    """Invalid first response preserves current clean_json error contract."""
+def test_invalid_both_attempts_retry_and_never_expose_model_content():
     mock_chain = MagicMock()
     mock_resp1 = MagicMock()
-    mock_resp1.content = '{"invalid": "json"'
-    mock_chain.invoke.return_value = mock_resp1
+    mock_resp1.content = 'candidate-secret-one without json'
+    mock_resp2 = MagicMock()
+    mock_resp2.content = '{"candidate-secret-two":'
+    mock_chain.invoke.side_effect = [mock_resp1, mock_resp2]
 
     from app.infrastructure.bedrock.parser import invoke_json_prompt
 
-    with pytest.raises(ValueError, match="incompleto"):
+    with pytest.raises(ValueError, match="MODEL_JSON_INVALID_AFTER_RETRY:test") as exc:
         invoke_json_prompt(mock_chain, {"input": "test"}, "test")
 
-    assert mock_chain.invoke.call_count == 1
+    assert mock_chain.invoke.call_count == 2
+    assert "candidate-secret-one" not in str(exc.value)
+    assert "candidate-secret-two" not in str(exc.value)
+
+
+def test_missing_brace_first_attempt_can_recover_on_retry():
+    mock_chain = MagicMock()
+    first = MagicMock()
+    first.content = '{"incomplete": true'
+    second = MagicMock()
+    second.content = '{"result": "ok"}'
+    mock_chain.invoke.side_effect = [first, second]
+
+    from app.infrastructure.bedrock.parser import invoke_json_prompt
+
+    assert invoke_json_prompt(mock_chain, {"input": "test"}, "test") == {
+        "result": "ok"
+    }
+    assert mock_chain.invoke.call_count == 2
 
 
 # ============================================================
