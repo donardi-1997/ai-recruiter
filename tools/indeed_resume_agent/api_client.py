@@ -30,6 +30,7 @@ class FullSyncResult:
     existing: int
     needs_review: int
     skipped: int
+    reconcile_jobs: int
     reconcile_scanned: int
     reconcile_ready: int
     reconcile_provider_pending: int
@@ -186,6 +187,7 @@ class AgentApiClient:
             "reconcile_queued": 0,
         }
         latest = {
+            "reconcile_jobs": 0,
             "reconcile_scanned": 0,
             "reconcile_ready": 0,
             "reconcile_provider_pending": 0,
@@ -226,6 +228,7 @@ class AgentApiClient:
             existing=totals["existing"],
             needs_review=totals["needs_review"],
             skipped=totals["skipped"],
+            reconcile_jobs=latest["reconcile_jobs"],
             reconcile_scanned=latest["reconcile_scanned"],
             reconcile_ready=latest["reconcile_ready"],
             reconcile_provider_pending=latest["reconcile_provider_pending"],
