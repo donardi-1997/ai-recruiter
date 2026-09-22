@@ -456,6 +456,7 @@ def sync_mailbox(
     oauth_store=None,
     mailbox_client=None,
     storage=None,
+    max_results: int = 20,
 ) -> dict:
     """Run one authenticated Gmail sync without exposing OAuth credentials."""
     current = settings or get_gmail_settings()
@@ -486,6 +487,7 @@ def sync_mailbox(
             allowed_senders=resolved.allowed_senders,
             allowed_sender_domains=_sender_domains_from_query(resolved.query),
             storage=storage,
+            max_results=max_results,
         )
         return asdict(result)
     except GmailTokenRefreshRejected as exc:
