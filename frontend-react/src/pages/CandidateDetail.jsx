@@ -3,6 +3,18 @@ import React, { useEffect, useState } from "react";
 import { Link, useParams, useSearchParams } from "react-router-dom";
 import api from "../api/client";
 
+function recommendationLabel(recommendation) {
+  const labels = {
+    STRONG_MATCH: "Excelente coincidencia",
+    GOOD_MATCH: "Buena coincidencia",
+    PARTIAL_MATCH: "Coincidencia parcial",
+    LOW_MATCH: "Baja coincidencia",
+    EVALUATION_FAILED: "Evaluación fallida",
+    PENDING: "Pendiente",
+  };
+  return labels[recommendation] || "Sin clasificación";
+}
+
 function CandidateDetail() {
   const { candidate_id } = useParams();
   const [searchParams] = useSearchParams();
@@ -75,14 +87,13 @@ function CandidateDetail() {
   }, [candidate_id, jobId]);
 
   async function openResume() {
-    if (!jobId || !indeedDetails?.resume?.available) return;
     setOpeningResume(true);
     setResumeError("");
     try {
-      const response = await api.get(
-        `/jobs/${jobId}/candidates/${candidate_id}/resume`
-      );
-      window.open(response.data.url, "_blank", "noopener,noreferrer");
+      const response = await api.get(`/candidates/${candidate_id}/download`);
+      const downloadUrl = response.data?.download_url;
+      if (!downloadUrl) throw new Error("CV_DOWNLOAD_URL_MISSING");
+      window.open(downloadUrl, "_blank", "noopener,noreferrer");
     } catch {
       setResumeError("No fue posible abrir el CV. Intenta nuevamente.");
     } finally {
@@ -107,6 +118,7 @@ function CandidateDetail() {
   const resume = indeedDetails?.resume;
   const resumeName = resume?.name || candidate?.filename || candidate?.metadata?.resume_name || "Currículum registrado";
   const isIndeedTest = indeedDetails?.staged_test ?? candidate?.metadata?.indeed_staged_test;
+  const canOpenResume = !resume || resume.available;
 
   return (
     <div className="page candidate-detail-page">
@@ -125,7 +137,13 @@ function CandidateDetail() {
           {resume?.status === "FAILED" && (
             <p className="muted">No fue posible procesar el CV. Intenta nuevamente.</p>
           )}
-          {resume?.available && (
+          {resumeError && <p className="muted">{resumeError}</p>}
+          {jobId && (
+            <p>{evaluationCompleted ? "Evaluado para la vacante seleccionada" : "Pendiente de evaluación para la vacante seleccionada"}</p>
+          )}
+        </div>
+        <div className="candidate-profile-actions">
+          {canOpenResume && (
             <button
               type="button"
               className="btn btn-secondary"
@@ -135,12 +153,8 @@ function CandidateDetail() {
               {openingResume ? "Abriendo…" : "Ver CV"}
             </button>
           )}
-          {resumeError && <p className="muted">{resumeError}</p>}
-          {jobId && (
-            <p>{evaluationCompleted ? "Evaluado para la vacante seleccionada" : "Pendiente de evaluación para la vacante seleccionada"}</p>
-          )}
+          <span className="status-pill"><i /> Disponible</span>
         </div>
-        <span className="status-pill"><i /> Disponible</span>
       </header>
 
       {!evaluationCompleted ? (
@@ -154,7 +168,7 @@ function CandidateDetail() {
         </div>
       ) : (
         <div className="evaluation-layout">
-          <aside className="panel score-panel"><span className="eyebrow">Afinidad global</span><strong className="score score-large">{numericScore}%</strong><div className="score-bar"><div className="score-fill" style={{ width: `${Math.max(0, Math.min(100, numericScore))}%` }} /></div><span className="badge badge-success">{evaluation.recommendation}</span></aside>
+          <aside className="panel score-panel"><span className="eyebrow">Afinidad global</span><strong className="score score-large">{numericScore}%</strong><div className="score-bar"><div className="score-fill" style={{ width: `${Math.max(0, Math.min(100, numericScore))}%` }} /></div><span className="badge badge-success">{recommendationLabel(evaluation.recommendation)}</span></aside>
           <div className="evaluation-content">
             <section className="panel"><span className="eyebrow">Lectura ejecutiva</span><h2>Resumen del perfil</h2><p className="analysis-copy">{evaluation.summary}</p></section>
             <div className="columns">
