@@ -14,8 +14,8 @@ from tools.indeed_resume_agent.indeed_candidates_current import (
 )
 
 
-CANDIDATE_ONE_ID = "5052374908d6"
-CANDIDATE_TWO_ID = "ef75623665e6"
+CANDIDATE_ONE_ID = "candidate-alpha-001"
+CANDIDATE_TWO_ID = "candidate-beta-002"
 
 
 def _candidate_row(
@@ -71,7 +71,7 @@ def test_current_candidate_rows_extract_stable_identity_and_structured_fields():
     html = f"""
     <html><head><base href="https://employers.indeed.com/candidates" /></head><body>
       <table><tbody>
-        {_candidate_row(candidate_id=CANDIDATE_ONE_ID, name="Yurani Albarracin", job_title="AUXILIAR CONTABLE")}
+        {_candidate_row(candidate_id=CANDIDATE_ONE_ID, name="Candidata Alpha", job_title="VACANTE ALPHA")}
       </tbody></table>
     </body></html>
     """
@@ -80,8 +80,8 @@ def test_current_candidate_rows_extract_stable_identity_and_structured_fields():
     assert len(rows) == 1
     row = rows[0]
     assert row["candidateId"] == CANDIDATE_ONE_ID
-    assert row["name"] == "Yurani Albarracin"
-    assert row["jobTitle"] == "AUXILIAR CONTABLE"
+    assert row["name"] == "Candidata Alpha"
+    assert row["jobTitle"] == "VACANTE ALPHA"
     assert row["status"] == "Nuevos"
     assert row["appliedLabel"] == "Se postuló el Hoy"
     assert row["activity"] == "Nuevo candidato · hace 18 minutos"
@@ -92,8 +92,8 @@ def test_current_candidate_rows_keep_same_name_different_applications_distinct()
     html = f"""
     <html><head><base href="https://employers.indeed.com/candidates" /></head><body>
       <table><tbody>
-        {_candidate_row(candidate_id=CANDIDATE_ONE_ID, name="LAURA GÓMEZ", job_title="COORDINADOR(A) ADMINISTRATIVO(A) Y DE OPERACIONES")}
-        {_candidate_row(candidate_id=CANDIDATE_TWO_ID, name="LAURA GÓMEZ", job_title="Auxiliar de Selección y Reclutamiento")}
+        {_candidate_row(candidate_id=CANDIDATE_ONE_ID, name="Candidata Duplicada", job_title="VACANTE ALPHA")}
+        {_candidate_row(candidate_id=CANDIDATE_TWO_ID, name="Candidata Duplicada", job_title="VACANTE BETA")}
       </tbody></table>
     </body></html>
     """
@@ -101,30 +101,27 @@ def test_current_candidate_rows_keep_same_name_different_applications_distinct()
 
     assert len(rows) == 2
     assert {row["candidateId"] for row in rows} == {CANDIDATE_ONE_ID, CANDIDATE_TWO_ID}
-    assert {row["jobTitle"] for row in rows} == {
-        "COORDINADOR(A) ADMINISTRATIVO(A) Y DE OPERACIONES",
-        "Auxiliar de Selección y Reclutamiento",
-    }
+    assert {row["jobTitle"] for row in rows} == {"VACANTE ALPHA", "VACANTE BETA"}
 
 
 def test_candidate_selection_uses_structured_job_title_not_incidental_row_text():
     rows = [
         {
             "candidateId": "newer-wrong-job",
-            "name": "LAURA GÓMEZ",
-            "jobTitle": "Auxiliar de Selección y Reclutamiento",
+            "name": "Candidata Duplicada",
+            "jobTitle": "VACANTE BETA",
             # The requested job appears elsewhere in the row text. Matching the
             # whole row would select the wrong application.
-            "rowText": "LAURA GÓMEZ Auxiliar de Selección y Reclutamiento historial COORDINADOR ADMINISTRATIVO",
+            "rowText": "Candidata Duplicada VACANTE BETA historial VACANTE ALPHA",
             "href": "https://employers.indeed.com/candidates/view?id=newer-wrong-job",
             "index": 0,
             "appliedAt": "2026-09-23T15:00:00Z",
         },
         {
             "candidateId": "older-right-job",
-            "name": "LAURA GÓMEZ",
-            "jobTitle": "COORDINADOR ADMINISTRATIVO",
-            "rowText": "LAURA GÓMEZ COORDINADOR ADMINISTRATIVO",
+            "name": "Candidata Duplicada",
+            "jobTitle": "VACANTE ALPHA",
+            "rowText": "Candidata Duplicada VACANTE ALPHA",
             "href": "https://employers.indeed.com/candidates/view?id=older-right-job",
             "index": 1,
             "appliedAt": "2026-09-22T15:00:00Z",
@@ -133,8 +130,8 @@ def test_candidate_selection_uses_structured_job_title_not_incidental_row_text()
 
     target, error = select_current_candidate(
         rows,
-        "Laura Gómez",
-        "COORDINADOR ADMINISTRATIVO",
+        "Candidata Duplicada",
+        "VACANTE ALPHA",
     )
 
     assert error is None
@@ -162,7 +159,7 @@ def test_current_candidate_list_reports_real_total_and_next_button():
             await page.set_content(
                 f"""
                 <html><head><base href="https://employers.indeed.com/candidates" /></head><body>
-                  <table><tbody>{_candidate_row(candidate_id=CANDIDATE_ONE_ID, name="Yurani Albarracin", job_title="AUXILIAR CONTABLE")}</tbody></table>
+                  <table><tbody>{_candidate_row(candidate_id=CANDIDATE_ONE_ID, name="Candidata Alpha", job_title="VACANTE ALPHA")}</tbody></table>
                   <button aria-disabled="true">Anterior</button>
                   <button aria-disabled="false">Siguiente</button>
                   <span>Mostrando 1 a 20 de 27878</span>
@@ -187,7 +184,7 @@ def test_current_candidate_next_button_advances_when_page_signature_changes():
             await page.set_content(
                 f"""
                 <html><head><base href="https://employers.indeed.com/candidates" /></head><body>
-                  <table><tbody id="rows">{_candidate_row(candidate_id=CANDIDATE_ONE_ID, name="Yurani Albarracin", job_title="AUXILIAR CONTABLE")}</tbody></table>
+                  <table><tbody id="rows">{_candidate_row(candidate_id=CANDIDATE_ONE_ID, name="Candidata Alpha", job_title="VACANTE ALPHA")}</tbody></table>
                   <button aria-disabled="true">Anterior</button>
                   <button id="next" aria-disabled="false">Siguiente</button>
                   <span>Mostrando 1 a 20 de 40</span>
@@ -207,8 +204,8 @@ def test_current_candidate_next_button_advances_when_page_signature_changes():
                 {
                     "secondRowHtml": _candidate_row(
                         candidate_id=CANDIDATE_TWO_ID,
-                        name="LAURA GÓMEZ",
-                        job_title="Auxiliar de Selección y Reclutamiento",
+                        name="Candidata Beta",
+                        job_title="VACANTE BETA",
                     )
                 },
             )
@@ -256,8 +253,8 @@ def test_current_candidate_detail_verifies_identity_and_download_control():
                     content_type="text/html",
                     body="""
                     <html><head><title>Candidatos - Indeed para empresas</title></head><body>
-                      <h1>Andrea Cortes</h1>
-                      <div>Postulado a Diseñador(a) Gráfico(a) &amp; Marketing Digital</div>
+                      <h1>Candidata Detalle</h1>
+                      <div>Postulado a VACANTE ALPHA</div>
                       <button>Descargar CV</button>
                       <h2>Currículum</h2>
                     </body></html>
@@ -271,6 +268,6 @@ def test_current_candidate_detail_verifies_identity_and_download_control():
 
     state = asyncio.run(scenario())
     assert state["candidateId"] == CANDIDATE_ONE_ID
-    assert state["heading"] == "Andrea Cortes"
+    assert state["heading"] == "Candidata Detalle"
     assert state["downloadReady"] is True
-    assert "Diseñador(a) Gráfico(a) & Marketing Digital" in state["body"]
+    assert "Postulado a VACANTE ALPHA" in state["body"]
