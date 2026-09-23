@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import re
+
 from app.domains.candidate_ingestion import gmail_integration, indeed_job_sync, repository
 from app.domains.candidate_ingestion.models import (
     CandidateIngestionEvent,
@@ -23,6 +25,32 @@ ACTIVE_RESUME_STATUSES = {
     "EVALUATING",
     "RANKING",
 }
+_SAFE_STAGE_CODE = re.compile(r"\b((?:GMAIL|RESUME)_[A-Z0-9_]{2,100})\b")
+
+
+class ResumeSyncStageError(RuntimeError):
+    """Public-safe synchronization failure with a machine-readable stage code."""
+
+    def __init__(self, code: str):
+        self.code = str(code or "RESUME_SYNC_FAILED")
+        super().__init__(self.code)
+
+
+def _safe_exception_code(exc: Exception, fallback: str) -> str:
+    match = _SAFE_STAGE_CODE.search(str(exc or ""))
+    if match:
+        return match.group(1)
+    return fallback
+
+
+def _run_stage(db, code: str, operation):
+    try:
+        return operation()
+    except ResumeSyncStageError:
+        raise
+    except Exception as exc:
+        db.rollback()
+        raise ResumeSyncStageError(_safe_exception_code(exc, code)) from exc
 
 
 def _normalized_name(value: str | None) -> str:
@@ -284,26 +312,42 @@ def sync_one_page(
     bootstrap; subsequent FULL_CONTINUE and INCREMENTAL pages operate only on
     newly created or explicitly recovered durable queue work.
     """
-    applications_recovered = indeed_job_sync.recover_waiting_applications(
+    applications_recovered = _run_stage(
         db,
-        owner_sub=owner_sub,
+        "RESUME_SYNC_RECOVERY_FAILED",
+        lambda: indeed_job_sync.recover_waiting_applications(
+            db,
+            owner_sub=owner_sub,
+        ),
     )
-    gmail = gmail_integration.sync_mailbox(
+    gmail = _run_stage(
         db,
-        owner_sub=owner_sub,
-        mailbox_client=mailbox_client,
-        max_results=max_results,
+        "GMAIL_SYNC_FAILED",
+        lambda: gmail_integration.sync_mailbox(
+            db,
+            owner_sub=owner_sub,
+            mailbox_client=mailbox_client,
+            max_results=max_results,
+        ),
     )
     mode = str(gmail.get("mode") or "")
     created = int(gmail.get("created") or 0)
 
     compact = (
-        compact_duplicate_application_tasks(db, owner_sub=owner_sub)
+        _run_stage(
+            db,
+            "RESUME_SYNC_COMPACTION_FAILED",
+            lambda: compact_duplicate_application_tasks(db, owner_sub=owner_sub),
+        )
         if created > 0 or applications_recovered > 0
         else {"superseded": 0, "requeued_ambiguity": 0}
     )
     reconcile = (
-        reconcile_existing_indeed_candidates(db, owner_sub=owner_sub)
+        _run_stage(
+            db,
+            "RESUME_SYNC_RECONCILE_FAILED",
+            lambda: reconcile_existing_indeed_candidates(db, owner_sub=owner_sub),
+        )
         if mode == "FULL"
         else _empty_reconciliation()
     )
