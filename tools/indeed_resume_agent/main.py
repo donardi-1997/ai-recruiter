@@ -12,6 +12,7 @@ from .credential_store import (
 )
 from .runtime_compat import install_runtime_compat
 from .ui_v2 import run_ui
+from .vacancy_click_recovery import install_vacancy_click_recovery
 from .worker import ResumeWorker
 
 
@@ -74,6 +75,7 @@ def main() -> None:
     api = AgentApiClient(config, token)
     browser = IndeedBrowserUse(config)
     install_runtime_compat(browser)
+    install_vacancy_click_recovery()
     worker = ResumeWorker(config=config, api=api, browser=browser)
     try:
         run_ui(worker=worker, api=api, browser=browser)
