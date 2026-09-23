@@ -123,23 +123,39 @@ CURRENT_CANDIDATE_DETAIL_SCRIPT = r"""
       if (/^[A-Za-z0-9_-]{3,200}$/.test(value)) candidateId = value;
     }
   } catch (_) {}
-  const controls = Array.from(document.querySelectorAll('button, a, [role="button"]'));
+
+  const profile = document.querySelector('#candidateProfileContainer')
+    || document.querySelector('[data-testid="namePlate"]')?.parentElement
+    || document.body;
+  const heading = clean(
+    profile?.querySelector('[data-testid="name-plate-name-item"] h1, [data-testid="name-plate-name-item"] h2')?.innerText
+    || profile?.querySelector('h1, h2')?.innerText
+    || ''
+  );
+  const jobLink = profile?.querySelector('a[href*="/jobs/view?employerJobId="]') || null;
+  const jobTitle = clean(jobLink?.innerText || jobLink?.textContent || '')
+    .split(/\s*[•·]\s*/, 1)[0]
+    .trim();
+
+  const controls = Array.from(profile?.querySelectorAll('button, a, [role="button"]') || []);
   const downloadReady = controls.some((el) => {
+    const testId = clean(el.getAttribute('data-testid')).toLowerCase();
+    if (testId === 'download-resume-inline' || testId === 'download-resume-moreactions') {
+      return true;
+    }
     const label = clean(el.getAttribute('aria-label') || el.innerText || el.getAttribute('title') || '').toLowerCase();
     return [
-      'descargar cv', 'descargar resume', 'descargar currículum', 'descargar curriculum',
-      'descargar hoja de vida', 'download cv', 'download resume', 'view cv', 'view resume',
-      'ver cv', 'ver currículum', 'ver curriculum', 'ver hoja de vida'
+      'descargar cv', 'descargar hv', 'descargar resume', 'descargar currículum', 'descargar curriculum',
+      'descargar hoja de vida', 'download cv', 'download hv', 'download resume', 'view cv', 'view resume',
+      'ver cv', 'ver hv', 'ver currículum', 'ver curriculum', 'ver hoja de vida'
     ].includes(label);
   });
-  const heading = Array.from(document.querySelectorAll('h1, h2'))
-    .map((el) => clean(el.innerText || el.textContent || ''))
-    .find(Boolean) || '';
-  const body = clean(document.body?.innerText || '');
+  const body = clean(profile?.innerText || profile?.textContent || '');
   return {
     url: String(location.href || ''),
     candidateId,
     heading,
+    jobTitle,
     body: body.slice(0, 12000),
     downloadReady,
   };
@@ -241,18 +257,33 @@ async def _advance_candidate_page(browser, cdp, previous_signature: str) -> bool
 async def _open_selected_candidate(browser, cdp, target: dict) -> str | None:
     href = str(target.get('href') or '').strip()
     expected_id = str(target.get('candidateId') or '').strip()
-    if not href or not expected_id:
+    expected_name = _normalize_lookup_text(target.get('name'))
+    expected_job = _normalize_lookup_text(target.get('jobTitle'))
+    if not href or not expected_id or not expected_name:
         return 'INDEED_CANDIDATE_OPEN_FAILED'
     if candidate_id_from_url(href) != expected_id:
         return 'INDEED_CANDIDATE_OPEN_FAILED'
+
     await browser._navigate(cdp, urljoin('https://employers.indeed.com/', href))
     deadline = time.monotonic() + max(8.0, float(browser._config.request_timeout_seconds))
     while time.monotonic() < deadline:
         if await browser._requires_human(cdp):
             return 'INDEED_AUTH_REQUIRED'
         detail = await browser._evaluate(cdp, CURRENT_CANDIDATE_DETAIL_SCRIPT)
-        if isinstance(detail, dict) and str(detail.get('candidateId') or '') == expected_id:
-            return None
+        if isinstance(detail, dict):
+            detail_id = str(detail.get('candidateId') or '').strip()
+            detail_name = _normalize_lookup_text(detail.get('heading'))
+            detail_job = _normalize_lookup_text(detail.get('jobTitle'))
+            if not detail_job:
+                detail_job = _normalize_lookup_text(detail.get('body'))
+            id_matches = detail_id == expected_id
+            name_matches = detail_name == expected_name
+            job_matches = not expected_job or (
+                detail_job == expected_job
+                or expected_job in detail_job
+            )
+            if id_matches and name_matches and job_matches:
+                return None
         await asyncio.sleep(0.2)
     return 'INDEED_CANDIDATE_OPEN_FAILED'
 
@@ -274,7 +305,7 @@ async def _scan_candidate_search(browser, cdp, name: str, job_title: str | None)
             await asyncio.sleep(0.25)
 
         if not state.get('hasNextPage'):
-            return None
+            return 'INDEED_CANDIDATE_NOT_FOUND'
         signature = str(state.get('pageSignature') or '')
         if not signature or not await _advance_candidate_page(browser, cdp, signature):
             return 'INDEED_CANDIDATE_LIST_INCOMPLETE'
@@ -296,14 +327,17 @@ async def _open_candidate_current(
         if await self._requires_human(cdp):
             return 'INDEED_AUTH_REQUIRED'
         result = await _scan_candidate_search(self, cdp, name, job_title)
-        if result not in {None, 'INDEED_CANDIDATE_NOT_FOUND'}:
+        if result is None:
+            return None
+        if result != 'INDEED_CANDIDATE_NOT_FOUND':
             return result
-        # None means this filtered result set was exhausted without a match.
 
         if await self._fill_candidate_search(cdp, query):
             await asyncio.sleep(0.75)
             result = await _scan_candidate_search(self, cdp, name, job_title)
-            if result not in {None, 'INDEED_CANDIDATE_NOT_FOUND'}:
+            if result is None:
+                return None
+            if result != 'INDEED_CANDIDATE_NOT_FOUND':
                 return result
 
     return 'INDEED_CANDIDATE_NOT_FOUND'
