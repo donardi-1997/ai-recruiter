@@ -6,6 +6,10 @@ import json
 from . import vacancy_sync
 
 
+_ORIGINAL_COLLECT_ASYNC = vacancy_sync._collect_async
+_ORIGINAL_WAIT_FOR_DETAIL = vacancy_sync._wait_for_detail
+
+
 def _clean_text(value: object) -> str:
     return " ".join(str(value or "").split()).strip()
 
@@ -145,5 +149,43 @@ async def click_listing_row_with_recovery(browser, cdp, row: dict) -> bool:
     return bool(await browser._evaluate(cdp, script))
 
 
+async def _collect_async_with_integrity(browser) -> list[dict]:
+    """Run the existing collector but reject any discovered partial result.
+
+    The collector historically skipped rows it could not reopen and details
+    that never exposed a stable Indeed identity. For a source-of-truth sync,
+    silently returning a partial list is more dangerous than failing the run.
+    """
+
+    active_click = vacancy_sync._click_listing_row
+    active_wait = vacancy_sync._wait_for_detail
+
+    async def strict_click(browser_arg, cdp_arg, row_arg):
+        clicked = await active_click(browser_arg, cdp_arg, row_arg)
+        if not clicked:
+            raise RuntimeError("INDEED_JOB_SYNC_INCOMPLETE")
+        return True
+
+    async def strict_wait(browser_arg, cdp_arg, expected_title):
+        detail = await active_wait(browser_arg, cdp_arg, expected_title)
+        detail_url = vacancy_sync._safe_job_url(detail.get("url"))
+        stable_key = (
+            vacancy_sync._job_key_from_url(detail_url)
+            or str(detail.get("externalJobKey") or "").strip()
+        )
+        if not stable_key:
+            raise RuntimeError("INDEED_JOB_SYNC_INCOMPLETE")
+        return detail
+
+    vacancy_sync._click_listing_row = strict_click
+    vacancy_sync._wait_for_detail = strict_wait
+    try:
+        return await _ORIGINAL_COLLECT_ASYNC(browser)
+    finally:
+        vacancy_sync._click_listing_row = active_click
+        vacancy_sync._wait_for_detail = active_wait
+
+
 def install_vacancy_click_recovery() -> None:
     vacancy_sync._click_listing_row = click_listing_row_with_recovery
+    vacancy_sync._collect_async = _collect_async_with_integrity
