@@ -125,6 +125,7 @@ def build_ui_state(snapshot: WorkerSnapshot, stats: QueueStats) -> UiState:
         "FULL_SYNC_ATTENTION",
         "JOBS_SYNC_COMPLETED",
         "JOBS_SYNC_ATTENTION",
+        "SYNC_FAILED",
     } and snapshot.last_error:
         status_label = snapshot.last_error
     if state in {"RETRY", "FAILED", "ERROR"} and snapshot.last_error:
