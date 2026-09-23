@@ -150,6 +150,105 @@ def test_spa_listing_ignores_non_job_navigation_and_legal_links():
     assert "Mensajes" not in [row["title"] for row in state["rows"]]
 
 
+def test_screenshot_like_workspace_extracts_only_real_jobs():
+    html = """
+    <nav>
+      <a href="https://employers.indeed.com/messages">Mensajes</a>
+      <a href="https://co.indeed.com/legal?hl=es&co=CO">Condiciones del servicio</a>
+    </nav>
+    <header>
+      <button>Necesita revisión</button>
+      <button>Estatus</button><button>Título</button><button>Ubicación</button>
+      <strong>407 resultados</strong>
+      <a href="https://employers.indeed.com/jobs/create">Publicar un empleo</a>
+    </header>
+    <div>Revisión requerida: 24 de tus empleos no son visibles para los candidatos</div>
+    <main>
+      <ul>
+        <li class="job-card">
+          <button type="button" role="link">AUXILIAR CONTABLE</button>
+          <span>2 Todos · 2 Nuevos</span><span>Bogotá, Cundinamarca</span><span>Abierto</span>
+        </li>
+        <li class="job-card">
+          <button type="button" role="link">ANALISTA CONTABLE</button>
+          <span>5 Todos · 0 Nuevos</span><span>Bogotá, Cundinamarca</span><span>Abierto</span>
+        </li>
+        <li class="job-card">
+          <button type="button" role="link">Vendedor punto de venta</button>
+          <span>7 Todos · 7 Nuevos</span><span>Bogotá, Cundinamarca</span><span>Abierto</span>
+        </li>
+        <li class="job-card">
+          <button type="button" role="link">Vendedor/cajero.</button>
+          <span>11 Todos · 11 Nuevos</span><span>Bogotá, Cundinamarca</span><span>Abierto</span>
+        </li>
+      </ul>
+    </main>
+    """
+    with sync_playwright() as playwright:
+        browser = playwright.chromium.launch(headless=True)
+        page = browser.new_page(viewport={"width": 1366, "height": 768})
+        page.set_content(html)
+        state = page.evaluate(SAFE_LISTING_STATE_SCRIPT)
+        browser.close()
+
+    titles = [row["title"] for row in state["rows"]]
+    assert titles == [
+        "AUXILIAR CONTABLE",
+        "ANALISTA CONTABLE",
+        "Vendedor punto de venta",
+        "Vendedor/cajero.",
+    ]
+    assert "Mensajes" not in titles
+    assert "Condiciones del servicio" not in titles
+    assert "Publicar un empleo" not in titles
+
+
+def test_safe_listing_preserves_scroll_pagination_and_row_position_for_virtualized_jobs():
+    html = """
+    <base href="https://employers.indeed.com/jobs?status=open%2Cpaused" />
+    <main id="root">
+      <ul id="jobs">
+        <li class="job-card">
+          <button type="button" role="link">VACANTE SUPERIOR</button>
+          <span>2 Todos · 1 Nuevo</span><span>Abierto</span>
+        </li>
+      </ul>
+      <div style="height: 2400px"></div>
+      <a rel="next" href="https://employers.indeed.com/jobs?status=open%2Cpaused&page=2">Siguiente</a>
+    </main>
+    <script>
+      window.addEventListener('scroll', () => {
+        if (window.scrollY < 200 || document.getElementById('lazy-job')) return;
+        const row = document.createElement('li');
+        row.id = 'lazy-job';
+        row.className = 'job-card';
+        row.innerHTML = `
+          <button type="button" role="link">VACANTE VIRTUALIZADA</button>
+          <span>9 Todos · 3 Nuevos</span><span>Pausado</span>
+        `;
+        document.getElementById('jobs').appendChild(row);
+      });
+    </script>
+    """
+    with sync_playwright() as playwright:
+        browser = playwright.chromium.launch(headless=True)
+        page = browser.new_page(viewport={"width": 1280, "height": 600})
+        page.set_content(html)
+        first = page.evaluate(SAFE_LISTING_STATE_SCRIPT)
+        page.wait_for_timeout(400)
+        second = page.evaluate(SAFE_LISTING_STATE_SCRIPT)
+        browser.close()
+
+    assert first["scrollY"] > first["previousScrollY"]
+    assert first["scrollHeight"] > first["viewportHeight"]
+    assert first["nextHref"].startswith("https://employers.indeed.com/jobs")
+    assert first["rows"][0]["listingUrl"].startswith("https://employers.indeed.com/jobs")
+    assert "scrollY" in first["rows"][0]
+    titles = {row["title"] for row in first["rows"] + second["rows"]}
+    assert "VACANTE SUPERIOR" in titles
+    assert "VACANTE VIRTUALIZADA" in titles
+
+
 def test_detail_state_reports_loading_until_spa_job_detail_is_hydrated():
     loading_html = """
     <main>
