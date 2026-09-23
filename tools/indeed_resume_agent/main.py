@@ -10,6 +10,7 @@ from .credential_store import (
     read_agent_token,
     write_agent_token,
 )
+from .jobs_listing_compat import install_jobs_listing_compat
 from .runtime_compat import install_runtime_compat
 from .ui_v2 import run_ui
 from .vacancy_click_recovery import install_vacancy_click_recovery
@@ -75,6 +76,7 @@ def main() -> None:
     api = AgentApiClient(config, token)
     browser = IndeedBrowserUse(config)
     install_runtime_compat(browser)
+    install_jobs_listing_compat()
     install_vacancy_click_recovery()
     worker = ResumeWorker(
         config=config,
