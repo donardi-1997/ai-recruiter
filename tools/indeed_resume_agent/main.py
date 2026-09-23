@@ -16,6 +16,7 @@ from .jobs_listing_compat import install_jobs_listing_compat
 from .runtime_compat import install_runtime_compat
 from .ui_v2 import run_ui
 from .vacancy_click_recovery import install_vacancy_click_recovery
+from .vacancy_pipeline import install_resilient_vacancy_pipeline
 from .worker import ResumeWorker
 
 
@@ -84,6 +85,11 @@ def main() -> None:
     # as regression/fallback code but cannot override the stable identities,
     # structural auth, or pagination used by current Indeed.
     install_current_indeed_jobs(browser)
+    # The current Indeed DOM collector is wrapped by a two-phase pipeline that
+    # never throws away valid hydrated vacancies only because the list counter
+    # and traversed rows differ. Authentication and zero usable details still
+    # fail closed.
+    install_resilient_vacancy_pipeline()
     install_current_indeed_candidates(browser)
     worker = ResumeWorker(
         config=config,
