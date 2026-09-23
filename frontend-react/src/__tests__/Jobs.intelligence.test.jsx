@@ -46,6 +46,19 @@ const EXPECTED_APPLIED_DESCRIPTION = [
   "Preguntas por validar (no son requisitos de evaluación)\n- Confirmar si EKS forma parte del stack",
 ].join("\n\n");
 
+const EXISTING_JOB = {
+  job_id: "job-1",
+  title: "Existing Cloud Engineer",
+  description: "Existing description",
+  indeed_description: "Existing description",
+  ai_description: null,
+  active_description_source: "indeed",
+  candidate_count: 2,
+  evaluation_version: 1,
+  evaluation_profile: {},
+  created_at: "2026-09-01T10:00:00Z",
+};
+
 function renderJobs() {
   return render(
     <MemoryRouter>
@@ -58,22 +71,15 @@ describe("Jobs AI enrichment", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     api.get.mockImplementation((url) => {
-      if (url === "/jobs") {
+      if (url === "/jobs/page") {
         return Promise.resolve({
-          data: [
-            {
-              job_id: "job-1",
-              title: "Existing Cloud Engineer",
-              description: "Existing description",
-              indeed_description: "Existing description",
-              ai_description: null,
-              active_description_source: "indeed",
-              candidate_count: 2,
-              evaluation_version: 1,
-              evaluation_profile: {},
-              created_at: "2026-09-01T10:00:00Z",
-            },
-          ],
+          data: {
+            items: [EXISTING_JOB],
+            page: 1,
+            page_size: 12,
+            total: 1,
+            total_pages: 1,
+          },
         });
       }
       return Promise.resolve({ data: [] });
