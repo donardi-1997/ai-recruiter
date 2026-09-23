@@ -122,3 +122,9 @@ def test_safe_code_uses_agent_api_error_code_instead_of_hiding_it():
     error = AgentApiError(409, "RESUME_SYNC_PAGE_LIMIT")
 
     assert _safe_code(error, "INDEED_CANDIDATE_SYNC_FAILED") == "RESUME_SYNC_PAGE_LIMIT"
+
+
+def test_safe_code_preserves_gmail_stage_code_from_backend():
+    error = AgentApiError(502, "GMAIL_TOKEN_REFRESH_REJECTED")
+
+    assert _safe_code(error, "INDEED_CANDIDATE_SYNC_FAILED") == "GMAIL_TOKEN_REFRESH_REJECTED"
