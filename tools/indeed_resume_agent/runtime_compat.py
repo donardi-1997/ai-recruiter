@@ -116,7 +116,10 @@ SAFE_LISTING_STATE_SCRIPT = r"""
   const looksLikeJobContainer = (node) => {
     if (!node || !isVisible(node)) return false;
     const text = lower(node.innerText || node.textContent || '');
-    const hasStatus = /\b(abierto|pausado|open|paused)\b/i.test(text);
+    // Indeed renders adjacent inline cells/spans without guaranteed whitespace,
+    // e.g. "Bogotá, CundinamarcaAbierto". Do not rely on word boundaries for
+    // status detection; the other structural signals keep navigation out.
+    const hasStatus = /(abierto|pausado|open|paused)/i.test(text);
     const hasCandidateCounts = /\b(candidatos|todos|nuevos|nuevo|candidates|all|new)\b/i.test(text);
     const hasJobHint = hasJobSemanticHint(node);
     return hasStatus && (hasCandidateCounts || hasJobHint) && Boolean(chooseClickable(node));
@@ -130,9 +133,6 @@ SAFE_LISTING_STATE_SCRIPT = r"""
     roots.push(node);
   };
 
-  // Current Indeed Employers renders vacancies as table/ARIA rows, job-labelled
-  // containers, or list/article cards. Generic list items are accepted only
-  // when they expose vacancy structure, keeping footer/legal/navigation out.
   for (const selector of ['tr', '[role="row"]', '[data-testid*="job" i]']) {
     for (const node of document.querySelectorAll(selector)) addRoot(node);
   }
@@ -165,7 +165,7 @@ SAFE_LISTING_STATE_SCRIPT = r"""
 
     if (!externalJobKey) {
       const text = rowText.toLowerCase();
-      const hasStatus = /\b(abierto|pausado|open|paused)\b/i.test(text);
+      const hasStatus = /(abierto|pausado|open|paused)/i.test(text);
       const hasCandidateCounts = /\b(candidatos|todos|nuevos|nuevo|candidates|all|new)\b/i.test(text);
       const hasJobHint = hasJobSemanticHint(root);
       if (!(hasStatus && (hasCandidateCounts || hasJobHint))) continue;
