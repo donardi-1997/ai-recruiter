@@ -140,7 +140,7 @@ SAFE_LISTING_STATE_SCRIPT = r"""
     if (jobKeyFromElement(node) || looksLikeJobContainer(node)) addRoot(node);
   }
 
-  const listingUrl = location.href;
+  const listingUrl = document.baseURI || location.href;
   const rowScrollY = window.scrollY;
   const rows = [];
   const seen = new Set();
@@ -178,7 +178,7 @@ SAFE_LISTING_STATE_SCRIPT = r"""
     seen.add(dedupeKey);
 
     const token = `asiati-job-${clickIndex++}`;
-    clickable.setAttribute('data-asiati-job-token', token);
+    clickable.setAttribute('data-asiati-vacancy-token', token);
     rows.push({
       externalJobKey,
       title,
