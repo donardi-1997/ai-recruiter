@@ -18,6 +18,7 @@ class Browser:
     def __init__(self):
         self.current_url = ""
         self.navigations: list[str] = []
+        self.scroll_round = 0
 
     async def _navigate(self, _cdp, url):
         self.current_url = str(url)
@@ -59,13 +60,50 @@ def test_discovery_follows_next_href_when_indeed_does_not_expose_next_button(mon
             "pageSignature": "job-1",
         }
 
+    async def no_scroll(_browser, _cdp):
+        return False
+
     monkeypatch.setattr(vacancy_pipeline, "_listing_state", listing_state)
+    monkeypatch.setattr(vacancy_pipeline, "_scroll_listing", no_scroll, raising=False)
 
     discovered, diagnostics = asyncio.run(vacancy_pipeline._discover_jobs(browser, object()))
 
     assert list(discovered) == ["job-1", "job-69"]
     assert page_two in browser.navigations
     assert diagnostics["pages"] == 2
+
+
+def test_discovery_collects_rows_revealed_by_lazy_scroll_without_next_button(monkeypatch):
+    browser = Browser()
+
+    async def listing_state(_browser, _cdp):
+        rows = [_row("job-1", "Vacante uno")]
+        if _browser.scroll_round >= 1:
+            rows.append(_row("job-2", "Vacante dos"))
+        if _browser.scroll_round >= 2:
+            rows.append(_row("job-3", "Vacante tres"))
+        return {
+            "rows": rows,
+            "expectedTotal": 3,
+            "hasNextPage": False,
+            "nextHref": None,
+            "pageSignature": "|".join(row["externalJobKey"] for row in rows),
+        }
+
+    async def scroll_listing(_browser, _cdp):
+        if _browser.scroll_round >= 2:
+            return False
+        _browser.scroll_round += 1
+        return True
+
+    monkeypatch.setattr(vacancy_pipeline, "_listing_state", listing_state)
+    monkeypatch.setattr(vacancy_pipeline, "_scroll_listing", scroll_listing, raising=False)
+
+    discovered, diagnostics = asyncio.run(vacancy_pipeline._discover_jobs(browser, object()))
+
+    assert list(discovered) == ["job-1", "job-2", "job-3"]
+    assert diagnostics["expected_total"] == 3
+    assert diagnostics["list_incomplete"] is False
 
 
 def test_candidate_sync_failure_surfaces_specific_safe_backend_code():
