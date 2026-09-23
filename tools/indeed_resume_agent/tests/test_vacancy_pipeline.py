@@ -58,6 +58,35 @@ def test_discovery_keeps_stable_rows_when_indeed_counter_is_higher(monkeypatch):
     assert diagnostics["list_incomplete"] is True
 
 
+def test_wait_for_job_description_does_not_accept_title_only_hydration(monkeypatch):
+    browser = Browser()
+    states = iter(
+        [
+            {"title": "Vacante uno", "description": "", "loading": False},
+            {
+                "title": "Vacante uno",
+                "description": "Descripción completa que llegó después del título.",
+                "loading": False,
+            },
+        ]
+    )
+    calls = 0
+
+    async def detail_state(_browser, _cdp):
+        nonlocal calls
+        calls += 1
+        return next(states)
+
+    monkeypatch.setattr(vacancy_pipeline.vacancy_sync, "_detail_state", detail_state)
+
+    detail = asyncio.run(
+        vacancy_pipeline._wait_for_job_description(browser, object(), "Vacante uno")
+    )
+
+    assert calls == 2
+    assert detail["description"].startswith("Descripción completa")
+
+
 def test_hydration_enters_every_discovered_vacancy_and_requires_description(monkeypatch):
     browser = Browser()
     discovered = {
@@ -66,7 +95,7 @@ def test_hydration_enters_every_discovered_vacancy_and_requires_description(monk
         "job-3": _row("job-3", "Vacante tres"),
     }
 
-    async def wait_for_detail(_browser, _cdp, expected_title):
+    async def wait_for_description(_browser, _cdp, expected_title):
         if expected_title == "Vacante dos":
             return {"title": expected_title, "description": ""}
         return {
@@ -76,7 +105,11 @@ def test_hydration_enters_every_discovered_vacancy_and_requires_description(monk
             "location": "Bogotá",
         }
 
-    monkeypatch.setattr(vacancy_pipeline.vacancy_sync, "_wait_for_detail", wait_for_detail)
+    monkeypatch.setattr(
+        vacancy_pipeline,
+        "_wait_for_job_description",
+        wait_for_description,
+    )
 
     snapshots, diagnostics = asyncio.run(
         vacancy_pipeline._hydrate_jobs(browser, object(), discovered)
