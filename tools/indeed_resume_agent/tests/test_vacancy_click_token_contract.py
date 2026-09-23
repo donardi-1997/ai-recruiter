@@ -35,7 +35,7 @@ def test_safe_listing_marks_the_exact_token_consumed_by_spa_clicker():
     asyncio.run(scenario())
 
 
-def test_spa_clicker_recovers_exact_duplicate_row_after_listing_reload_loses_token():
+def test_spa_clicker_fails_closed_for_exact_duplicates_after_reload_loses_token():
     async def scenario():
         html = """
         <main>
@@ -66,6 +66,8 @@ def test_spa_clicker_recovers_exact_duplicate_row_after_listing_reload_loses_tok
             target = state["rows"][1]
 
             # A real listing navigation/reload removes the temporary token attributes.
+            # With no stable provider id, two visually identical publications cannot
+            # be distinguished safely and must not be guessed from row position.
             await page.set_content(html)
 
             class Browser:
@@ -74,8 +76,8 @@ def test_spa_clicker_recovers_exact_duplicate_row_after_listing_reload_loses_tok
 
             clicked = await vacancy_sync._click_listing_row(Browser(), object(), target)
 
-            assert clicked is True
-            assert await page.evaluate("window.clicked") == "second"
+            assert clicked is False
+            assert await page.evaluate("window.clicked || ''") == ""
             await chromium.close()
 
     asyncio.run(scenario())
