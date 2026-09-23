@@ -12,10 +12,14 @@ _SUPPORTED_RESUME_SUFFIXES = {".pdf", ".docx"}
 
 def _is_indeed_host(raw_url: str | None) -> bool:
     try:
-        host = str(urlsplit(str(raw_url or "")).hostname or "").casefold()
+        parsed = urlsplit(str(raw_url or ""))
+        host = str(parsed.hostname or "").casefold()
     except Exception:
         return False
-    return host == "indeed.com" or host.endswith(".indeed.com")
+    return (
+        parsed.scheme.casefold() == "https"
+        and (host == "indeed.com" or host.endswith(".indeed.com"))
+    )
 
 
 def install_download_capture_compat(browser) -> None:
@@ -24,7 +28,7 @@ def install_download_capture_compat(browser) -> None:
     The Browser Use driver already validates the resulting PDF/DOCX bytes before
     upload. This compatibility layer only broadens the network observation step:
     while a resume download is explicitly armed, a 200 attachment response from
-    an Indeed host with a PDF/DOCX filename is treated like the historical
+    an HTTPS Indeed host with a PDF/DOCX filename is treated like the historical
     /api/catws/resume/v2/download response.
     """
     original = browser._on_response_received
