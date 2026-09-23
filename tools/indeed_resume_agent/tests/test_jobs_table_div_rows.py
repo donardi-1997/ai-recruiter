@@ -4,7 +4,7 @@ import asyncio
 
 from playwright.async_api import async_playwright
 
-from tools.indeed_resume_agent.runtime_compat import SAFE_LISTING_STATE_SCRIPT
+from tools.indeed_resume_agent.jobs_listing_compat import JOBS_LISTING_STATE_SCRIPT
 
 
 HTML = """
@@ -46,7 +46,7 @@ def test_jobs_workspace_div_rows_are_detected_without_row_roles_or_job_testids()
             page = await browser.new_page()
             await page.set_content(HTML)
 
-            state = await page.evaluate(SAFE_LISTING_STATE_SCRIPT)
+            state = await page.evaluate(JOBS_LISTING_STATE_SCRIPT)
 
             titles = [row["title"] for row in state["rows"]]
             assert titles == ["AUXILIAR CONTABLE", "ANALISTA CONTABLE"]
