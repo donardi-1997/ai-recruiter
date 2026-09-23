@@ -8,7 +8,10 @@ from playwright.async_api import async_playwright
 
 from tools.indeed_resume_agent import vacancy_sync
 from tools.indeed_resume_agent.runtime_compat import SAFE_LISTING_STATE_SCRIPT
-from tools.indeed_resume_agent.vacancy_click_recovery import click_listing_row_with_recovery
+from tools.indeed_resume_agent.vacancy_click_recovery import (
+    click_listing_row_with_recovery,
+    install_vacancy_click_recovery,
+)
 
 
 class _PageBrowser:
@@ -177,6 +180,8 @@ class _CollectorBrowser:
 
 
 def test_discovered_vacancy_that_cannot_be_opened_fails_sync_instead_of_silently_skipping(monkeypatch):
+    install_vacancy_click_recovery()
+
     async def cannot_click(_browser, _cdp, _row):
         return False
 
@@ -187,6 +192,8 @@ def test_discovered_vacancy_that_cannot_be_opened_fails_sync_instead_of_silently
 
 
 def test_detail_without_stable_provider_identity_fails_sync_instead_of_silently_skipping(monkeypatch):
+    install_vacancy_click_recovery()
+
     async def clicked(_browser, _cdp, _row):
         return True
 
