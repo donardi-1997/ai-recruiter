@@ -10,6 +10,7 @@ from .credential_store import (
     read_agent_token,
     write_agent_token,
 )
+from .indeed_jobs_current import install_current_indeed_jobs
 from .jobs_listing_compat import install_jobs_listing_compat
 from .runtime_compat import install_runtime_compat
 from .ui_v2 import run_ui
@@ -78,6 +79,10 @@ def main() -> None:
     install_runtime_compat(browser)
     install_jobs_listing_compat()
     install_vacancy_click_recovery()
+    # Install the production DOM contract last. The older shims stay available
+    # as regression coverage/fallback code but cannot override employerJobId,
+    # structural auth, or button-based pagination used by current Indeed.
+    install_current_indeed_jobs(browser)
     worker = ResumeWorker(
         config=config,
         api=api,
