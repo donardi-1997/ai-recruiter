@@ -269,3 +269,26 @@ def test_needs_human_surfaces_only_local_diagnostic_path(tmp_path):
     assert snap.state == "WAITING_FOR_HUMAN"
     assert snap.last_error == f"INDEED_AUTH_REQUIRED — Diagnóstico local: {diagnostic}"
     assert api.human == [("t1","INDEED_AUTH_REQUIRED")]
+
+
+def test_start_paused_protects_manual_login_until_explicit_resume(tmp_path):
+    api=FakeApi([task()])
+    browser=FakeBrowser(
+        BrowserResult(BrowserOutcome.DOWNLOADED, filename="ada.pdf", data=b"%PDF-ok")
+    )
+    worker=ResumeWorker(
+        config=config(tmp_path),
+        api=api,
+        browser=browser,
+        heartbeat_factory=lambda **kw: FakeHeartbeat(),
+        start_paused=True,
+    )
+
+    assert worker.snapshot.state == "PAUSED"
+    assert worker.run_once().state == "PAUSED"
+    assert len(api.claims) == 1
+    assert browser.urls == []
+
+    worker.resume()
+    assert worker.run_once().state == "COMPLETED"
+    assert browser.urls == ["https://indeed.test/resume"]
