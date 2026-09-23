@@ -14,7 +14,7 @@ from .indeed_candidates_current import install_current_indeed_candidates
 from .indeed_jobs_current import install_current_indeed_jobs
 from .jobs_listing_compat import install_jobs_listing_compat
 from .runtime_compat import install_runtime_compat
-from .ui_v2 import run_ui
+from .ui_v3 import run_ui
 from .vacancy_click_recovery import install_vacancy_click_recovery
 from .vacancy_pipeline import install_resilient_vacancy_pipeline
 from .worker import ResumeWorker
