@@ -142,12 +142,21 @@ def test_current_next_button_advances_when_page_signature_changes():
                 f"""
                 <html><head><base href="https://employers.indeed.com/jobs" /></head><body>
                   <table><tbody id="rows">{_real_row()}</tbody></table>
-                  <button id="ejsJobListPaginationNextBtn" aria-label="Siguiente"
-                    onclick="document.getElementById('rows').innerHTML = `{_real_row('ANALISTA CONTABLE', second_href)}`; this.disabled = true;">
-                    Siguiente
-                  </button>
+                  <button id="ejsJobListPaginationNextBtn" aria-label="Siguiente">Siguiente</button>
                 </body></html>
                 """
+            )
+            await page.evaluate(
+                """
+                ({ secondRowHtml }) => {
+                  const button = document.getElementById('ejsJobListPaginationNextBtn');
+                  button.addEventListener('click', () => {
+                    document.getElementById('rows').innerHTML = secondRowHtml;
+                    button.disabled = true;
+                  });
+                }
+                """,
+                {"secondRowHtml": _real_row("ANALISTA CONTABLE", second_href)},
             )
 
             class FakeConfig:
