@@ -11,7 +11,7 @@ SAFE_LISTING_STATE_SCRIPT = r"""
   const clean = (v) => String(v || '').replace(/\s+/g, ' ').trim();
   const lower = (v) => clean(v).toLowerCase();
   const ignoredLabels = new Set([
-    '', 'todos', 'nuevos', 'all', 'new', 'abierto', 'pausado', 'open', 'paused',
+    '', 'todos', 'nuevos', 'nuevo', 'all', 'new', 'abierto', 'pausado', 'open', 'paused',
     'patrocinar empleo', 'sponsor job', 'ver empleos', 'view jobs',
     'más opciones', 'mas opciones', 'more options'
   ]);
@@ -28,7 +28,10 @@ SAFE_LISTING_STATE_SCRIPT = r"""
       const jobsIndex = parts.indexOf('jobs');
       if (jobsIndex >= 0 && parts.length > jobsIndex + 1) {
         const tail = clean(parts[parts.length - 1]);
-        if (tail && !['view', 'details', 'edit', 'jobs'].includes(tail.toLowerCase())) return tail;
+        if (
+          tail
+          && !['view', 'details', 'edit', 'jobs', 'create', 'new'].includes(tail.toLowerCase())
+        ) return tail;
       }
     } catch (_) {}
     return '';
@@ -99,12 +102,24 @@ SAFE_LISTING_STATE_SCRIPT = r"""
     return null;
   };
 
+  const hasJobSemanticHint = (node) => {
+    const attrs = clean([
+      node?.getAttribute?.('class'),
+      node?.getAttribute?.('id'),
+      node?.getAttribute?.('data-testid'),
+      node?.getAttribute?.('aria-label'),
+      node?.getAttribute?.('role')
+    ].filter(Boolean).join(' ')).toLowerCase();
+    return /(job|empleo|vacan)/i.test(attrs);
+  };
+
   const looksLikeJobContainer = (node) => {
     if (!node || !isVisible(node)) return false;
     const text = lower(node.innerText || node.textContent || '');
     const hasStatus = /\b(abierto|pausado|open|paused)\b/i.test(text);
-    const hasCandidateCounts = /\b(candidatos|todos|nuevos|candidates|all|new)\b/i.test(text);
-    return hasStatus && hasCandidateCounts && Boolean(chooseClickable(node));
+    const hasCandidateCounts = /\b(candidatos|todos|nuevos|nuevo|candidates|all|new)\b/i.test(text);
+    const hasJobHint = hasJobSemanticHint(node);
+    return hasStatus && (hasCandidateCounts || hasJobHint) && Boolean(chooseClickable(node));
   };
 
   const roots = [];
@@ -116,11 +131,8 @@ SAFE_LISTING_STATE_SCRIPT = r"""
   };
 
   // Current Indeed Employers renders vacancies as table/ARIA rows, job-labelled
-  // containers, or list/article cards. List/article nodes without a stable
-  // provider id are accepted only when they expose both vacancy-status and
-  // candidate-count signals plus a safe clickable title. This keeps footer,
-  // legal and navigation entries out while allowing SPA cards whose id only
-  // appears after opening the detail panel.
+  // containers, or list/article cards. Generic list items are accepted only
+  // when they expose vacancy structure, keeping footer/legal/navigation out.
   for (const selector of ['tr', '[role="row"]', '[data-testid*="job" i]']) {
     for (const node of document.querySelectorAll(selector)) addRoot(node);
   }
@@ -128,6 +140,8 @@ SAFE_LISTING_STATE_SCRIPT = r"""
     if (jobKeyFromElement(node) || looksLikeJobContainer(node)) addRoot(node);
   }
 
+  const listingUrl = location.href;
+  const rowScrollY = window.scrollY;
   const rows = [];
   const seen = new Set();
   let clickIndex = 0;
@@ -152,8 +166,9 @@ SAFE_LISTING_STATE_SCRIPT = r"""
     if (!externalJobKey) {
       const text = rowText.toLowerCase();
       const hasStatus = /\b(abierto|pausado|open|paused)\b/i.test(text);
-      const hasCandidateCounts = /\b(candidatos|todos|nuevos|candidates|all|new)\b/i.test(text);
-      if (!(hasStatus && hasCandidateCounts)) continue;
+      const hasCandidateCounts = /\b(candidatos|todos|nuevos|nuevo|candidates|all|new)\b/i.test(text);
+      const hasJobHint = hasJobSemanticHint(root);
+      if (!(hasStatus && (hasCandidateCounts || hasJobHint))) continue;
     }
 
     const dedupeKey = externalJobKey
@@ -170,13 +185,51 @@ SAFE_LISTING_STATE_SCRIPT = r"""
       href,
       rowText,
       clickToken: token,
+      listingUrl,
+      scrollY: rowScrollY,
     });
+  }
+
+  const nextSelectors = [
+    'a[rel="next"]',
+    'a[aria-label*="Next" i]',
+    'a[aria-label*="Siguiente" i]',
+    'a[data-testid*="pagination" i]'
+  ];
+  let nextHref = '';
+  for (const selector of nextSelectors) {
+    for (const node of document.querySelectorAll(selector)) {
+      const href = clean(node.href || node.getAttribute?.('href') || '');
+      if (!href) continue;
+      try {
+        const url = new URL(href, location.href);
+        if (url.protocol === 'https:' && url.hostname === 'employers.indeed.com') {
+          nextHref = url.href;
+          break;
+        }
+      } catch (_) {}
+    }
+    if (nextHref) break;
+  }
+
+  const root = document.scrollingElement || document.documentElement;
+  const previousScrollY = window.scrollY;
+  const viewportHeight = Math.max(1, window.innerHeight || 1);
+  const scrollHeight = Math.max(root?.scrollHeight || 0, document.body?.scrollHeight || 0);
+  if (scrollHeight > previousScrollY + viewportHeight + 4) {
+    const step = Math.max(480, Math.floor(viewportHeight * 0.8));
+    window.scrollBy(0, step);
   }
 
   return {
     url: location.href,
     body: clean(document.body?.innerText || '').slice(0, 12000),
     rows,
+    nextHref,
+    scrollY: window.scrollY,
+    previousScrollY,
+    viewportHeight,
+    scrollHeight,
   };
 })()
 """
@@ -223,8 +276,6 @@ async def _visibility_aware_requires_human(self, cdp) -> bool:
                 continue
             candidate = str(frame.get("src") or "").casefold()
         else:
-            # Backward-compatible handling for test/diagnostic snapshots made
-            # before iframe visibility was captured.
             candidate = str(frame or "").casefold()
         if any(marker in candidate for marker in _URL_CHALLENGE_MARKERS):
             return True
@@ -242,8 +293,6 @@ async def _visibility_aware_requires_human(self, cdp) -> bool:
     if any(marker in body for marker in hard_body_markers):
         return True
 
-    # An explicit login prompt must win over positive workspace heuristics.
-    # Indeed can keep the employer URL while rendering a signed-out shell.
     explicit_login_markers = (
         "sign in",
         "log in",
@@ -263,10 +312,6 @@ async def _visibility_aware_requires_human(self, cdp) -> bool:
     if on_jobs_workspace and has_jobs_identity and has_jobs_controls:
         return False
 
-    # Candidate list/detail pages are another authenticated workspace used by
-    # the worker immediately after full sync. Generic help/notification copy
-    # may contain "verification" even when the session is healthy, so require
-    # positive employer-workspace evidence before ignoring that generic word.
     on_candidates_workspace = url.startswith("https://employers.indeed.com/candidates")
     has_candidate_identity = "indeed" in title and (
         "candidato" in title or "candidate" in title
