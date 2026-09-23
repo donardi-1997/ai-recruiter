@@ -13,6 +13,9 @@ _SAFE_CODE = re.compile(r"^(?:INDEED|RESUME)_[A-Z0-9_]{2,100}$")
 
 
 def _safe_code(value: object, fallback: str) -> str:
+    explicit_code = str(getattr(value, "code", "") or "").strip()
+    if _SAFE_CODE.fullmatch(explicit_code):
+        return explicit_code
     candidate = str(value or "").strip()
     return candidate if _SAFE_CODE.fullmatch(candidate) else fallback
 
