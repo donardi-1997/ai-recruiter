@@ -454,11 +454,18 @@ async def _collect_async(browser) -> list[dict]:
                 if external_job_key:
                     discovery_key = f"stable:{external_job_key[:200]}"
                 else:
-                    discovery_key = (
-                        "pending:"
-                        f"{_normalized_discovery_text(title)}|"
-                        f"{_normalized_discovery_text(row_text)}"
-                    )
+                    click_token = str(row.get("clickToken") or "").strip()
+                    if click_token:
+                        discovery_key = (
+                            "pending-token:"
+                            f"{normalized['listingUrl']}|{click_token}"
+                        )
+                    else:
+                        discovery_key = (
+                            "pending:"
+                            f"{_normalized_discovery_text(title)}|"
+                            f"{_normalized_discovery_text(row_text)}"
+                        )
                 rows_by_key[discovery_key] = normalized
 
             latest_next = _safe_job_url(state.get("nextHref"))
