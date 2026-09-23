@@ -3,6 +3,7 @@ import asyncio
 from tools.indeed_resume_agent.browser import BrowserOutcome, PDF_CONTENT_TYPE
 from tools.indeed_resume_agent.browser_use_driver import IndeedBrowserUse
 from tools.indeed_resume_agent.config import AgentConfig
+from tools.indeed_resume_agent.download_capture_compat import install_download_capture_compat
 
 
 def _config(tmp_path):
@@ -20,6 +21,7 @@ def test_completed_browser_download_is_recovered_when_network_body_is_not_observ
         browser_executable_resolver=lambda: "chrome.exe",
     )
     try:
+        install_download_capture_compat(driver)
         downloads = tmp_path / "downloads"
         downloads.mkdir(parents=True, exist_ok=True)
         baseline = driver._download_snapshot()
@@ -52,6 +54,7 @@ def test_incomplete_chrome_partial_file_is_not_treated_as_resume(tmp_path):
         browser_executable_resolver=lambda: "chrome.exe",
     )
     try:
+        install_download_capture_compat(driver)
         downloads = tmp_path / "downloads"
         downloads.mkdir(parents=True, exist_ok=True)
         baseline = driver._download_snapshot()
