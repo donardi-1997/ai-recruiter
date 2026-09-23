@@ -4,7 +4,14 @@ import asyncio
 
 from playwright.async_api import async_playwright
 
-from tools.indeed_resume_agent.browser_use_driver import IndeedBrowserUse
+from tools.indeed_resume_agent.indeed_candidates_current import (
+    CURRENT_CANDIDATE_DETAIL_SCRIPT,
+    CURRENT_CANDIDATE_LIST_SCRIPT,
+    _advance_candidate_page,
+    candidate_id_from_url,
+    install_current_indeed_candidates,
+    select_current_candidate,
+)
 
 
 CANDIDATE_ONE_ID = "5052374908d6"
@@ -50,12 +57,12 @@ async def _rows_from_html(html: str) -> list[dict]:
         await page.set_content(html)
 
         class Harness:
-            _candidate_rows = IndeedBrowserUse._candidate_rows
-
             async def _evaluate(self, _cdp, script):
                 return await page.evaluate(script)
 
-        rows = await Harness()._candidate_rows(None)
+        harness = Harness()
+        install_current_indeed_candidates(harness)
+        rows = await harness._candidate_rows(None)
         await chromium.close()
         return rows
 
@@ -124,7 +131,7 @@ def test_candidate_selection_uses_structured_job_title_not_incidental_row_text()
         },
     ]
 
-    target, error = IndeedBrowserUse._select_candidate(
+    target, error = select_current_candidate(
         rows,
         "Laura Gómez",
         "COORDINADOR ADMINISTRATIVO",
@@ -133,3 +140,137 @@ def test_candidate_selection_uses_structured_job_title_not_incidental_row_text()
     assert error is None
     assert target is not None
     assert target["candidateId"] == "older-right-job"
+
+
+def test_candidate_id_parser_accepts_only_current_indeed_detail_route():
+    assert candidate_id_from_url(
+        f"https://employers.indeed.com/candidates/view?id={CANDIDATE_ONE_ID}&l=l74l"
+    ) == CANDIDATE_ONE_ID
+    assert candidate_id_from_url(
+        f"https://evil.example/candidates/view?id={CANDIDATE_ONE_ID}"
+    ) == ""
+    assert candidate_id_from_url(
+        f"https://employers.indeed.com/candidates?id={CANDIDATE_ONE_ID}"
+    ) == ""
+
+
+def test_current_candidate_list_reports_real_total_and_next_button():
+    async def scenario():
+        async with async_playwright() as playwright:
+            chromium = await playwright.chromium.launch(headless=True)
+            page = await chromium.new_page()
+            await page.set_content(
+                f"""
+                <html><head><base href="https://employers.indeed.com/candidates" /></head><body>
+                  <table><tbody>{_candidate_row(candidate_id=CANDIDATE_ONE_ID, name="Yurani Albarracin", job_title="AUXILIAR CONTABLE")}</tbody></table>
+                  <button aria-disabled="true">Anterior</button>
+                  <button aria-disabled="false">Siguiente</button>
+                  <span>Mostrando 1 a 20 de 27878</span>
+                </body></html>
+                """
+            )
+            state = await page.evaluate(CURRENT_CANDIDATE_LIST_SCRIPT)
+            await chromium.close()
+            return state
+
+    state = asyncio.run(scenario())
+    assert state["expectedTotal"] == 27878
+    assert state["hasNextPage"] is True
+    assert state["pageSignature"] == CANDIDATE_ONE_ID
+
+
+def test_current_candidate_next_button_advances_when_page_signature_changes():
+    async def scenario():
+        async with async_playwright() as playwright:
+            chromium = await playwright.chromium.launch(headless=True)
+            page = await chromium.new_page()
+            await page.set_content(
+                f"""
+                <html><head><base href="https://employers.indeed.com/candidates" /></head><body>
+                  <table><tbody id="rows">{_candidate_row(candidate_id=CANDIDATE_ONE_ID, name="Yurani Albarracin", job_title="AUXILIAR CONTABLE")}</tbody></table>
+                  <button aria-disabled="true">Anterior</button>
+                  <button id="next" aria-disabled="false">Siguiente</button>
+                  <span>Mostrando 1 a 20 de 40</span>
+                </body></html>
+                """
+            )
+            await page.evaluate(
+                """
+                ({ secondRowHtml }) => {
+                  const button = document.getElementById('next');
+                  button.addEventListener('click', () => {
+                    document.getElementById('rows').innerHTML = secondRowHtml;
+                    button.setAttribute('aria-disabled', 'true');
+                  });
+                }
+                """,
+                {
+                    "secondRowHtml": _candidate_row(
+                        candidate_id=CANDIDATE_TWO_ID,
+                        name="LAURA GÓMEZ",
+                        job_title="Auxiliar de Selección y Reclutamiento",
+                    )
+                },
+            )
+
+            class FakeConfig:
+                request_timeout_seconds = 2
+
+            class FakeBrowser:
+                _config = FakeConfig()
+
+                async def _evaluate(self, _cdp, script):
+                    return await page.evaluate(script)
+
+                async def _requires_human(self, _cdp):
+                    return False
+
+            first = await page.evaluate(CURRENT_CANDIDATE_LIST_SCRIPT)
+            advanced = await _advance_candidate_page(
+                FakeBrowser(), None, first["pageSignature"]
+            )
+            second = await page.evaluate(CURRENT_CANDIDATE_LIST_SCRIPT)
+            await chromium.close()
+            return advanced, first, second
+
+    advanced, first, second = asyncio.run(scenario())
+    assert advanced is True
+    assert second["pageSignature"] != first["pageSignature"]
+    assert second["rows"][0]["candidateId"] == CANDIDATE_TWO_ID
+    assert second["hasNextPage"] is False
+
+
+def test_current_candidate_detail_verifies_identity_and_download_control():
+    async def scenario():
+        async with async_playwright() as playwright:
+            chromium = await playwright.chromium.launch(headless=True)
+            page = await chromium.new_page()
+            detail_url = (
+                "https://employers.indeed.com/candidates/view?"
+                f"id={CANDIDATE_ONE_ID}&l=l74l"
+            )
+            await page.route(
+                "https://employers.indeed.com/**",
+                lambda route: route.fulfill(
+                    status=200,
+                    content_type="text/html",
+                    body="""
+                    <html><head><title>Candidatos - Indeed para empresas</title></head><body>
+                      <h1>Andrea Cortes</h1>
+                      <div>Postulado a Diseñador(a) Gráfico(a) &amp; Marketing Digital</div>
+                      <button>Descargar CV</button>
+                      <h2>Currículum</h2>
+                    </body></html>
+                    """,
+                ),
+            )
+            await page.goto(detail_url)
+            state = await page.evaluate(CURRENT_CANDIDATE_DETAIL_SCRIPT)
+            await chromium.close()
+            return state
+
+    state = asyncio.run(scenario())
+    assert state["candidateId"] == CANDIDATE_ONE_ID
+    assert state["heading"] == "Andrea Cortes"
+    assert state["downloadReady"] is True
+    assert "Diseñador(a) Gráfico(a) & Marketing Digital" in state["body"]
