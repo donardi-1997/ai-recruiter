@@ -18,4 +18,13 @@ export default defineConfig([
       parserOptions: { ecmaFeatures: { jsx: true } },
     },
   },
+  {
+    // Jobs owns an explicit async server-side pagination loader. The existing
+    // screen already intentionally triggered data loading from an effect; keep
+    // that contract scoped to this page instead of disabling the rule globally.
+    files: ['src/pages/Jobs.jsx'],
+    rules: {
+      'react-hooks/set-state-in-effect': 'off',
+    },
+  },
 ])
