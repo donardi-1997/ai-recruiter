@@ -2,8 +2,14 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+import pytest
+
 from tools.indeed_resume_agent.api_client import FullSyncResult, QueueStats, VacancySyncResult
-from tools.indeed_resume_agent.sync_services import CandidateSyncService, VacancySyncService
+from tools.indeed_resume_agent.sync_services import (
+    CandidateSyncService,
+    SyncCoordinator,
+    VacancySyncService,
+)
 
 
 @dataclass
@@ -96,3 +102,41 @@ def test_candidate_service_is_independent_from_vacancy_browser_logic():
     assert api.sync_all_calls == 1
     assert report.result.created == 1
     assert report.stats.pending == 1
+
+
+def test_full_sync_continues_candidates_when_vacancy_refresh_has_non_auth_failure():
+    api = FakeApi()
+
+    class BrokenVacancies:
+        def run(self):
+            raise RuntimeError("INDEED_JOB_LIST_INCOMPLETE")
+
+    coordinator = SyncCoordinator(
+        vacancy_service=BrokenVacancies(),
+        candidate_service=CandidateSyncService(api=api),
+    )
+
+    report = coordinator.run_all()
+
+    assert report.vacancy_report is None
+    assert report.vacancy_error == "INDEED_JOB_LIST_INCOMPLETE"
+    assert report.candidate_report.result.created == 1
+    assert api.sync_all_calls == 1
+
+
+def test_full_sync_stops_on_auth_failure_before_candidate_sync():
+    api = FakeApi()
+
+    class AuthBlockedVacancies:
+        def run(self):
+            raise RuntimeError("INDEED_AUTH_REQUIRED")
+
+    coordinator = SyncCoordinator(
+        vacancy_service=AuthBlockedVacancies(),
+        candidate_service=CandidateSyncService(api=api),
+    )
+
+    with pytest.raises(RuntimeError, match="INDEED_AUTH_REQUIRED"):
+        coordinator.run_all()
+
+    assert api.sync_all_calls == 0
