@@ -1,8 +1,9 @@
 """Jobs repository."""
 
+from sqlalchemy import and_, func
 from sqlalchemy.orm import Session
 
-from app.models import Job
+from app.models import Candidate, Job, JobCandidate
 
 
 def get_job(db: Session, job_id: str, owner_sub: str | None = None) -> Job | None:
@@ -17,6 +18,52 @@ def list_jobs(db: Session, owner_sub: str | None = None) -> list[Job]:
     if owner_sub is not None:
         query = query.filter(Job.owner_sub == owner_sub)
     return query.order_by(Job.created_at.desc()).all()
+
+
+def list_jobs_page(
+    db: Session,
+    *,
+    owner_sub: str,
+    page: int,
+    page_size: int,
+    sort: str,
+    q: str = "",
+):
+    """Return one globally sorted page of jobs with owner-scoped candidate counts."""
+
+    filters = [Job.owner_sub == owner_sub]
+    search = str(q or "").strip()
+    if search:
+        filters.append(Job.title.ilike(f"%{search}%"))
+
+    total = int(db.query(func.count(Job.id)).filter(*filters).scalar() or 0)
+    candidate_count = func.count(Candidate.id).label("candidate_count")
+
+    query = (
+        db.query(Job, candidate_count)
+        .outerjoin(JobCandidate, JobCandidate.job_id == Job.id)
+        .outerjoin(
+            Candidate,
+            and_(
+                Candidate.id == JobCandidate.candidate_id,
+                Candidate.owner_sub == owner_sub,
+            ),
+        )
+        .filter(*filters)
+        .group_by(Job.id)
+    )
+
+    if sort == "candidates_desc":
+        query = query.order_by(candidate_count.desc(), Job.created_at.desc(), Job.id.asc())
+    elif sort == "candidates_asc":
+        query = query.order_by(candidate_count.asc(), Job.created_at.desc(), Job.id.asc())
+    elif sort == "created_asc":
+        query = query.order_by(Job.created_at.asc(), Job.id.asc())
+    else:
+        query = query.order_by(Job.created_at.desc(), Job.id.asc())
+
+    rows = query.offset((page - 1) * page_size).limit(page_size).all()
+    return rows, total
 
 
 def create_job(
@@ -156,8 +203,6 @@ def delete_job(
 
 
 def count_candidates_for_job(db: Session, job_id: str, owner_sub: str | None = None) -> int:
-    from app.models import Candidate, JobCandidate
-
     query = (
         db.query(JobCandidate)
         .join(Candidate, Candidate.id == JobCandidate.candidate_id)
