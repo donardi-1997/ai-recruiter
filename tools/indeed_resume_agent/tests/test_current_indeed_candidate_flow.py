@@ -5,7 +5,9 @@ import asyncio
 from playwright.async_api import async_playwright
 
 from tools.indeed_resume_agent.indeed_candidates_current import (
+    CURRENT_CANDIDATE_DETAIL_SCRIPT,
     _open_candidate_current,
+    _open_selected_candidate,
     _scan_candidate_search,
 )
 
@@ -159,3 +161,55 @@ def test_open_candidate_stops_after_verified_detail_instead_of_searching_again()
     assert result is None
     assert f"id={TARGET_ID}" in final_url
     assert fill_calls == 0
+
+
+def test_open_selected_candidate_waits_for_matching_panel_content_after_url_changes():
+    class Config:
+        request_timeout_seconds = 2
+
+    class Browser:
+        _config = Config()
+
+        def __init__(self):
+            self.detail_evaluations = 0
+
+        async def _navigate(self, _cdp, _url):
+            return None
+
+        async def _requires_human(self, _cdp):
+            return False
+
+        async def _evaluate(self, _cdp, script):
+            assert script == CURRENT_CANDIDATE_DETAIL_SCRIPT
+            self.detail_evaluations += 1
+            if self.detail_evaluations == 1:
+                return {
+                    "candidateId": TARGET_ID,
+                    "heading": "Candidata Anterior",
+                    "body": "Postulado a VACANTE ANTERIOR Descargar CV",
+                    "downloadReady": True,
+                }
+            return {
+                "candidateId": TARGET_ID,
+                "heading": "Candidata Target",
+                "body": "Postulado a VACANTE TARGET Descargar CV",
+                "downloadReady": True,
+            }
+
+    async def scenario():
+        browser = Browser()
+        result = await _open_selected_candidate(
+            browser,
+            None,
+            {
+                "candidateId": TARGET_ID,
+                "name": "Candidata Target",
+                "jobTitle": "VACANTE TARGET",
+                "href": f"https://employers.indeed.com/candidates/view?id={TARGET_ID}",
+            },
+        )
+        return result, browser.detail_evaluations
+
+    result, detail_evaluations = asyncio.run(scenario())
+    assert result is None
+    assert detail_evaluations >= 2
