@@ -13,12 +13,11 @@ def _clean_text(value: object) -> str:
 async def click_listing_row_with_recovery(browser, cdp, row: dict) -> bool:
     """Open the exact SPA vacancy represented by a listing snapshot.
 
-    The temporary DOM token is the preferred identity. If Indeed reloads the
-    listing and drops that token before the row is opened, reacquire the row
-    using the stable provider id when available. For pending SPA rows without
-    an id yet, match the exact visible row signature and use its recorded
-    absolute vertical position to disambiguate visually identical vacancies.
-    Ambiguous recovery fails closed instead of clicking the first title match.
+    Temporary DOM tokens are accepted only while the marked node still matches
+    the discovered vacancy. Stable provider identity is authoritative. If a
+    reload removes both, a unique title may be recovered even when dynamic
+    counters changed; exact duplicate rows fail closed instead of being guessed
+    from their vertical position.
     """
 
     token = str(row.get("clickToken") or "").strip()
@@ -26,10 +25,6 @@ async def click_listing_row_with_recovery(browser, cdp, row: dict) -> bool:
     title = _clean_text(row.get("title"))
     row_text = _clean_text(row.get("rowText"))
     scroll_y = max(0, int(row.get("scrollY") or 0))
-    try:
-        row_position = float(row.get("rowPosition"))
-    except (TypeError, ValueError):
-        row_position = None
 
     await browser._evaluate(cdp, f"window.scrollTo(0, {scroll_y}); true")
     await asyncio.sleep(0.18)
@@ -40,7 +35,6 @@ async def click_listing_row_with_recovery(browser, cdp, row: dict) -> bool:
             "externalJobKey": external_job_key,
             "title": title,
             "rowText": row_text,
-            "rowPosition": row_position,
         },
         ensure_ascii=False,
     )
@@ -48,50 +42,104 @@ async def click_listing_row_with_recovery(browser, cdp, row: dict) -> bool:
 (() => {{
   const target = {payload};
   const clean = (v) => String(v || '').replace(/\\s+/g, ' ').trim();
-  const byToken = target.token
-    ? document.querySelector(`[data-asiati-vacancy-token="${{CSS.escape(target.token)}}"]`)
-    : null;
-  if (byToken) {{ byToken.click(); return true; }}
-
   const identityAttrs = [
     'data-job-id','data-jobid','data-job-key','data-jobkey',
     'data-indeed-job-id','data-indeed-job-key'
   ];
-  for (const attr of identityAttrs) {{
-    const escaped = CSS.escape(target.externalJobKey || '');
-    const root = escaped ? document.querySelector(`[${{attr}}="${{escaped}}"]`) : null;
-    if (!root) continue;
-    const clickable = root.matches('a,button,[role="link"]')
-      ? root
-      : root.querySelector('a,button,[role="link"]');
-    if (clickable) {{ clickable.click(); return true; }}
+  const rowRoot = (node) => node?.closest?.(
+    'tr,[role="row"],[data-testid*="job" i],article,li'
+  ) || node;
+  const nodeTitle = (node) => clean(
+    node?.getAttribute?.('aria-label') || node?.innerText || node?.textContent || ''
+  );
+  const rootIdentity = (root) => {{
+    if (!root) return '';
+    for (const attr of identityAttrs) {{
+      const direct = clean(root.getAttribute?.(attr));
+      if (direct) return direct;
+      const nested = root.querySelector?.(`[${{attr}}]`);
+      const value = clean(nested?.getAttribute?.(attr));
+      if (value) return value;
+    }}
+    return '';
+  }};
+
+  // A virtualized list can recycle the same DOM node while leaving our custom
+  // token behind. Never trust the token without revalidating current content.
+  const byToken = target.token
+    ? document.querySelector(`[data-asiati-vacancy-token="${{CSS.escape(target.token)}}"]`)
+    : null;
+  if (byToken) {{
+    const root = rowRoot(byToken);
+    const currentTitle = nodeTitle(byToken);
+    const currentText = clean(root?.innerText || root?.textContent || '');
+    const currentIdentity = rootIdentity(root);
+    const identityMatches = target.externalJobKey
+      ? currentIdentity === target.externalJobKey
+      : !currentIdentity;
+    const pendingSignatureMatches = target.externalJobKey
+      ? true
+      : (!target.rowText || currentText === target.rowText);
+    if (
+      currentTitle === target.title
+      && identityMatches
+      && pendingSignatureMatches
+    ) {{
+      byToken.click();
+      return true;
+    }}
   }}
 
-  const candidates = Array.from(document.querySelectorAll('a,button,[role="link"]'))
-    .filter((node) => clean(node.getAttribute?.('aria-label') || node.innerText || node.textContent || '') === target.title)
+  // Stable provider identity is safe even after arbitrary row reordering.
+  if (target.externalJobKey) {{
+    for (const attr of identityAttrs) {{
+      const escaped = CSS.escape(target.externalJobKey);
+      const root = document.querySelector(`[${{attr}}="${{escaped}}"]`);
+      if (!root) continue;
+      const clickable = root.matches('a,button,[role="link"]')
+        ? root
+        : root.querySelector('a,button,[role="link"]');
+      if (clickable && nodeTitle(clickable) === target.title) {{
+        clickable.click();
+        return true;
+      }}
+    }}
+  }}
+
+  const titleMatches = Array.from(document.querySelectorAll('a,button,[role="link"]'))
+    .filter((node) => nodeTitle(node) === target.title)
     .map((node) => {{
-      const root = node.closest('tr,[role="row"],[data-testid*="job" i],article,li') || node;
-      const text = clean(root.innerText || root.textContent || '');
-      const absoluteY = Number((root.getBoundingClientRect?.().top || 0) + window.scrollY);
-      return {{node, text, absoluteY}};
+      const root = rowRoot(node);
+      return {{
+        node,
+        text: clean(root?.innerText || root?.textContent || ''),
+        identity: rootIdentity(root),
+      }};
     }})
-    .filter((item) => !target.rowText || item.text === target.rowText);
+    // A row that gained a stable identity different from the discovered one is
+    // never a safe fallback candidate.
+    .filter((item) => !target.externalJobKey || item.identity === target.externalJobKey);
 
-  if (candidates.length === 1) {{ candidates[0].node.click(); return true; }}
-  if (candidates.length < 2 || !Number.isFinite(target.rowPosition)) return false;
+  // A unique title is deterministic and tolerates live counters/status copy
+  // changing between discovery and click.
+  if (titleMatches.length === 1) {{
+    titleMatches[0].node.click();
+    return true;
+  }}
 
-  const ranked = candidates
-    .map((item) => ({{...item, distance: Math.abs(item.absoluteY - target.rowPosition)}}))
-    .sort((a, b) => a.distance - b.distance);
+  if (titleMatches.length < 2) return false;
 
-  if (!ranked.length) return false;
-  if (ranked.length > 1 && Math.abs(ranked[0].distance - ranked[1].distance) < 0.5) return false;
-
-  // A global banner/header may move every row slightly after reload. The
-  // closest exact-signature row is still deterministic as long as the nearest
-  // candidate is unique; do not fall back to the first title match.
-  ranked[0].node.click();
-  return true;
+  // For duplicate titles, exact row text can disambiguate only when it yields
+  // one unique candidate. If identical rows remain, there is no safe identity
+  // after token/provider id loss; fail closed instead of guessing by geometry.
+  const exactSignature = titleMatches.filter(
+    (item) => target.rowText && item.text === target.rowText
+  );
+  if (exactSignature.length === 1) {{
+    exactSignature[0].node.click();
+    return true;
+  }}
+  return false;
 }})()
 """
     return bool(await browser._evaluate(cdp, script))
