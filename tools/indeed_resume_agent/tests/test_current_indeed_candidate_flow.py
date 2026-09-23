@@ -75,7 +75,7 @@ def test_candidate_scan_paginates_then_opens_the_exact_application_detail():
                 re.compile(r"https://employers\.indeed\.com/candidates/view\?.*"),
                 lambda route: route.fulfill(
                     status=200,
-                    content_type="text/html",
+                    content_type="text/html; charset=utf-8",
                     body=_detail("Candidata Target", "VACANTE TARGET"),
                 ),
             )
@@ -121,13 +121,17 @@ def test_open_candidate_stops_after_verified_detail_instead_of_searching_again()
             """
             await page.route(
                 re.compile(r"https://employers\.indeed\.com/candidates\?.*"),
-                lambda route: route.fulfill(status=200, content_type="text/html", body=list_body),
+                lambda route: route.fulfill(
+                    status=200,
+                    content_type="text/html; charset=utf-8",
+                    body=list_body,
+                ),
             )
             await page.route(
                 re.compile(r"https://employers\.indeed\.com/candidates/view\?.*"),
                 lambda route: route.fulfill(
                     status=200,
-                    content_type="text/html",
+                    content_type="text/html; charset=utf-8",
                     body=_detail("Candidata Target", "VACANTE TARGET"),
                 ),
             )
@@ -232,7 +236,7 @@ def test_detail_script_reads_current_profile_job_and_descargar_hv_control():
                 re.compile(r"https://employers\.indeed\.com/candidates/view\?.*"),
                 lambda route: route.fulfill(
                     status=200,
-                    content_type="text/html",
+                    content_type="text/html; charset=utf-8",
                     body=_detail("Candidata Target", "VACANTE TARGET"),
                 ),
             )
