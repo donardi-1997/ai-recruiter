@@ -1,6 +1,6 @@
 from tools.indeed_resume_agent.api_client import QueueStats
-from tools.indeed_resume_agent.ui_v2 import _layout_for_width, build_ui_state
-from tools.indeed_resume_agent.ui_v3 import _status_tone
+from tools.indeed_resume_agent.ui_v2 import build_ui_state
+from tools.indeed_resume_agent.ui_v3 import _layout_for_width, _status_tone
 from tools.indeed_resume_agent.worker import WorkerSnapshot
 
 
