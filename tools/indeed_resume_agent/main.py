@@ -76,7 +76,12 @@ def main() -> None:
     browser = IndeedBrowserUse(config)
     install_runtime_compat(browser)
     install_vacancy_click_recovery()
-    worker = ResumeWorker(config=config, api=api, browser=browser)
+    worker = ResumeWorker(
+        config=config,
+        api=api,
+        browser=browser,
+        start_paused=True,
+    )
     try:
         run_ui(worker=worker, api=api, browser=browser)
     finally:
