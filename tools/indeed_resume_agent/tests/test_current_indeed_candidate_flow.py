@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import re
 
 from playwright.async_api import async_playwright
 
@@ -27,6 +28,20 @@ def _row(candidate_id: str, name: str, job_title: str) -> str:
       </td>
       <td><div data-testid="stackable-guided-nudge">Nuevo candidato · hace 10 minutos</div></td>
     </tr>
+    """
+
+
+def _detail(name: str, job_title: str) -> str:
+    return f"""
+    <html><body>
+      <div id="candidateProfileContainer">
+        <div data-testid="namePlate">
+          <div data-testid="name-plate-name-item"><h1>{name}</h1></div>
+        </div>
+        <a href="/jobs/view?employerJobId=job-target">{job_title} • Bogotá</a>
+        <button data-testid="download-resume-inline">Descargar HV</button>
+      </div>
+    </body></html>
     """
 
 
@@ -57,17 +72,11 @@ def test_candidate_scan_paginates_then_opens_the_exact_application_detail():
                 {"targetRow": _row(TARGET_ID, "Candidata Target", "VACANTE TARGET")},
             )
             await page.route(
-                "https://employers.indeed.com/candidates/view**",
+                re.compile(r"https://employers\.indeed\.com/candidates/view\?.*"),
                 lambda route: route.fulfill(
                     status=200,
                     content_type="text/html",
-                    body="""
-                    <html><body>
-                      <h1>Candidata Target</h1>
-                      <div>Postulado a VACANTE TARGET</div>
-                      <button>Descargar CV</button>
-                    </body></html>
-                    """,
+                    body=_detail("Candidata Target", "VACANTE TARGET"),
                 ),
             )
 
@@ -110,20 +119,17 @@ def test_open_candidate_stops_after_verified_detail_instead_of_searching_again()
                   <span>Mostrando 1 a 1 de 1</span>
                 </body></html>
             """
-            detail_body = """
-                <html><body>
-                  <h1>Candidata Target</h1>
-                  <div>Postulado a VACANTE TARGET</div>
-                  <button>Descargar CV</button>
-                </body></html>
-            """
             await page.route(
-                "https://employers.indeed.com/candidates?**",
+                re.compile(r"https://employers\.indeed\.com/candidates\?.*"),
                 lambda route: route.fulfill(status=200, content_type="text/html", body=list_body),
             )
             await page.route(
-                "https://employers.indeed.com/candidates/view**",
-                lambda route: route.fulfill(status=200, content_type="text/html", body=detail_body),
+                re.compile(r"https://employers\.indeed\.com/candidates/view\?.*"),
+                lambda route: route.fulfill(
+                    status=200,
+                    content_type="text/html",
+                    body=_detail("Candidata Target", "VACANTE TARGET"),
+                ),
             )
 
             class Config:
@@ -186,13 +192,15 @@ def test_open_selected_candidate_waits_for_matching_panel_content_after_url_chan
                 return {
                     "candidateId": TARGET_ID,
                     "heading": "Candidata Anterior",
-                    "body": "Postulado a VACANTE ANTERIOR Descargar CV",
+                    "jobTitle": "VACANTE ANTERIOR",
+                    "body": "VACANTE ANTERIOR Descargar HV",
                     "downloadReady": True,
                 }
             return {
                 "candidateId": TARGET_ID,
                 "heading": "Candidata Target",
-                "body": "Postulado a VACANTE TARGET Descargar CV",
+                "jobTitle": "VACANTE TARGET",
+                "body": "VACANTE TARGET Descargar HV",
                 "downloadReady": True,
             }
 
@@ -213,3 +221,30 @@ def test_open_selected_candidate_waits_for_matching_panel_content_after_url_chan
     result, detail_evaluations = asyncio.run(scenario())
     assert result is None
     assert detail_evaluations >= 2
+
+
+def test_detail_script_reads_current_profile_job_and_descargar_hv_control():
+    async def scenario():
+        async with async_playwright() as playwright:
+            chromium = await playwright.chromium.launch(headless=True)
+            page = await chromium.new_page()
+            await page.route(
+                re.compile(r"https://employers\.indeed\.com/candidates/view\?.*"),
+                lambda route: route.fulfill(
+                    status=200,
+                    content_type="text/html",
+                    body=_detail("Candidata Target", "VACANTE TARGET"),
+                ),
+            )
+            await page.goto(
+                f"https://employers.indeed.com/candidates/view?id={TARGET_ID}"
+            )
+            detail = await page.evaluate(CURRENT_CANDIDATE_DETAIL_SCRIPT)
+            await chromium.close()
+            return detail
+
+    detail = asyncio.run(scenario())
+    assert detail["candidateId"] == TARGET_ID
+    assert detail["heading"] == "Candidata Target"
+    assert detail["jobTitle"] == "VACANTE TARGET"
+    assert detail["downloadReady"] is True
