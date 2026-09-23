@@ -10,7 +10,13 @@ from .credential_store import (
     read_agent_token,
     write_agent_token,
 )
-from .ui_v2 import run_ui
+from .indeed_candidates_current import install_current_indeed_candidates
+from .indeed_jobs_current import install_current_indeed_jobs
+from .jobs_listing_compat import install_jobs_listing_compat
+from .runtime_compat import install_runtime_compat
+from .ui_v3 import run_ui
+from .vacancy_click_recovery import install_vacancy_click_recovery
+from .vacancy_pipeline import install_resilient_vacancy_pipeline
 from .worker import ResumeWorker
 
 
@@ -72,7 +78,25 @@ def main() -> None:
 
     api = AgentApiClient(config, token)
     browser = IndeedBrowserUse(config)
-    worker = ResumeWorker(config=config, api=api, browser=browser)
+    install_runtime_compat(browser)
+    install_jobs_listing_compat()
+    install_vacancy_click_recovery()
+    # Install the production DOM contracts last. Older shims remain available
+    # as regression/fallback code but cannot override the stable identities,
+    # structural auth, or pagination used by current Indeed.
+    install_current_indeed_jobs(browser)
+    # The current Indeed DOM collector is wrapped by a two-phase pipeline that
+    # never throws away valid hydrated vacancies only because the list counter
+    # and traversed rows differ. Authentication and zero usable details still
+    # fail closed.
+    install_resilient_vacancy_pipeline()
+    install_current_indeed_candidates(browser)
+    worker = ResumeWorker(
+        config=config,
+        api=api,
+        browser=browser,
+        start_paused=True,
+    )
     try:
         run_ui(worker=worker, api=api, browser=browser)
     finally:

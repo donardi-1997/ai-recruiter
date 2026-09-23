@@ -56,19 +56,32 @@ class HeartbeatLoop:
 
 
 class ResumeWorker:
-    def __init__(self, *, config: AgentConfig, api, browser, heartbeat_factory=None):
+    def __init__(
+        self,
+        *,
+        config: AgentConfig,
+        api,
+        browser,
+        heartbeat_factory=None,
+        start_paused: bool = False,
+    ):
         self._config = config
         self._api = api
         self._browser = browser
         self._heartbeat_factory = heartbeat_factory or (
             lambda **kw: HeartbeatLoop(**kw)
         )
-        self._paused = False
+        self._paused = bool(start_paused)
         self._stopped = False
         self._human_task_id: str | None = None
         self._human_resume_url: str | None = None
         self._processed_session = 0
-        self._last_snapshot = WorkerSnapshot("IDLE", None, 0, None)
+        self._last_snapshot = WorkerSnapshot(
+            "PAUSED" if self._paused else "IDLE",
+            None,
+            0,
+            None,
+        )
 
     @property
     def snapshot(self) -> WorkerSnapshot:
@@ -179,9 +192,6 @@ class ResumeWorker:
                         error=detail,
                     )
 
-                # Candidate-level ambiguity/not-found/UI mismatches must not
-                # stop a bulk run. The task stays NEEDS_HUMAN in the backend
-                # for later review while the worker advances to the next item.
                 return self._set(
                     "NEEDS_REVIEW_CONTINUE",
                     candidate=task.candidate_name,

@@ -106,6 +106,14 @@ jobs:
             throw "Packaged Resume Agent self-test failed with exit code $($Process.ExitCode)"
           }
 
+      - name: Publish validated Windows artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ASIATI-Resume-Agent-Windows-Responsive
+          path: dist/ASIATI Resume Agent/**
+          if-no-files-found: error
+          retention-days: 7
+
   # ─────────────────────────────────────────────────────────
   # POSTGRESQL + ALEMBIC SMOKE TEST
   # Runs independently from SQLite to reduce wall-clock time.
