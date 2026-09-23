@@ -9,7 +9,7 @@ from .sync_services import CandidateSyncService, VacancySyncReport, VacancySyncS
 from .ui_v2 import LayoutSpec, UiState, _layout_for_width, _vacancy_summary, build_ui_state
 from .worker import WorkerSnapshot
 
-_SAFE_CODE = re.compile(r"^(?:INDEED|RESUME)_[A-Z0-9_]{2,100}$")
+_SAFE_CODE = re.compile(r"^(?:GMAIL|INDEED|RESUME)_[A-Z0-9_]{2,100}$")
 
 
 def _safe_code(value: object, fallback: str) -> str:
