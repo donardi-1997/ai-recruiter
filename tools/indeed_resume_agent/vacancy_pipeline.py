@@ -92,6 +92,34 @@ async def _discover_jobs(browser, cdp) -> tuple[dict[str, dict], dict]:
     return discovered, diagnostics
 
 
+async def _wait_for_job_description(browser, cdp, expected_title: str) -> dict:
+    """Wait for the current job detail to hydrate its actual description.
+
+    The generic historical helper may return as soon as the title appears. For
+    vacancy synchronization the description is required, so title-only hydration
+    is deliberately not considered ready.
+    """
+
+    normalized_expected = vacancy_sync._normalized_discovery_text(expected_title)
+    last_state: dict = {}
+    deadline = asyncio.get_running_loop().time() + max(
+        12.0,
+        float(browser._config.request_timeout_seconds),
+    )
+    while asyncio.get_running_loop().time() < deadline:
+        if await browser._requires_human(cdp):
+            raise RuntimeError("INDEED_AUTH_REQUIRED")
+        last_state = await vacancy_sync._detail_state(browser, cdp)
+        if not last_state.get("loading"):
+            description = str(last_state.get("description") or "").strip()
+            detail_title = vacancy_sync._normalized_discovery_text(last_state.get("title"))
+            title_matches = not detail_title or not normalized_expected or normalized_expected in detail_title
+            if description and title_matches:
+                return last_state
+        await asyncio.sleep(0.2)
+    return last_state
+
+
 async def _hydrate_jobs(browser, cdp, discovered: dict[str, dict]) -> tuple[list[dict], dict]:
     snapshots: list[dict] = []
     detail_failures = 0
@@ -107,7 +135,7 @@ async def _hydrate_jobs(browser, cdp, discovered: dict[str, dict]) -> tuple[list
             await browser._navigate(cdp, href)
             if await browser._requires_human(cdp):
                 raise RuntimeError("INDEED_AUTH_REQUIRED")
-            detail = await vacancy_sync._wait_for_detail(browser, cdp, row["title"])
+            detail = await _wait_for_job_description(browser, cdp, row["title"])
         except RuntimeError as exc:
             if str(exc) == "INDEED_AUTH_REQUIRED":
                 raise
