@@ -27,6 +27,16 @@ const CANDIDATES = [
   { candidate_id: "c-2", name: "Carlos Gómez", email: null, filename: null },
 ];
 
+function jobsPage(items = JOBS) {
+  return {
+    items,
+    page: 1,
+    page_size: 12,
+    total: items.length,
+    total_pages: items.length ? 1 : 0,
+  };
+}
+
 function renderJobs() {
   return render(
     <MemoryRouter>
@@ -39,7 +49,7 @@ describe("Jobs page", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     api.get.mockImplementation((url) => {
-      if (url === "/jobs") return Promise.resolve({ data: JOBS });
+      if (url === "/jobs/page") return Promise.resolve({ data: jobsPage() });
       if (url === "/jobs/job-1/candidates") return Promise.resolve({ data: CANDIDATES });
       return Promise.resolve({ data: [] });
     });
@@ -104,7 +114,7 @@ describe("Jobs page", () => {
 
   it("vacante sin candidatos shows empty message", async () => {
     api.get.mockImplementation((url) => {
-      if (url === "/jobs") return Promise.resolve({ data: JOBS });
+      if (url === "/jobs/page") return Promise.resolve({ data: jobsPage() });
       if (url === "/jobs/job-2/candidates") return Promise.resolve({ data: [] });
       return Promise.resolve({ data: [] });
     });
@@ -122,7 +132,7 @@ describe("Jobs page", () => {
 
   it("candidates request failed shows error and Reintentar", async () => {
     api.get.mockImplementation((url) => {
-      if (url === "/jobs") return Promise.resolve({ data: JOBS });
+      if (url === "/jobs/page") return Promise.resolve({ data: jobsPage() });
       if (url === "/jobs/job-1/candidates") return Promise.reject(new Error("Network error"));
       return Promise.resolve({ data: [] });
     });
@@ -299,19 +309,18 @@ describe("Jobs page", () => {
   });
 
   it("vacante without description offers Editar y enriquecer from detail", async () => {
+    const emptyJobs = [
+      {
+        job_id: "job-empty",
+        title: "Líder de Marketing y Crecimiento",
+        description: null,
+        candidate_count: 0,
+        created_at: "2026-09-21T10:00:00Z",
+      },
+    ];
     api.get.mockImplementation((url) => {
-      if (url === "/jobs") {
-        return Promise.resolve({
-          data: [
-            {
-              job_id: "job-empty",
-              title: "Líder de Marketing y Crecimiento",
-              description: null,
-              candidate_count: 0,
-              created_at: "2026-09-21T10:00:00Z",
-            },
-          ],
-        });
+      if (url === "/jobs/page") {
+        return Promise.resolve({ data: jobsPage(emptyJobs) });
       }
       if (url === "/jobs/job-empty/candidates") return Promise.resolve({ data: [] });
       return Promise.resolve({ data: [] });
