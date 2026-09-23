@@ -25,6 +25,13 @@ class CandidateSyncReport:
     stats: QueueStats
 
 
+@dataclass(frozen=True)
+class FullSyncReport:
+    vacancy_report: VacancySyncReport | None
+    candidate_report: CandidateSyncReport
+    vacancy_error: str | None = None
+
+
 class VacancySyncService:
     """Refresh Indeed vacancies without touching candidate discovery or CV work."""
 
@@ -89,3 +96,36 @@ class CandidateSyncService:
         result = self._api.sync_all()
         stats = self._api.stats()
         return CandidateSyncReport(result=result, stats=stats)
+
+
+class SyncCoordinator:
+    """Compose independent sync operations without making candidates depend on jobs.
+
+    Vacancy authentication is a global browser blocker and stops the combined
+    operation. Other vacancy failures are preserved as a safe code while the
+    incremental candidate/application sync proceeds against the catalog that is
+    already known by the backend.
+    """
+
+    def __init__(self, *, vacancy_service, candidate_service) -> None:
+        self._vacancy_service = vacancy_service
+        self._candidate_service = candidate_service
+
+    def run_all(self) -> FullSyncReport:
+        vacancy_report = None
+        vacancy_error = None
+        try:
+            vacancy_report = self._vacancy_service.run()
+        except RuntimeError as exc:
+            vacancy_error = str(exc).strip() or "INDEED_JOB_SYNC_FAILED"
+            if vacancy_error == "INDEED_AUTH_REQUIRED":
+                raise
+        except Exception:
+            vacancy_error = "INDEED_JOB_SYNC_FAILED"
+
+        candidate_report = self._candidate_service.run()
+        return FullSyncReport(
+            vacancy_report=vacancy_report,
+            candidate_report=candidate_report,
+            vacancy_error=vacancy_error,
+        )
