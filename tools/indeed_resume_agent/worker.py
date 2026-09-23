@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 import threading
 from dataclasses import dataclass
 
@@ -14,6 +15,34 @@ from .browser import (
 from .config import AgentConfig
 
 GLOBAL_HUMAN_BLOCKING_CODES = {"INDEED_AUTH_REQUIRED"}
+_SAFE_SYMBOLIC_BROWSER_ERROR = re.compile(
+    r"^(?:INDEED|BROWSER_USE|RESUME)_[A-Z0-9_]{2,100}$"
+)
+
+
+def _safe_browser_failure_code(exc: Exception) -> str:
+    """Classify unexpected browser failures without exposing exception details."""
+    if isinstance(exc, TimeoutError):
+        return "RESUME_BROWSER_TIMEOUT"
+    if isinstance(exc, PermissionError):
+        return "RESUME_BROWSER_PERMISSION_DENIED"
+    if isinstance(exc, FileNotFoundError):
+        return "RESUME_BROWSER_FILE_NOT_FOUND"
+    if isinstance(exc, ConnectionError):
+        return "RESUME_BROWSER_CONNECTION_ERROR"
+    if isinstance(exc, OSError):
+        return "RESUME_BROWSER_OS_ERROR"
+
+    raw = str(exc or "").strip().upper()
+    if not _SAFE_SYMBOLIC_BROWSER_ERROR.fullmatch(raw):
+        return "RESUME_BROWSER_FETCH_FAILED"
+    if raw.startswith("RESUME_BROWSER_"):
+        return raw[:120]
+    if raw.startswith("RESUME_"):
+        return raw[:120]
+    if raw.startswith("BROWSER_USE_"):
+        return f"RESUME_{raw}"[:120]
+    return f"RESUME_BROWSER_{raw}"[:120]
 
 
 @dataclass(frozen=True)
@@ -268,12 +297,15 @@ class ResumeWorker:
                 candidate=task.candidate_name,
                 error=safe_code,
             )
-        except Exception:
-            safe_code = {
-                "BROWSER_FETCH": "RESUME_BROWSER_FETCH_FAILED",
-                "DOCUMENT_VALIDATE": "RESUME_DOCUMENT_VALIDATE_FAILED",
-                "UPLOAD": "RESUME_UPLOAD_FAILED",
-            }.get(stage, "RESUME_DOWNLOAD_FAILED")
+        except Exception as exc:
+            safe_code = (
+                _safe_browser_failure_code(exc)
+                if stage == "BROWSER_FETCH"
+                else {
+                    "DOCUMENT_VALIDATE": "RESUME_DOCUMENT_VALIDATE_FAILED",
+                    "UPLOAD": "RESUME_UPLOAD_FAILED",
+                }.get(stage, "RESUME_DOWNLOAD_FAILED")
+            )
             if stage == "BROWSER_FETCH":
                 try:
                     reset = getattr(self._browser, "reset_session", None)
