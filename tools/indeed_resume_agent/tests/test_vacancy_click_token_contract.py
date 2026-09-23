@@ -4,6 +4,7 @@ from playwright.async_api import async_playwright
 
 from tools.indeed_resume_agent import vacancy_sync
 from tools.indeed_resume_agent.runtime_compat import SAFE_LISTING_STATE_SCRIPT
+from tools.indeed_resume_agent.vacancy_click_recovery import install_vacancy_click_recovery
 
 
 def test_safe_listing_marks_the_exact_token_consumed_by_spa_clicker():
@@ -55,6 +56,7 @@ def test_spa_clicker_recovers_exact_duplicate_row_after_listing_reload_loses_tok
         </main>
         """
 
+        install_vacancy_click_recovery()
         async with async_playwright() as playwright:
             chromium = await playwright.chromium.launch(headless=True)
             page = await chromium.new_page()
