@@ -283,7 +283,10 @@ def synchronize_resume_sources(
         )
     except HTTPException:
         raise
+    except indeed_agent_sync.ResumeSyncStageError as exc:
+        raise HTTPException(status_code=502, detail=exc.code)
     except Exception:
+        db.rollback()
         raise HTTPException(status_code=502, detail="RESUME_SYNC_FAILED")
 
 
