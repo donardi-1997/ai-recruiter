@@ -242,6 +242,17 @@ async def _visibility_aware_requires_human(self, cdp) -> bool:
     if any(marker in body for marker in hard_body_markers):
         return True
 
+    # An explicit login prompt must win over positive workspace heuristics.
+    # Indeed can keep the employer URL while rendering a signed-out shell.
+    explicit_login_markers = (
+        "sign in",
+        "log in",
+        "iniciar sesión",
+        "iniciar sesion",
+    )
+    if any(marker in body for marker in explicit_login_markers):
+        return True
+
     title = str(state.get("title") or "").casefold()
     on_jobs_workspace = url.startswith("https://employers.indeed.com/jobs")
     has_jobs_identity = "indeed" in title and ("empleos" in title or "jobs" in title)
@@ -250,6 +261,33 @@ async def _visibility_aware_requires_human(self, cdp) -> bool:
         or ("post a job" in body and "all jobs" in body)
     )
     if on_jobs_workspace and has_jobs_identity and has_jobs_controls:
+        return False
+
+    # Candidate list/detail pages are another authenticated workspace used by
+    # the worker immediately after full sync. Generic help/notification copy
+    # may contain "verification" even when the session is healthy, so require
+    # positive employer-workspace evidence before ignoring that generic word.
+    on_candidates_workspace = url.startswith("https://employers.indeed.com/candidates")
+    has_candidate_identity = "indeed" in title and (
+        "candidato" in title or "candidate" in title
+    )
+    has_candidate_list_controls = (
+        ("buscar candidatos" in body and "candidatos" in body)
+        or ("search candidates" in body and "candidates" in body)
+        or "todos los candidatos" in body
+        or "all candidates" in body
+    )
+    has_candidate_detail_controls = (
+        "descargar cv" in body
+        or "download resume" in body
+        or "hoja de vida" in body
+        or "download cv" in body
+    )
+    if (
+        on_candidates_workspace
+        and has_candidate_identity
+        and (has_candidate_list_controls or has_candidate_detail_controls)
+    ):
         return False
 
     return any(marker in body for marker in _CHALLENGE_MARKERS)
