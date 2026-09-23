@@ -145,7 +145,7 @@ SAFE_LISTING_STATE_SCRIPT = r"""
   const rows = [];
   const seen = new Set();
   let clickIndex = 0;
-  for (const root of roots.slice(0, 500)) {
+  for (const [rootIndex, root] of roots.slice(0, 500).entries()) {
     const rowText = clean(root.innerText || root.textContent || '');
     if (!rowText) continue;
 
@@ -171,13 +171,18 @@ SAFE_LISTING_STATE_SCRIPT = r"""
       if (!(hasStatus && (hasCandidateCounts || hasJobHint))) continue;
     }
 
-    const dedupeKey = externalJobKey
+    const absoluteY = Math.round((root.getBoundingClientRect?.().top || 0) + window.scrollY);
+    const instanceKey = externalJobKey
       ? `job:${externalJobKey}`
-      : `pending:${title}|${rowText}`;
-    if (seen.has(dedupeKey)) continue;
-    seen.add(dedupeKey);
+      : `pending:${rootIndex}:${absoluteY}:${title}:${rowText}`;
+    if (seen.has(instanceKey)) continue;
+    seen.add(instanceKey);
 
-    const token = `asiati-job-${clickIndex++}`;
+    let token = clean(root.getAttribute?.('data-asiati-vacancy-instance-token'));
+    if (!token) {
+      token = `asiati-job-${rootIndex}-${absoluteY}-${clickIndex++}`;
+      root.setAttribute?.('data-asiati-vacancy-instance-token', token);
+    }
     clickable.setAttribute('data-asiati-vacancy-token', token);
     rows.push({
       externalJobKey,
@@ -185,6 +190,8 @@ SAFE_LISTING_STATE_SCRIPT = r"""
       href,
       rowText,
       clickToken: token,
+      rowPosition: absoluteY,
+      rowIndex: rootIndex,
       listingUrl,
       scrollY: rowScrollY,
     });
