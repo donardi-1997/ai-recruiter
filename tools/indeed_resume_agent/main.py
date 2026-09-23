@@ -10,6 +10,7 @@ from .credential_store import (
     read_agent_token,
     write_agent_token,
 )
+from .download_capture_compat import install_download_capture_compat
 from .indeed_candidates_current import install_current_indeed_candidates
 from .indeed_jobs_current import install_current_indeed_jobs
 from .jobs_listing_compat import install_jobs_listing_compat
@@ -78,6 +79,7 @@ def main() -> None:
 
     api = AgentApiClient(config, token)
     browser = IndeedBrowserUse(config)
+    install_download_capture_compat(browser)
     install_runtime_compat(browser)
     install_jobs_listing_compat()
     install_vacancy_click_recovery()
