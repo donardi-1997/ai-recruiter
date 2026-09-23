@@ -152,7 +152,6 @@ def recover_waiting_applications(db: Session, *, owner_sub: str) -> int:
             ),
         )
         .order_by(CandidateIngestionEvent.created_at.asc())
-        .distinct()
         .all()
     )
     recovered = 0
