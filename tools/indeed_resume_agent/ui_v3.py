@@ -6,10 +6,56 @@ import threading
 
 from .api_client import QueueStats
 from .sync_services import CandidateSyncService, VacancySyncReport, VacancySyncService
-from .ui_v2 import LayoutSpec, UiState, _layout_for_width, _vacancy_summary, build_ui_state
+from .ui_v2 import LayoutSpec, UiState, _vacancy_summary, build_ui_state
 from .worker import WorkerSnapshot
 
 _SAFE_CODE = re.compile(r"^(?:GMAIL|INDEED|RESUME)_[A-Z0-9_]{2,100}$")
+
+_STATUS_PALETTES = {
+    "ready": ("#eef8f0", "#b9dec1", "#1f6330"),
+    "active": ("#eef5ff", "#a9c8f5", "#1f4f8f"),
+    "warning": ("#fff7e8", "#e7c06a", "#7b5500"),
+    "danger": ("#fff0f2", "#e5a1ac", "#8f2335"),
+}
+
+
+def _layout_for_width(width: int) -> LayoutSpec:
+    """Presentation layout used by the active v3 desktop UI."""
+
+    safe_width = max(1, int(width))
+    if safe_width >= 1080:
+        return LayoutSpec(
+            metric_columns=3,
+            sync_columns=3,
+            operation_columns=3,
+            max_content_width=980,
+            shell_padding=16,
+        )
+    if safe_width >= 780:
+        return LayoutSpec(
+            metric_columns=2,
+            sync_columns=2,
+            operation_columns=2,
+            max_content_width=max(320, min(820, safe_width - 20)),
+            shell_padding=12,
+        )
+    return LayoutSpec(
+        metric_columns=2,
+        sync_columns=1,
+        operation_columns=1,
+        max_content_width=max(320, safe_width - 20),
+        shell_padding=10,
+    )
+
+
+def _status_tone(ui: UiState) -> str:
+    if ui.failed > 0:
+        return "danger"
+    if ui.needs_attention > 0 or ui.session_label == "Necesita atención":
+        return "warning"
+    if ui.busy or ui.downloading > 0:
+        return "active"
+    return "ready"
 
 
 def _safe_code(value: object, fallback: str) -> str:
@@ -53,22 +99,22 @@ def run_ui(*, worker, api, browser) -> None:
 
     root = tk.Tk()
     root.title("ASIATI Resume Agent")
-    root.geometry("1120x760")
-    root.minsize(700, 620)
+    root.geometry("980x680")
+    root.minsize(720, 560)
 
     style = ttk.Style(root)
     try:
         style.theme_use("vista")
     except tk.TclError:
         pass
-    style.configure("AgentTitle.TLabel", font=("Segoe UI", 20, "bold"))
-    style.configure("AgentSubtitle.TLabel", font=("Segoe UI", 10))
-    style.configure("MetricValue.TLabel", font=("Segoe UI", 18, "bold"))
-    style.configure("MetricLabel.TLabel", font=("Segoe UI", 9))
-    style.configure("Primary.TButton", font=("Segoe UI", 10, "bold"), padding=(16, 10))
-    style.configure("Secondary.TButton", padding=(10, 7))
+    style.configure("AgentTitle.TLabel", font=("Segoe UI", 18, "bold"))
+    style.configure("AgentSubtitle.TLabel", font=("Segoe UI", 9))
+    style.configure("MetricValue.TLabel", font=("Segoe UI", 16, "bold"))
+    style.configure("MetricLabel.TLabel", font=("Segoe UI", 8))
+    style.configure("Primary.TButton", font=("Segoe UI", 9, "bold"), padding=(12, 8))
+    style.configure("Secondary.TButton", font=("Segoe UI", 9), padding=(9, 6))
 
-    shell = ttk.Frame(root, padding=20)
+    shell = ttk.Frame(root, padding=16)
     shell.pack(fill="both", expand=True)
 
     header = ttk.Frame(shell)
@@ -81,30 +127,52 @@ def run_ui(*, worker, api, browser) -> None:
         title_box,
         text="Indeed · vacantes, postulaciones y CVs",
         style="AgentSubtitle.TLabel",
-    ).pack(anchor="w", pady=(2, 0))
+    ).pack(anchor="w", pady=(1, 0))
 
     session_var = tk.StringVar(value="Iniciando")
-    session_box = ttk.LabelFrame(header, text="Sesión Indeed", padding=(14, 8))
-    session_box.grid(row=0, column=1, sticky="e", padx=(12, 0))
-    ttk.Label(session_box, textvariable=session_var, font=("Segoe UI", 10, "bold")).pack()
+    session_box = ttk.LabelFrame(header, text="Sesión Indeed", padding=(10, 6))
+    session_box.grid(row=0, column=1, sticky="e", padx=(10, 0))
+    ttk.Label(session_box, textvariable=session_var, font=("Segoe UI", 9, "bold")).pack()
 
     status_var = tk.StringVar(value="Iniciando agente...")
-    phase = ttk.LabelFrame(shell, text="Estado actual", padding=14)
-    phase.pack(fill="x", pady=(18, 14))
-    status_label_widget = ttk.Label(
+    status_bg, status_border, status_fg = _STATUS_PALETTES["active"]
+    phase = tk.Frame(
+        shell,
+        background=status_bg,
+        highlightthickness=1,
+        highlightbackground=status_border,
+        bd=0,
+        padx=12,
+        pady=8,
+    )
+    phase.pack(fill="x", pady=(12, 10))
+    status_heading_widget = tk.Label(
+        phase,
+        text="ESTADO ACTUAL",
+        background=status_bg,
+        foreground=status_fg,
+        font=("Segoe UI", 8, "bold"),
+        anchor="w",
+    )
+    status_heading_widget.pack(fill="x", anchor="w")
+    status_label_widget = tk.Label(
         phase,
         textvariable=status_var,
-        wraplength=980,
-        font=("Segoe UI", 10),
+        wraplength=900,
+        justify="left",
+        anchor="w",
+        background=status_bg,
+        foreground="#202530",
+        font=("Segoe UI", 9),
     )
-    status_label_widget.pack(anchor="w")
+    status_label_widget.pack(fill="x", anchor="w", pady=(3, 0))
 
     counters = {
         name: tk.StringVar(value="0")
         for name in ("pending", "downloading", "completed", "attention", "retry", "failed")
     }
     metrics = ttk.Frame(shell)
-    metrics.pack(fill="x", pady=(0, 14))
+    metrics.pack(fill="x", pady=(0, 10))
     metric_defs = [
         ("Pendientes", "pending"),
         ("Procesando", "downloading"),
@@ -115,19 +183,19 @@ def run_ui(*, worker, api, browser) -> None:
     ]
     metric_cards = []
     for label, key in metric_defs:
-        card = ttk.LabelFrame(metrics, padding=(14, 10))
+        card = ttk.Frame(metrics, padding=(12, 8), relief="solid", borderwidth=1)
         metric_cards.append(card)
         ttk.Label(card, textvariable=counters[key], style="MetricValue.TLabel").pack(anchor="w")
         ttk.Label(card, text=label, style="MetricLabel.TLabel").pack(anchor="w")
 
     candidate_var = tk.StringVar(value="-")
-    candidate_card = ttk.LabelFrame(shell, text="Candidato actual", padding=14)
-    candidate_card.pack(fill="x", pady=(0, 14))
+    candidate_card = ttk.LabelFrame(shell, text="Candidato actual", padding=10)
+    candidate_card.pack(fill="x", pady=(0, 10))
     candidate_label_widget = ttk.Label(
         candidate_card,
         textvariable=candidate_var,
-        wraplength=980,
-        font=("Segoe UI", 11, "bold"),
+        wraplength=900,
+        font=("Segoe UI", 10, "bold"),
     )
     candidate_label_widget.pack(anchor="w")
 
@@ -135,8 +203,8 @@ def run_ui(*, worker, api, browser) -> None:
     updates: queue.Queue[UiState] = queue.Queue()
     stop_event = threading.Event()
 
-    action_card = ttk.LabelFrame(shell, text="Sincronización", padding=14)
-    action_card.pack(fill="x", pady=(0, 12))
+    action_card = ttk.LabelFrame(shell, text="Sincronización", padding=10)
+    action_card.pack(fill="x", pady=(0, 9))
     sync_all_button = ttk.Button(
         action_card,
         text="Sincronizar todo",
@@ -157,8 +225,8 @@ def run_ui(*, worker, api, browser) -> None:
     )
     sync_buttons = [sync_all_button, sync_jobs_button, sync_candidates_button]
 
-    operations = ttk.LabelFrame(shell, text="Operación", padding=12)
-    operations.pack(fill="x", pady=(0, 12))
+    operations = ttk.LabelFrame(shell, text="Operación", padding=9)
+    operations.pack(fill="x", pady=(0, 9))
     pause_button = ttk.Button(
         operations,
         text="Pausar",
@@ -197,7 +265,7 @@ def run_ui(*, worker, api, browser) -> None:
         open_button,
     ]
 
-    tools = ttk.LabelFrame(shell, text="Diagnóstico", padding=10)
+    tools = ttk.LabelFrame(shell, text="Diagnóstico", padding=8)
     tools.pack(fill="x")
     diagnostic_start_button = ttk.Button(
         tools,
@@ -213,7 +281,7 @@ def run_ui(*, worker, api, browser) -> None:
 
     current_layout: LayoutSpec | None = None
 
-    def place_grid(items, parent, columns: int, *, pady: int = 4) -> None:
+    def place_grid(items, parent, columns: int, *, pady: int = 3) -> None:
         for column in range(max(len(items), 1)):
             parent.columnconfigure(column, weight=1 if column < columns else 0)
         for index, widget in enumerate(items):
@@ -221,7 +289,7 @@ def run_ui(*, worker, api, browser) -> None:
                 row=index // columns,
                 column=index % columns,
                 sticky="ew",
-                padx=4,
+                padx=3,
                 pady=pady,
             )
 
@@ -231,11 +299,10 @@ def run_ui(*, worker, api, browser) -> None:
             return
         width = event.width if event is not None else root.winfo_width()
         layout = _layout_for_width(width)
-        sync_columns = 3 if width >= 1080 else layout.sync_columns
         horizontal_padding = max(layout.shell_padding, (width - layout.max_content_width) // 2)
         shell.configure(padding=(horizontal_padding, layout.shell_padding))
         usable_width = max(320, min(width - (horizontal_padding * 2), layout.max_content_width))
-        wraplength = max(280, usable_width - 48)
+        wraplength = max(280, usable_width - 36)
         status_label_widget.configure(wraplength=wraplength)
         candidate_label_widget.configure(wraplength=wraplength)
 
@@ -246,26 +313,24 @@ def run_ui(*, worker, api, browser) -> None:
                 current_layout.sync_columns,
                 current_layout.operation_columns,
             )
-        columns = (layout.metric_columns, sync_columns, layout.operation_columns)
+        columns = (
+            layout.metric_columns,
+            layout.sync_columns,
+            layout.operation_columns,
+        )
         if previous_columns != columns:
             place_grid(metric_cards, metrics, layout.metric_columns)
-            place_grid(sync_buttons, action_card, sync_columns, pady=3)
-            place_grid(operation_buttons, operations, layout.operation_columns, pady=3)
+            place_grid(sync_buttons, action_card, layout.sync_columns)
+            place_grid(operation_buttons, operations, layout.operation_columns)
             diagnostic_columns = 1 if layout.operation_columns == 1 else 2
-            place_grid(diagnostic_buttons, tools, diagnostic_columns, pady=3)
+            place_grid(diagnostic_buttons, tools, diagnostic_columns)
 
         if layout.operation_columns == 1:
-            session_box.grid_configure(row=1, column=0, sticky="ew", padx=0, pady=(10, 0))
+            session_box.grid_configure(row=1, column=0, sticky="ew", padx=0, pady=(8, 0))
         else:
-            session_box.grid_configure(row=0, column=1, sticky="e", padx=(12, 0), pady=0)
+            session_box.grid_configure(row=0, column=1, sticky="e", padx=(10, 0), pady=0)
 
-        current_layout = LayoutSpec(
-            metric_columns=layout.metric_columns,
-            sync_columns=sync_columns,
-            operation_columns=layout.operation_columns,
-            max_content_width=layout.max_content_width,
-            shell_padding=layout.shell_padding,
-        )
+        current_layout = layout
 
     root.bind("<Configure>", apply_layout, add="+")
     root.after_idle(apply_layout)
@@ -663,6 +728,13 @@ def run_ui(*, worker, api, browser) -> None:
                 counters["attention"].set(str(ui.needs_attention))
                 counters["retry"].set(str(ui.retry))
                 counters["failed"].set(str(ui.failed))
+
+                tone = _status_tone(ui)
+                bg, border, fg = _STATUS_PALETTES[tone]
+                phase.configure(background=bg, highlightbackground=border)
+                status_heading_widget.configure(background=bg, foreground=fg)
+                status_label_widget.configure(background=bg)
+
                 state = "disabled" if ui.busy else "normal"
                 for button in conflict_buttons:
                     button.configure(state=state)
