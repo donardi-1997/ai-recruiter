@@ -151,6 +151,7 @@ describe("Training platform", () => {
         "training.read",
         "training.manage",
         "training.assign",
+        "training.results.read",
       ].includes(permission),
     });
 
@@ -179,6 +180,31 @@ describe("Training platform", () => {
           data: { ...draftCourse, modules: [] },
         });
       }
+      if (url === "/training/courses/course-1/assignments") {
+        return Promise.resolve({
+          data: {
+            items: [
+              {
+                id: "course-assignment-1",
+                status: "ASSIGNED",
+                employee: {
+                  id: "employee-1",
+                  email: "employee@asiati.com.co",
+                  first_name: "Ana",
+                  last_name: "Pérez",
+                  job_title: "Comercial",
+                  department: "Ventas",
+                },
+                course: {
+                  ...draftCourse,
+                  status: "PUBLISHED",
+                  progress_percent: 50,
+                },
+              },
+            ],
+          },
+        });
+      }
       return Promise.reject(new Error(`Unexpected GET ${url}`));
     });
 
@@ -196,6 +222,8 @@ describe("Training platform", () => {
 
     expect(await screen.findByRole("button", { name: "+ Crear curso" })).toBeInTheDocument();
     expect((await screen.findAllByText("Inducción ASIATI")).length).toBeGreaterThan(0);
+    expect(await screen.findByText("Ana Pérez")).toBeInTheDocument();
+    expect(screen.getByText("50%")).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: "+ Crear curso" }));
     fireEvent.change(screen.getByLabelText("Título"), {
