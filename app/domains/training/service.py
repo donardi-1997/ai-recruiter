@@ -92,12 +92,20 @@ def _module_applies(
     return True
 
 
+ASIATI_PENDING_CORPORATE_VIDEO_TITLES = {
+    "Módulo 1 · ASIATI",
+    "Módulo 2 · ASIATI",
+    "Módulo 3 · ASIATI",
+}
+
+
 def _lesson_visible_to_employee(lesson: TrainingLesson) -> bool:
-    content_type = str(lesson.content_type or "VIDEO").strip().upper()
-    if content_type == "VIDEO":
-        return bool(lesson.video_storage_key or lesson.video_url)
-    if content_type == "RESOURCE":
-        return bool(lesson.external_url)
+    if (
+        lesson.title in ASIATI_PENDING_CORPORATE_VIDEO_TITLES
+        and not lesson.video_storage_key
+        and not lesson.video_url
+    ):
+        return False
     return True
 
 
