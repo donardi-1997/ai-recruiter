@@ -1019,6 +1019,36 @@ def test_role_targeted_modules_are_filtered_for_employee(db):
     assert payload["estimated_minutes"] == 3
 
 
+def test_asiati_onboarding_template_repairs_existing_draft_without_duplicate(db):
+    course = service.create_course(
+        db,
+        title="Onboarding ASIATI",
+        description="Versión existente",
+        created_by_sub="admin-sub",
+        is_onboarding=True,
+    )
+    service.add_module(
+        db,
+        course_id=course.id,
+        title="Evaluación final",
+        description="Placeholder anterior",
+    )
+
+    repaired = service.create_asiati_onboarding_template(
+        db,
+        created_by_sub="admin-sub",
+    )
+    payload = service.get_course(db, repaired.id)
+
+    assert repaired.id == course.id
+    assert all(
+        module["title"] != "Evaluación final"
+        for module in payload["modules"]
+    )
+    assert payload["quiz"]["title"] == "Evaluación final"
+    assert payload["quiz"]["passing_score"] == 70
+
+
 def test_asiati_onboarding_template_scaffolds_short_journey(db):
     course = service.create_asiati_onboarding_template(
         db,
