@@ -255,6 +255,23 @@ def test_alembic_head_builds_current_postgres_schema():
             "void_reason",
         }.issubset(score_event_columns)
 
+        user_profile_columns = {
+            column["name"]
+            for column in inspector.get_columns("user_profiles")
+        }
+        assert {
+            "hire_date",
+            "onboarding_status",
+            "onboarding_started_at",
+            "onboarding_completed_at",
+        }.issubset(user_profile_columns)
+
+        training_course_columns = {
+            column["name"]
+            for column in inspector.get_columns("training_courses")
+        }
+        assert "is_onboarding" in training_course_columns
+
         training_lesson_columns = {
             column["name"]
             for column in inspector.get_columns("training_lessons")
@@ -266,6 +283,6 @@ def test_alembic_head_builds_current_postgres_schema():
         }.issubset(training_lesson_columns)
 
         assert admin_score_grants == 0
-        assert revision == "020"
+        assert revision == "021"
     finally:
         engine.dispose()
