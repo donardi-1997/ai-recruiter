@@ -6,6 +6,7 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 class CreateCourseRequest(BaseModel):
     title: str = Field(min_length=2, max_length=200)
     description: str | None = Field(default=None, max_length=4000)
+    is_onboarding: bool = False
 
     @field_validator("title")
     @classmethod
@@ -16,6 +17,7 @@ class CreateCourseRequest(BaseModel):
 class UpdateCourseRequest(BaseModel):
     title: str | None = Field(default=None, min_length=2, max_length=200)
     description: str | None = Field(default=None, max_length=4000)
+    is_onboarding: bool | None = None
     status: str | None = None
 
     @field_validator("title")
