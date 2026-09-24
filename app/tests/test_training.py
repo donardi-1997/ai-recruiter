@@ -954,7 +954,7 @@ def test_employee_journey_hides_video_placeholders_without_media(db):
     pending = service.add_lesson(
         db,
         module_id=module.id,
-        title="Video pendiente",
+        title="Módulo 1 · ASIATI",
         description=None,
         video_url=None,
         duration_seconds=None,
