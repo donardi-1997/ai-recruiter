@@ -164,6 +164,7 @@ def ensure_existing_cognito_profile(
             email=email,
             first_name=(str(attrs.get("given_name") or "").strip() or None),
             last_name=(str(attrs.get("family_name") or "").strip() or None),
+            onboarding_status="NOT_REQUIRED",
             status="ACTIVE",
             created_by_sub=created_by_sub,
         )
