@@ -679,7 +679,7 @@ function Training() {
                     )}
                   </div>
                   <div className="training-course-overview-actions">
-                    <span className={`training-status training-status-${selectedCourse.status.toLowerCase()}`}>
+                    <span className={`training-status training-status-${String(selectedCourse.status || "DRAFT").toLowerCase()}`}>
                       {selectedCourse.status === "PUBLISHED" ? "Publicado" : selectedCourse.status === "ARCHIVED" ? "Archivado" : "Borrador"}
                     </span>
                     {selectedCourse.status === "DRAFT" && (
@@ -1352,7 +1352,7 @@ function Training() {
                             </fieldset>
                           ))}
 
-                          {quizResult && (
+                          {quizResult?.attempt && (
                             <div className={`training-quiz-result ${quizResult.attempt.passed ? "is-pass" : "is-fail"}`}>
                               <strong>{quizResult.attempt.score_percent}%</strong>
                               <span>
