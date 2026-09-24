@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import api from "../api/client";
+import { useSession } from "../context/SessionContext";
 
 function getGreeting(date = new Date()) {
   const hour = date.getHours();
@@ -11,6 +12,8 @@ function getGreeting(date = new Date()) {
 }
 
 function Dashboard() {
+  const { principal, hasPermission } = useSession();
+  const canRecruit = hasPermission("jobs.read") && hasPermission("candidates.read");
   const [jobs, setJobs] = useState([]);
   const [candidates, setCandidates] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -25,6 +28,11 @@ function Dashboard() {
   }, []);
 
   useEffect(() => {
+    if (!canRecruit) {
+      setLoading(false);
+      return undefined;
+    }
+
     async function load() {
       try {
         const [jobsResponse, candidatesResponse] = await Promise.all([
@@ -42,10 +50,41 @@ function Dashboard() {
       }
     }
     load();
-  }, []);
+    return undefined;
+  }, [canRecruit]);
 
   if (loading) {
     return <div className="page"><div className="page-loading"><span /> Preparando tu workspace…</div></div>;
+  }
+
+  if (!canRecruit) {
+    const firstName = principal?.profile?.first_name || "equipo";
+    return (
+      <div className="page dashboard-page employee-dashboard">
+        <header className="page-header dashboard-header">
+          <div>
+            <span className="eyebrow">Tu espacio ASIATI</span>
+            <h1>{greeting}, {firstName}.</h1>
+            <p>Aquí encontrarás tu proceso de inducción, capacitación y progreso.</p>
+          </div>
+        </header>
+
+        <section className="panel employee-welcome-panel">
+          <div className="employee-welcome-copy">
+            <span className="eyebrow">Onboarding</span>
+            <h2>Conoce ASIATI y cómo trabajamos.</h2>
+            <p>La sección de capacitación reunirá los videos, módulos y evaluaciones asignadas a tu perfil.</p>
+            <Link className="btn btn-primary" to="/training">Ir a capacitación</Link>
+          </div>
+          <div className="employee-progress-preview" aria-label="Progreso de capacitación">
+            <span>Progreso</span>
+            <strong>0%</strong>
+            <div><i style={{ width: "0%" }} /></div>
+            <small>Aún no tienes módulos publicados.</small>
+          </div>
+        </section>
+      </div>
+    );
   }
 
   const coverage = jobs.length ? Math.min(100, Math.round((candidates.length / jobs.length) * 20)) : 0;
