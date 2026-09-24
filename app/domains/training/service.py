@@ -468,6 +468,78 @@ def _ensure_asiati_corporate_video_lessons(
             )
 
 
+ASIATI_ONBOARDING_BASE_QUIZ = [
+    (
+        "¿Cuál es el sitio web corporativo oficial incluido en la inducción?",
+        [
+            "asiaticorp.com",
+            "El Retrovisor",
+            "Wiilog",
+            "Origen Vital",
+        ],
+        0,
+    ),
+    (
+        "¿Cuál de estas iniciativas aparece dentro del ecosistema ASIATI presentado en la ruta?",
+        [
+            "Wiilog",
+            "Coursera",
+            "LinkedIn Learning",
+            "Udemy",
+        ],
+        0,
+    ),
+    (
+        "¿En qué plataforma se presenta El Retrovisor dentro de los recursos del onboarding?",
+        [
+            "YouTube",
+            "Canva",
+            "Portal de vacaciones",
+            "Google Calendar",
+        ],
+        0,
+    ),
+    (
+        "¿Qué debes revisar en la etapa 'Tu cargo en ASIATI'?",
+        [
+            "Alcance, responsabilidades, herramientas y objetivos de tus primeros días",
+            "Únicamente el organigrama",
+            "Solo las redes sociales corporativas",
+            "Únicamente permisos y vacaciones",
+        ],
+        0,
+    ),
+    (
+        "Si necesitas detener la inducción antes de terminar, ¿qué puedes hacer?",
+        [
+            "Retomarla después desde tu avance guardado",
+            "Empezar obligatoriamente desde cero",
+            "Solicitar que eliminen el curso",
+            "Perder el acceso a la ruta",
+        ],
+        0,
+    ),
+]
+
+
+def _ensure_asiati_onboarding_quiz_questions(
+    db: Session,
+    *,
+    quiz: TrainingQuiz,
+) -> None:
+    if quiz.questions:
+        return
+
+    for prompt, options, correct_option in ASIATI_ONBOARDING_BASE_QUIZ:
+        add_quiz_question(
+            db,
+            quiz_id=quiz.id,
+            prompt=prompt,
+            options=options,
+            correct_option=correct_option,
+        )
+
+
 def create_asiati_onboarding_template(
     db: Session,
     *,
@@ -493,15 +565,16 @@ def create_asiati_onboarding_template(
         for module in empty_final_modules:
             db.delete(module)
             changed = True
-        if existing.quiz is None:
-            create_quiz(
+        quiz = existing.quiz
+        if quiz is None:
+            quiz = create_quiz(
                 db,
                 course_id=existing.id,
                 title="Evaluación final",
                 passing_score=70,
                 created_by_sub=created_by_sub,
             )
-            changed = False
+        _ensure_asiati_onboarding_quiz_questions(db, quiz=quiz)
         if changed:
             db.commit()
         refreshed = require_course(db, existing.id)
@@ -635,13 +708,14 @@ def create_asiati_onboarding_template(
         content_type="CHECKLIST",
         estimated_minutes=5,
     )
-    create_quiz(
+    quiz = create_quiz(
         db,
         course_id=course.id,
         title="Evaluación final",
         passing_score=70,
         created_by_sub=created_by_sub,
     )
+    _ensure_asiati_onboarding_quiz_questions(db, quiz=quiz)
     _ensure_asiati_corporate_video_lessons(db, course=require_course(db, course.id))
 
     return require_course(db, course.id)
