@@ -334,15 +334,6 @@ function Training() {
     return () => window.clearTimeout(timeoutId);
   }, [loadEmployeeCourse, selectedAssignment]);
 
-  useEffect(() => {
-    if (!activeModuleId) return;
-    setExpandedModuleIds((current) => (
-      current.includes(activeModuleId)
-        ? current
-        : [activeModuleId]
-    ));
-  }, [activeModuleId, selectedAssignmentId]);
-
   async function createCourse(event) {
     event.preventDefault();
     setSaving(true);
