@@ -937,6 +937,69 @@ def test_employee_journey_hides_empty_admin_scaffold_modules(db):
     ]
 
 
+def test_employee_journey_hides_video_placeholders_without_media(db):
+    employee = _employee(db)
+    course = service.create_course(
+        db,
+        title="Ruta con video pendiente",
+        description=None,
+        created_by_sub="admin-sub",
+    )
+    module = service.add_module(
+        db,
+        course_id=course.id,
+        title="Videos",
+        description=None,
+    )
+    pending = service.add_lesson(
+        db,
+        module_id=module.id,
+        title="Video pendiente",
+        description=None,
+        video_url=None,
+        duration_seconds=None,
+        content_type="VIDEO",
+        estimated_minutes=None,
+    )
+    ready = service.add_lesson(
+        db,
+        module_id=module.id,
+        title="Video listo",
+        description=None,
+        video_url="https://example.com/video.mp4",
+        duration_seconds=60,
+        content_type="VIDEO",
+        estimated_minutes=1,
+    )
+    service.update_course(db, course.id, status="PUBLISHED")
+    service.assign_course(
+        db,
+        course_id=course.id,
+        employee_id=employee.id,
+        assigned_by_sub="admin-sub",
+    )
+
+    payload = service.get_my_course(
+        db,
+        employee_id=employee.id,
+        course_id=course.id,
+    )["course"]
+
+    assert payload["lesson_count"] == 1
+    assert payload["content_item_count"] == 1
+    assert payload["next_lesson_id"] == ready.id
+    assert [lesson["id"] for lesson in payload["modules"][0]["lessons"]] == [
+        ready.id,
+    ]
+
+    with pytest.raises(service.TrainingStateError):
+        service.complete_lesson(
+            db,
+            employee_id=employee.id,
+            lesson_id=pending.id,
+        )
+
+
 def test_role_targeted_modules_are_filtered_for_employee(db):
     employee = _employee(db)
     employee.job_title = "Comercial"
@@ -1047,6 +1110,7 @@ def test_asiati_onboarding_template_repairs_existing_draft_without_duplicate(db)
     )
     assert payload["quiz"]["title"] == "Evaluación final"
     assert payload["quiz"]["passing_score"] == 70
+    assert payload["quiz"]["question_count"] == 5
 
 
 def test_asiati_onboarding_template_scaffolds_short_journey(db):
@@ -1068,7 +1132,10 @@ def test_asiati_onboarding_template_scaffolds_short_journey(db):
     ]
     assert payload["quiz"]["title"] == "Evaluación final"
     assert payload["quiz"]["passing_score"] == 70
-    assert payload["quiz"]["question_count"] == 0
+    assert payload["quiz"]["question_count"] == 5
+    assert payload["quiz"]["questions"][0]["prompt"].startswith(
+        "¿Cuál es el sitio web corporativo oficial"
+    )
 
     resources = [
         lesson
