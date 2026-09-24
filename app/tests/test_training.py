@@ -239,3 +239,30 @@ def test_disabled_employee_cannot_receive_new_assignment(db):
             employee_id=employee.id,
             assigned_by_sub="admin-sub",
         )
+
+
+def test_published_course_cannot_return_to_draft(db):
+    course, _, _ = _published_course(db)
+
+    with pytest.raises(service.TrainingStateError):
+        service.update_course(db, course.id, status="DRAFT")
+
+
+def test_repeated_completion_preserves_course_completion_timestamp(db):
+    employee = _employee(db)
+    course, _, lesson = _published_course(db)
+    assignment = service.assign_course(
+        db,
+        course_id=course.id,
+        employee_id=employee.id,
+        assigned_by_sub="admin-sub",
+    )
+
+    service.complete_lesson(db, employee_id=employee.id, lesson_id=lesson.id)
+    db.refresh(assignment)
+    first_completed_at = assignment.completed_at
+
+    service.complete_lesson(db, employee_id=employee.id, lesson_id=lesson.id)
+    db.refresh(assignment)
+
+    assert assignment.completed_at == first_completed_at
