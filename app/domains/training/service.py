@@ -1006,6 +1006,21 @@ def _completed_ids(db: Session, assignment_id: str) -> set[str]:
     }
 
 
+def _progress_details_by_lesson(
+    db: Session,
+    assignment_id: str,
+) -> dict[str, dict]:
+    entries = (
+        db.query(TrainingLessonProgress)
+        .filter(TrainingLessonProgress.assignment_id == assignment_id)
+        .all()
+    )
+    return {
+        entry.lesson_id: dict(entry.details or {})
+        for entry in entries
+    }
+
+
 def _assignment_course_payload(
     db: Session,
     assignment: TrainingAssignment,
@@ -1013,9 +1028,11 @@ def _assignment_course_payload(
     include_structure: bool,
 ) -> dict:
     completed = _completed_ids(db, assignment.id)
+    progress_details = _progress_details_by_lesson(db, assignment.id)
     course = course_payload(
         assignment.course,
         completed_lesson_ids=completed,
+        progress_details_by_lesson=progress_details,
         include_structure=include_structure,
         employee=assignment.employee,
     )
