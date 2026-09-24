@@ -316,7 +316,27 @@ def create_asiati_onboarding_template(
         .first()
     )
     if existing is not None:
-        return existing
+        changed = False
+        empty_final_modules = [
+            module
+            for module in existing.modules
+            if module.title == "Evaluación final" and not module.lessons
+        ]
+        for module in empty_final_modules:
+            db.delete(module)
+            changed = True
+        if existing.quiz is None:
+            create_quiz(
+                db,
+                course_id=existing.id,
+                title="Evaluación final",
+                passing_score=70,
+                created_by_sub=created_by_sub,
+            )
+            changed = False
+        if changed:
+            db.commit()
+        return require_course(db, existing.id)
 
     course = create_course(
         db,
