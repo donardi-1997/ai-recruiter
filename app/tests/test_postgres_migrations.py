@@ -19,6 +19,11 @@ CORE_TABLES = {
     "evaluations",
     "rankings",
     "ranking_items",
+    "user_profiles",
+    "roles",
+    "permissions",
+    "user_roles",
+    "role_permissions",
 }
 
 
@@ -55,6 +60,11 @@ def test_alembic_head_builds_current_postgres_schema():
             "indeed_email_resume_tasks",
             "job_reevaluation_tasks",
             "company_contexts",
+            "user_profiles",
+            "roles",
+            "permissions",
+            "user_roles",
+            "role_permissions",
         }.issubset(tables)
 
         for table_name in sorted(CORE_TABLES):
@@ -177,9 +187,40 @@ def test_alembic_head_builds_current_postgres_schema():
             revision = connection.execute(
                 text("SELECT version_num FROM alembic_version")
             ).scalar_one()
+            role_codes = {
+                row[0]
+                for row in connection.execute(
+                    text("SELECT code FROM roles")
+                ).all()
+            }
+            score_grants = {
+                row[0]
+                for row in connection.execute(
+                    text(
+                        "SELECT permission_code FROM role_permissions "
+                        "WHERE role_code = 'SUPER_ADMIN' "
+                        "AND permission_code LIKE 'employee_scores.%'"
+                    )
+                ).all()
+            }
+            admin_score_grants = connection.execute(
+                text(
+                    "SELECT COUNT(*) FROM role_permissions "
+                    "WHERE role_code = 'ADMIN' "
+                    "AND permission_code LIKE 'employee_scores.%'"
+                )
+            ).scalar_one()
         job_columns = {column["name"] for column in inspector.get_columns("jobs")}
         assert {"indeed_description", "ai_description", "active_description_source"}.issubset(job_columns)
 
-        assert revision == "015"
+        assert role_codes == {"SUPER_ADMIN", "ADMIN", "EMPLOYEE"}
+        assert score_grants == {
+            "employee_scores.read",
+            "employee_scores.create",
+            "employee_scores.correct",
+            "employee_scores.export",
+        }
+        assert admin_score_grants == 0
+        assert revision == "016"
     finally:
         engine.dispose()
