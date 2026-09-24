@@ -51,7 +51,7 @@ class Candidate(Base):
     restriction_events = relationship(
         "CandidateRestrictionEvent",
         back_populates="candidate",
-        cascade="all, delete-orphan",
+        passive_deletes=True,
         order_by="CandidateRestrictionEvent.created_at",
     )
 
@@ -75,7 +75,7 @@ class CandidateRestrictionEvent(Base):
     )
     candidate_id = Column(
         UUID(as_uuid=False),
-        ForeignKey("candidates.id", ondelete="CASCADE"),
+        ForeignKey("candidates.id", ondelete="RESTRICT"),
         nullable=False,
     )
     action = Column(Text, nullable=False)
