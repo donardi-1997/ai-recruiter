@@ -51,6 +51,7 @@ def create_course(
         title=body.title,
         description=body.description,
         created_by_sub=principal["sub"],
+        is_onboarding=body.is_onboarding,
     )
     return service.course_payload(course, include_structure=True)
 
@@ -80,6 +81,7 @@ def update_course(
             course_id,
             title=body.title,
             description=body.description,
+            is_onboarding=body.is_onboarding,
             status=body.status,
         )
         return service.course_payload(course, include_structure=True)
