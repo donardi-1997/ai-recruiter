@@ -1,6 +1,6 @@
 """Schemas for the internal training platform."""
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 
 class CreateCourseRequest(BaseModel):
@@ -66,3 +66,43 @@ class CreateLessonRequest(BaseModel):
         if not normalized.startswith("https://"):
             raise ValueError("video_url must use https")
         return normalized
+
+
+
+class CreateQuizRequest(BaseModel):
+    title: str = Field(min_length=2, max_length=200)
+    passing_score: int = Field(default=70, ge=1, le=100)
+
+    @field_validator("title")
+    @classmethod
+    def normalize_title(cls, value: str) -> str:
+        return value.strip()
+
+
+class CreateQuizQuestionRequest(BaseModel):
+    prompt: str = Field(min_length=2, max_length=2000)
+    options: list[str] = Field(min_length=2, max_length=6)
+    correct_option: int = Field(ge=0)
+
+    @field_validator("prompt")
+    @classmethod
+    def normalize_prompt(cls, value: str) -> str:
+        return value.strip()
+
+    @field_validator("options")
+    @classmethod
+    def normalize_options(cls, value: list[str]) -> list[str]:
+        normalized = [str(option).strip() for option in value]
+        if any(not option for option in normalized):
+            raise ValueError("quiz options cannot be blank")
+        return normalized
+
+    @model_validator(mode="after")
+    def validate_correct_option(self):
+        if self.correct_option >= len(self.options):
+            raise ValueError("correct_option is outside the option range")
+        return self
+
+
+class SubmitQuizAttemptRequest(BaseModel):
+    answers: dict[str, int]
