@@ -104,6 +104,17 @@ function Dashboard() {
                 ? `Tienes ${trainingAssignments.length} curso${trainingAssignments.length === 1 ? "" : "s"} asignado${trainingAssignments.length === 1 ? "" : "s"}.`
                 : "Cuando te asignen una capacitación aparecerá aquí automáticamente."}
             </p>
+            <span className="employee-onboarding-state">
+              Onboarding: {
+                principal?.profile?.onboarding_status === "COMPLETED"
+                  ? "Completado"
+                  : principal?.profile?.onboarding_status === "IN_PROGRESS"
+                    ? "En progreso"
+                    : principal?.profile?.onboarding_status === "PENDING"
+                      ? "Pendiente"
+                      : "No requerido"
+              }
+            </span>
             <Link className="btn btn-primary" to="/training">Ir a capacitación</Link>
           </div>
           <div className="employee-progress-preview" aria-label="Progreso de capacitación">
