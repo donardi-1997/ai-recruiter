@@ -169,6 +169,13 @@ def update_course(
         course.description = description.strip() or None
     if status is not None:
         normalized = status.upper()
+        allowed_transitions = {
+            "DRAFT": {"DRAFT", "PUBLISHED", "ARCHIVED"},
+            "PUBLISHED": {"PUBLISHED", "ARCHIVED"},
+            "ARCHIVED": {"ARCHIVED"},
+        }
+        if normalized not in allowed_transitions.get(course.status, {course.status}):
+            raise TrainingStateError("Unsupported course status transition.")
         if normalized == "PUBLISHED":
             _, lesson_count = _course_counts(course)
             if lesson_count == 0:
@@ -415,7 +422,11 @@ def complete_lesson(
         )
         .count()
     )
-    if total_lessons and completed_count >= total_lessons:
+    if (
+        total_lessons
+        and completed_count >= total_lessons
+        and assignment.status != "COMPLETED"
+    ):
         assignment.status = "COMPLETED"
         assignment.completed_at = datetime.now(timezone.utc)
 
