@@ -5,7 +5,11 @@ from types import SimpleNamespace
 import pytest
 
 from app.domains.candidates import presenter, service
-from app.domains.candidates.exceptions import CandidateNotFound, JobNotFound
+from app.domains.candidates.exceptions import (
+    CandidateNotFound,
+    CandidateRetentionProtected,
+    JobNotFound,
+)
 
 
 PUBLIC_FAILURE = "No fue posible completar la evaluación. Intenta nuevamente."
@@ -18,6 +22,10 @@ def _candidate(**overrides):
         "email": "ana@example.com",
         "created_at": None,
         "metadata_": {"filename": "ana.pdf"},
+        "is_banned": False,
+        "banned_at": None,
+        "banned_by_sub": None,
+        "banned_reason": None,
     }
     values.update(overrides)
     return SimpleNamespace(**values)
@@ -53,6 +61,10 @@ def test_candidate_to_dict_preserves_public_shape():
         "created_at": None,
         "metadata": {"filename": "ana.pdf"},
         "filename": "ana.pdf",
+        "is_banned": False,
+        "banned_at": None,
+        "banned_by_sub": None,
+        "banned_reason": None,
     }
 
 
@@ -183,25 +195,60 @@ def test_assign_candidates_validates_job_then_delegates(monkeypatch):
     ]
 
 
-def test_delete_candidate_validates_owner_before_delete(monkeypatch):
+def test_delete_candidate_is_blocked_by_retention_policy(monkeypatch):
     events = []
     candidate = _candidate()
 
     monkeypatch.setattr(
         service,
         "require_candidate",
-        lambda db, candidate_id, owner_sub: events.append(("require", candidate_id, owner_sub)) or candidate,
+        lambda db, candidate_id, owner_sub: (
+            events.append(("require", candidate_id, owner_sub)) or candidate
+        ),
+    )
+
+    with pytest.raises(CandidateRetentionProtected):
+        service.delete_candidate(object(), "candidate-1", "owner-1")
+
+    assert events == [("require", "candidate-1", "owner-1")]
+
+
+def test_candidate_ban_delegates_to_audited_repository(monkeypatch):
+    candidate = _candidate()
+    calls = []
+
+    monkeypatch.setattr(
+        service,
+        "require_candidate",
+        lambda db, candidate_id, owner_sub: candidate,
     )
     monkeypatch.setattr(
         service.candidates_repository,
-        "delete_candidate",
-        lambda db, candidate_id: events.append(("delete", candidate_id)) or True,
+        "set_candidate_restriction",
+        lambda db, current, **kwargs: (
+            calls.append((current.id, kwargs)) or (current, "event", True)
+        ),
     )
 
-    assert service.delete_candidate(object(), "candidate-1", "owner-1") is True
-    assert events == [
-        ("require", "candidate-1", "owner-1"),
-        ("delete", "candidate-1"),
+    result = service.set_candidate_ban(
+        object(),
+        candidate_id="candidate-1",
+        owner_sub="owner-1",
+        reason="Fraude documental",
+        created_by_sub="admin-sub",
+        banned=True,
+    )
+
+    assert result == (candidate, "event", True)
+    assert calls == [
+        (
+            "candidate-1",
+            {
+                "is_banned": True,
+                "reason": "Fraude documental",
+                "created_by_sub": "admin-sub",
+            },
+        )
     ]
 
 
