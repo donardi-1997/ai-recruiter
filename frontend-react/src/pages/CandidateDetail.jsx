@@ -153,9 +153,21 @@ function CandidateDetail() {
               {openingResume ? "Abriendo…" : "Ver CV"}
             </button>
           )}
-          <span className="status-pill"><i /> Disponible</span>
+          <span className={`status-pill ${candidate.is_banned ? "status-disabled" : ""}`}>
+            <i /> {candidate.is_banned ? "Vetado" : "Disponible"}
+          </span>
         </div>
       </header>
+
+      {candidate.is_banned && (
+        <div className="candidate-ban-alert candidate-ban-alert--detail" role="alert">
+          <strong>⚠ Este candidato está vetado</strong>
+          <span>{candidate.banned_reason || "El perfil fue vetado por un administrador."}</span>
+          <small>
+            Se conserva su historial, pero queda excluido de nuevas asignaciones y recomendaciones.
+          </small>
+        </div>
+      )}
 
       {!evaluationCompleted ? (
         <div className="empty-state">
