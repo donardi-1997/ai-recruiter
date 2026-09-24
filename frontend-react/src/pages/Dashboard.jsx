@@ -16,7 +16,8 @@ function Dashboard() {
   const canRecruit = hasPermission("jobs.read") && hasPermission("candidates.read");
   const [jobs, setJobs] = useState([]);
   const [candidates, setCandidates] = useState([]);
-  const [loading, setLoading] = useState(canRecruit);
+  const [trainingAssignments, setTrainingAssignments] = useState([]);
+  const [loading, setLoading] = useState(true);
   const [greeting, setGreeting] = useState(() => getGreeting());
   const [loadError, setLoadError] = useState("");
 
@@ -28,28 +29,28 @@ function Dashboard() {
   }, []);
 
   useEffect(() => {
-    if (!canRecruit) {
-      return undefined;
-    }
-
     async function load() {
       try {
-        const [jobsResponse, candidatesResponse] = await Promise.all([
-          api.get("/jobs"),
-          api.get("/candidates"),
-        ]);
-        const jobsData = jobsResponse.data;
-        const candidatesData = candidatesResponse.data;
-        setJobs(Array.isArray(jobsData) ? jobsData : jobsData.jobs || []);
-        setCandidates(Array.isArray(candidatesData) ? candidatesData : candidatesData.candidates || []);
+        if (canRecruit) {
+          const [jobsResponse, candidatesResponse] = await Promise.all([
+            api.get("/jobs"),
+            api.get("/candidates"),
+          ]);
+          const jobsData = jobsResponse.data;
+          const candidatesData = candidatesResponse.data;
+          setJobs(Array.isArray(jobsData) ? jobsData : jobsData.jobs || []);
+          setCandidates(Array.isArray(candidatesData) ? candidatesData : candidatesData.candidates || []);
+        } else {
+          const { data } = await api.get("/training/me");
+          setTrainingAssignments(Array.isArray(data?.items) ? data.items : []);
+        }
       } catch {
         setLoadError("No fue posible cargar el resumen.");
       } finally {
         setLoading(false);
       }
     }
-    load();
-    return undefined;
+    void load();
   }, [canRecruit]);
 
   if (loading) {
@@ -58,6 +59,18 @@ function Dashboard() {
 
   if (!canRecruit) {
     const firstName = principal?.profile?.first_name || "equipo";
+    const completedCourses = trainingAssignments.filter(
+      (assignment) => assignment.status === "COMPLETED",
+    ).length;
+    const overallProgress = trainingAssignments.length
+      ? Math.round(
+        trainingAssignments.reduce(
+          (total, assignment) => total + (assignment.course?.progress_percent || 0),
+          0,
+        ) / trainingAssignments.length,
+      )
+      : 0;
+
     return (
       <div className="page dashboard-page employee-dashboard">
         <header className="page-header dashboard-header">
@@ -68,18 +81,30 @@ function Dashboard() {
           </div>
         </header>
 
+        {loadError && (
+          <div className="alert" role="alert">{loadError}</div>
+        )}
+
         <section className="panel employee-welcome-panel">
           <div className="employee-welcome-copy">
             <span className="eyebrow">Onboarding</span>
             <h2>Conoce ASIATI y cómo trabajamos.</h2>
-            <p>La sección de capacitación reunirá los videos, módulos y evaluaciones asignadas a tu perfil.</p>
+            <p>
+              {trainingAssignments.length
+                ? `Tienes ${trainingAssignments.length} curso${trainingAssignments.length === 1 ? "" : "s"} asignado${trainingAssignments.length === 1 ? "" : "s"}.`
+                : "Cuando te asignen una capacitación aparecerá aquí automáticamente."}
+            </p>
             <Link className="btn btn-primary" to="/training">Ir a capacitación</Link>
           </div>
           <div className="employee-progress-preview" aria-label="Progreso de capacitación">
-            <span>Progreso</span>
-            <strong>0%</strong>
-            <div><i style={{ width: "0%" }} /></div>
-            <small>Aún no tienes módulos publicados.</small>
+            <span>Progreso general</span>
+            <strong>{overallProgress}%</strong>
+            <div><i style={{ width: `${overallProgress}%` }} /></div>
+            <small>
+              {trainingAssignments.length
+                ? `${completedCourses} de ${trainingAssignments.length} cursos completados`
+                : "Aún no tienes cursos asignados."}
+            </small>
           </div>
         </section>
       </div>

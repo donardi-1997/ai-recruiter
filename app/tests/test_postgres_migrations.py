@@ -25,6 +25,11 @@ CORE_TABLES = {
     "user_roles",
     "role_permissions",
     "employee_score_events",
+    "training_courses",
+    "training_modules",
+    "training_lessons",
+    "training_assignments",
+    "training_lesson_progress",
 }
 
 
@@ -67,6 +72,11 @@ def test_alembic_head_builds_current_postgres_schema():
             "user_roles",
             "role_permissions",
             "employee_score_events",
+            "training_courses",
+            "training_modules",
+            "training_lessons",
+            "training_assignments",
+            "training_lesson_progress",
         }.issubset(tables)
 
         for table_name in sorted(CORE_TABLES):
@@ -240,6 +250,6 @@ def test_alembic_head_builds_current_postgres_schema():
         }.issubset(score_event_columns)
 
         assert admin_score_grants == 0
-        assert revision == "017"
+        assert revision == "018"
     finally:
         engine.dispose()

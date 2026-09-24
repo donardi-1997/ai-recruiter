@@ -1,29 +1,745 @@
 // eslint-disable-next-line no-unused-vars
 import React from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+
+import api from "../api/client";
 import { useSession } from "../context/SessionContext";
 
+
+function courseProgress(course) {
+  return Number.isFinite(course?.progress_percent) ? course.progress_percent : 0;
+}
+
+
+function isDirectVideo(url) {
+  return /\.(mp4|webm|ogg)(\?|#|$)/i.test(String(url || ""));
+}
+
+
 function Training() {
-  const { principal } = useSession();
-  const name = principal?.profile?.first_name || "equipo";
+  const { principal, hasPermission } = useSession();
+  const canManage = hasPermission("training.manage");
+  const canAssign = hasPermission("training.assign");
+  const canViewResults = hasPermission("training.results.read");
+  const firstName = principal?.profile?.first_name || "equipo";
+
+  const [myAssignments, setMyAssignments] = useState([]);
+  const [courses, setCourses] = useState([]);
+  const [employees, setEmployees] = useState([]);
+  const [selectedCourseId, setSelectedCourseId] = useState("");
+  const [selectedCourse, setSelectedCourse] = useState(null);
+  const [courseAssignments, setCourseAssignments] = useState([]);
+  const [selectedAssignmentId, setSelectedAssignmentId] = useState("");
+  const [employeeCourse, setEmployeeCourse] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [detailLoading, setDetailLoading] = useState(false);
+  const [error, setError] = useState("");
+  const [creatingCourse, setCreatingCourse] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [courseForm, setCourseForm] = useState({ title: "", description: "" });
+  const [moduleForm, setModuleForm] = useState({ title: "", description: "" });
+  const [lessonForms, setLessonForms] = useState({});
+  const [assignEmployeeId, setAssignEmployeeId] = useState("");
+
+  const loadHome = useCallback(async () => {
+    setLoading(true);
+    setError("");
+    try {
+      const requests = [api.get("/training/me")];
+      if (canManage) requests.push(api.get("/training/courses"));
+      if (canAssign) requests.push(api.get("/employees"));
+
+      const responses = await Promise.all(requests);
+      const myItems = Array.isArray(responses[0]?.data?.items)
+        ? responses[0].data.items
+        : [];
+      setMyAssignments(myItems);
+
+      let index = 1;
+      if (canManage) {
+        const managedItems = Array.isArray(responses[index]?.data?.items)
+          ? responses[index].data.items
+          : [];
+        setCourses(managedItems);
+        setSelectedCourseId((current) => {
+          if (current && managedItems.some((item) => item.id === current)) return current;
+          return managedItems[0]?.id || "";
+        });
+        index += 1;
+      }
+      if (canAssign) {
+        const employeeItems = Array.isArray(responses[index]?.data?.items)
+          ? responses[index].data.items
+          : [];
+        setEmployees(employeeItems);
+      }
+
+      setSelectedAssignmentId((current) => {
+        if (current && myItems.some((item) => item.id === current)) return current;
+        return myItems[0]?.id || "";
+      });
+    } catch (err) {
+      setError(err.response?.data?.detail || "No fue posible cargar la capacitación.");
+    } finally {
+      setLoading(false);
+    }
+  }, [canAssign, canManage]);
+
+  const loadAdminCourse = useCallback(async (courseId) => {
+    if (!canManage || !courseId) {
+      setSelectedCourse(null);
+      setCourseAssignments([]);
+      return;
+    }
+    setDetailLoading(true);
+    try {
+      const requests = [api.get(`/training/courses/${courseId}`)];
+      if (canViewResults) {
+        requests.push(api.get(`/training/courses/${courseId}/assignments`));
+      }
+      const [courseResponse, assignmentsResponse] = await Promise.all(requests);
+      setSelectedCourse(courseResponse.data);
+      setCourseAssignments(
+        canViewResults && Array.isArray(assignmentsResponse?.data?.items)
+          ? assignmentsResponse.data.items
+          : [],
+      );
+    } catch (err) {
+      setError(err.response?.data?.detail || "No fue posible cargar el curso.");
+    } finally {
+      setDetailLoading(false);
+    }
+  }, [canManage, canViewResults]);
+
+  const selectedAssignment = useMemo(
+    () => myAssignments.find((assignment) => assignment.id === selectedAssignmentId),
+    [myAssignments, selectedAssignmentId],
+  );
+
+  const loadEmployeeCourse = useCallback(async (courseId) => {
+    if (!courseId) {
+      setEmployeeCourse(null);
+      return;
+    }
+    setDetailLoading(true);
+    try {
+      const { data } = await api.get(`/training/me/courses/${courseId}`);
+      setEmployeeCourse(data);
+    } catch (err) {
+      setError(err.response?.data?.detail || "No fue posible abrir el curso.");
+    } finally {
+      setDetailLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    const timeoutId = window.setTimeout(() => {
+      void loadHome();
+    }, 0);
+    return () => window.clearTimeout(timeoutId);
+  }, [loadHome]);
+
+  useEffect(() => {
+    if (!selectedCourseId) return undefined;
+    const timeoutId = window.setTimeout(() => {
+      void loadAdminCourse(selectedCourseId);
+    }, 0);
+    return () => window.clearTimeout(timeoutId);
+  }, [loadAdminCourse, selectedCourseId]);
+
+  useEffect(() => {
+    const courseId = selectedAssignment?.course?.id;
+    if (!courseId) return undefined;
+    const timeoutId = window.setTimeout(() => {
+      void loadEmployeeCourse(courseId);
+    }, 0);
+    return () => window.clearTimeout(timeoutId);
+  }, [loadEmployeeCourse, selectedAssignment]);
+
+  async function createCourse(event) {
+    event.preventDefault();
+    setSaving(true);
+    setError("");
+    try {
+      const { data } = await api.post("/training/courses", {
+        title: courseForm.title.trim(),
+        description: courseForm.description.trim() || null,
+      });
+      setCourseForm({ title: "", description: "" });
+      setCreatingCourse(false);
+      await loadHome();
+      setSelectedCourseId(data.id);
+    } catch (err) {
+      setError(err.response?.data?.detail || "No fue posible crear el curso.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function publishCourse() {
+    if (!selectedCourseId) return;
+    setSaving(true);
+    setError("");
+    try {
+      const { data } = await api.put(`/training/courses/${selectedCourseId}`, {
+        status: "PUBLISHED",
+      });
+      setSelectedCourse(data);
+      await loadHome();
+    } catch (err) {
+      setError(err.response?.data?.detail || "No fue posible publicar el curso.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function addModule(event) {
+    event.preventDefault();
+    if (!selectedCourseId) return;
+    setSaving(true);
+    setError("");
+    try {
+      const { data } = await api.post(
+        `/training/courses/${selectedCourseId}/modules`,
+        {
+          title: moduleForm.title.trim(),
+          description: moduleForm.description.trim() || null,
+        },
+      );
+      setSelectedCourse(data);
+      setModuleForm({ title: "", description: "" });
+      await loadHome();
+    } catch (err) {
+      setError(err.response?.data?.detail || "No fue posible agregar el módulo.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  function lessonForm(moduleId) {
+    return lessonForms[moduleId] || {
+      title: "",
+      description: "",
+      video_url: "",
+      duration_seconds: "",
+    };
+  }
+
+  function updateLessonForm(moduleId, patch) {
+    setLessonForms((current) => ({
+      ...current,
+      [moduleId]: {
+        ...(current[moduleId] || {
+          title: "",
+          description: "",
+          video_url: "",
+          duration_seconds: "",
+        }),
+        ...patch,
+      },
+    }));
+  }
+
+  async function addLesson(event, moduleId) {
+    event.preventDefault();
+    const form = lessonForm(moduleId);
+    setSaving(true);
+    setError("");
+    try {
+      const duration = form.duration_seconds
+        ? Number.parseInt(form.duration_seconds, 10)
+        : null;
+      const { data } = await api.post(`/training/modules/${moduleId}/lessons`, {
+        title: form.title.trim(),
+        description: form.description.trim() || null,
+        video_url: form.video_url.trim() || null,
+        duration_seconds: Number.isInteger(duration) ? duration : null,
+      });
+      setSelectedCourse(data);
+      setLessonForms((current) => ({
+        ...current,
+        [moduleId]: {
+          title: "",
+          description: "",
+          video_url: "",
+          duration_seconds: "",
+        },
+      }));
+      await loadHome();
+    } catch (err) {
+      setError(err.response?.data?.detail || "No fue posible agregar la lección.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function assignCourse(event) {
+    event.preventDefault();
+    if (!selectedCourseId || !assignEmployeeId) return;
+    setSaving(true);
+    setError("");
+    try {
+      await api.post(
+        `/training/courses/${selectedCourseId}/assignments/${assignEmployeeId}`,
+      );
+      setAssignEmployeeId("");
+      await loadAdminCourse(selectedCourseId);
+    } catch (err) {
+      setError(err.response?.data?.detail || "No fue posible asignar el curso.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function completeLesson(lessonId) {
+    setSaving(true);
+    setError("");
+    try {
+      const { data } = await api.post(
+        `/training/me/lessons/${lessonId}/complete`,
+      );
+      setEmployeeCourse(data);
+      await loadHome();
+    } catch (err) {
+      setError(err.response?.data?.detail || "No fue posible guardar el avance.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  if (loading) {
+    return (
+      <div className="page">
+        <div className="page-loading"><span /> Preparando capacitación…</div>
+      </div>
+    );
+  }
 
   return (
     <div className="page training-page">
-      <header className="page-header">
+      <header className="page-header split-header">
         <div>
           <span className="eyebrow">Aprendizaje interno</span>
           <h1>Capacitación</h1>
-          <p>Hola, {name}. Este será tu espacio de inducción y formación en ASIATI.</p>
+          <p>Hola, {firstName}. Cursos, videos y progreso en un solo lugar.</p>
         </div>
+        {canManage && (
+          <button
+            className="btn btn-primary"
+            type="button"
+            onClick={() => setCreatingCourse(true)}
+          >
+            + Crear curso
+          </button>
+        )}
       </header>
 
-      <section className="panel training-coming-soon">
-        <span className="training-mark" aria-hidden="true">▶</span>
-        <div>
-          <span className="eyebrow">Siguiente fase</span>
-          <h2>Inducción ASIATI</h2>
-          <p>Los cursos, videos, progreso y evaluaciones se publicarán aquí. La estructura de permisos ya está preparada para mostrar únicamente la capacitación asignada a cada empleado.</p>
+      {error && <div className="alert" role="alert">{error}</div>}
+
+      {canManage && (
+        <section className="training-admin-layout">
+          <aside className="panel training-course-sidebar">
+            <div className="panel-heading">
+              <div>
+                <span className="eyebrow">Administración</span>
+                <h2>Cursos</h2>
+              </div>
+              <span className="training-count">{courses.length}</span>
+            </div>
+
+            {courses.length === 0 ? (
+              <div className="empty-state compact">
+                <strong>Aún no hay cursos</strong>
+                <p>Crea el primer curso de inducción o capacitación.</p>
+              </div>
+            ) : (
+              <div className="training-course-list">
+                {courses.map((course) => (
+                  <button
+                    className={`training-course-row ${course.id === selectedCourseId ? "active" : ""}`}
+                    key={course.id}
+                    type="button"
+                    onClick={() => setSelectedCourseId(course.id)}
+                  >
+                    <span>
+                      <strong>{course.title}</strong>
+                      <small>{course.module_count} módulos · {course.lesson_count} lecciones</small>
+                    </span>
+                    <b className={`training-status training-status-${course.status.toLowerCase()}`}>
+                      {course.status === "PUBLISHED" ? "Publicado" : course.status === "ARCHIVED" ? "Archivado" : "Borrador"}
+                    </b>
+                  </button>
+                ))}
+              </div>
+            )}
+          </aside>
+
+          <div className="training-admin-content">
+            {detailLoading && !selectedCourse ? (
+              <section className="panel page-loading"><span /> Cargando curso…</section>
+            ) : selectedCourse ? (
+              <>
+                <section className="panel training-course-overview">
+                  <div>
+                    <span className="eyebrow">Editor de curso</span>
+                    <h2>{selectedCourse.title}</h2>
+                    <p>{selectedCourse.description || "Sin descripción."}</p>
+                  </div>
+                  <div className="training-course-overview-actions">
+                    <span className={`training-status training-status-${selectedCourse.status.toLowerCase()}`}>
+                      {selectedCourse.status === "PUBLISHED" ? "Publicado" : selectedCourse.status === "ARCHIVED" ? "Archivado" : "Borrador"}
+                    </span>
+                    {selectedCourse.status === "DRAFT" && (
+                      <button
+                        className="btn btn-primary"
+                        type="button"
+                        onClick={publishCourse}
+                        disabled={saving}
+                      >
+                        Publicar curso
+                      </button>
+                    )}
+                  </div>
+                </section>
+
+                <section className="panel">
+                  <div className="panel-heading">
+                    <div>
+                      <span className="eyebrow">Contenido</span>
+                      <h2>Módulos y lecciones</h2>
+                    </div>
+                  </div>
+
+                  <div className="training-module-list">
+                    {selectedCourse.modules?.map((module) => (
+                      <article className="training-module-card" key={module.id}>
+                        <div className="training-module-header">
+                          <div>
+                            <span>Módulo {module.position}</span>
+                            <h3>{module.title}</h3>
+                            {module.description && <p>{module.description}</p>}
+                          </div>
+                          <strong>{module.lessons?.length || 0} lecciones</strong>
+                        </div>
+
+                        <div className="training-lesson-list">
+                          {module.lessons?.map((lesson) => (
+                            <div className="training-lesson-row" key={lesson.id}>
+                              <span className="training-play" aria-hidden="true">▶</span>
+                              <div>
+                                <strong>{lesson.title}</strong>
+                                <small>
+                                  {lesson.video_url ? "Video configurado" : "Sin video"}
+                                  {lesson.duration_seconds ? ` · ${Math.ceil(lesson.duration_seconds / 60)} min` : ""}
+                                </small>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+
+                        {selectedCourse.status === "DRAFT" && (
+                          <form className="training-inline-form" onSubmit={(event) => addLesson(event, module.id)}>
+                            <strong>Nueva lección</strong>
+                            <input
+                              aria-label={`Título de lección para ${module.title}`}
+                              placeholder="Título de la lección"
+                              value={lessonForm(module.id).title}
+                              onChange={(event) => updateLessonForm(module.id, { title: event.target.value })}
+                              required
+                            />
+                            <textarea
+                              aria-label={`Descripción de lección para ${module.title}`}
+                              placeholder="Descripción breve"
+                              value={lessonForm(module.id).description}
+                              onChange={(event) => updateLessonForm(module.id, { description: event.target.value })}
+                              rows="2"
+                            />
+                            <div className="training-inline-grid">
+                              <input
+                                aria-label={`URL de video para ${module.title}`}
+                                type="url"
+                                placeholder="https://.../video.mp4"
+                                value={lessonForm(module.id).video_url}
+                                onChange={(event) => updateLessonForm(module.id, { video_url: event.target.value })}
+                              />
+                              <input
+                                aria-label={`Duración de lección para ${module.title}`}
+                                type="number"
+                                min="1"
+                                placeholder="Duración (segundos)"
+                                value={lessonForm(module.id).duration_seconds}
+                                onChange={(event) => updateLessonForm(module.id, { duration_seconds: event.target.value })}
+                              />
+                            </div>
+                            <button className="btn btn-secondary" type="submit" disabled={saving}>
+                              Agregar lección
+                            </button>
+                          </form>
+                        )}
+                      </article>
+                    ))}
+                  </div>
+
+                  {selectedCourse.status === "DRAFT" && (
+                    <form className="training-module-form" onSubmit={addModule}>
+                      <span className="eyebrow">Nuevo módulo</span>
+                      <div className="training-inline-grid">
+                        <input
+                          aria-label="Título del módulo"
+                          placeholder="Ej. Bienvenida a ASIATI"
+                          value={moduleForm.title}
+                          onChange={(event) => setModuleForm({ ...moduleForm, title: event.target.value })}
+                          required
+                        />
+                        <input
+                          aria-label="Descripción del módulo"
+                          placeholder="Descripción breve"
+                          value={moduleForm.description}
+                          onChange={(event) => setModuleForm({ ...moduleForm, description: event.target.value })}
+                        />
+                      </div>
+                      <button className="btn btn-secondary" type="submit" disabled={saving}>
+                        + Agregar módulo
+                      </button>
+                    </form>
+                  )}
+                </section>
+
+                {canAssign && (
+                  <section className="panel">
+                    <div className="panel-heading">
+                      <div>
+                        <span className="eyebrow">Distribución</span>
+                        <h2>Asignar a un empleado</h2>
+                      </div>
+                    </div>
+                    <form className="training-assignment-form" onSubmit={assignCourse}>
+                      <select
+                        aria-label="Empleado para asignar"
+                        value={assignEmployeeId}
+                        onChange={(event) => setAssignEmployeeId(event.target.value)}
+                        required
+                      >
+                        <option value="">Selecciona un empleado</option>
+                        {employees.map((employee) => (
+                          <option key={employee.id} value={employee.id}>
+                            {[employee.first_name, employee.last_name].filter(Boolean).join(" ") || employee.email}
+                          </option>
+                        ))}
+                      </select>
+                      <button
+                        className="btn btn-primary"
+                        type="submit"
+                        disabled={saving || selectedCourse.status !== "PUBLISHED"}
+                      >
+                        Asignar curso
+                      </button>
+                    </form>
+                    {selectedCourse.status !== "PUBLISHED" && (
+                      <p className="training-form-note">Publica el curso antes de asignarlo.</p>
+                    )}
+
+                    {canViewResults && courseAssignments.length > 0 && (
+                      <div className="training-results-list">
+                        {courseAssignments.map((assignment) => (
+                          <div className="training-result-row" key={assignment.id}>
+                            <div>
+                              <strong>
+                                {[assignment.employee.first_name, assignment.employee.last_name].filter(Boolean).join(" ")
+                                  || assignment.employee.email}
+                              </strong>
+                              <small>{assignment.employee.job_title || assignment.employee.department || assignment.employee.email}</small>
+                            </div>
+                            <div className="training-result-progress">
+                              <span>{assignment.course.progress_percent}%</span>
+                              <div><i style={{ width: `${assignment.course.progress_percent}%` }} /></div>
+                            </div>
+                            <span className="training-status training-status-published">
+                              {assignment.status === "COMPLETED" ? "Completado" : "En curso"}
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </section>
+                )}
+              </>
+            ) : (
+              <section className="panel empty-state">
+                <strong>Selecciona o crea un curso</strong>
+                <p>Desde aquí podrás construir sus módulos, videos y asignaciones.</p>
+              </section>
+            )}
+          </div>
+        </section>
+      )}
+
+      <section className={`training-learning-section ${canManage ? "training-learning-after-admin" : ""}`}>
+        <div className="training-section-heading">
+          <div>
+            <span className="eyebrow">Mi aprendizaje</span>
+            <h2>Mis cursos</h2>
+          </div>
+          <span>{myAssignments.length} asignados</span>
         </div>
+
+        {myAssignments.length === 0 ? (
+          <section className="panel empty-state training-empty">
+            <span className="training-mark" aria-hidden="true">▶</span>
+            <strong>Aún no tienes cursos asignados</strong>
+            <p>Cuando se publique una capacitación para tu perfil aparecerá aquí.</p>
+          </section>
+        ) : (
+          <div className="training-learning-layout">
+            <aside className="training-assignment-list">
+              {myAssignments.map((assignment) => (
+                <button
+                  key={assignment.id}
+                  type="button"
+                  className={`training-assignment-card ${assignment.id === selectedAssignmentId ? "active" : ""}`}
+                  onClick={() => setSelectedAssignmentId(assignment.id)}
+                >
+                  <div>
+                    <span className="training-status training-status-published">
+                      {assignment.status === "COMPLETED" ? "Completado" : "En curso"}
+                    </span>
+                    <h3>{assignment.course.title}</h3>
+                    <p>{assignment.course.description || "Capacitación ASIATI"}</p>
+                  </div>
+                  <div className="training-progress">
+                    <span><strong>{courseProgress(assignment.course)}%</strong> completado</span>
+                    <div><i style={{ width: `${courseProgress(assignment.course)}%` }} /></div>
+                  </div>
+                </button>
+              ))}
+            </aside>
+
+            <section className="panel training-player-panel">
+              {detailLoading && !employeeCourse ? (
+                <div className="page-loading"><span /> Cargando contenido…</div>
+              ) : employeeCourse?.course ? (
+                <>
+                  <div className="training-player-heading">
+                    <div>
+                      <span className="eyebrow">Curso asignado</span>
+                      <h2>{employeeCourse.course.title}</h2>
+                      <p>{employeeCourse.course.description || "Capacitación ASIATI"}</p>
+                    </div>
+                    <strong>{employeeCourse.course.progress_percent}%</strong>
+                  </div>
+
+                  <div className="training-module-list">
+                    {employeeCourse.course.modules?.map((module) => (
+                      <article className="training-module-card training-module-consume" key={module.id}>
+                        <div className="training-module-header">
+                          <div>
+                            <span>Módulo {module.position}</span>
+                            <h3>{module.title}</h3>
+                          </div>
+                        </div>
+
+                        <div className="training-lesson-consume-list">
+                          {module.lessons?.map((lesson) => (
+                            <article className={`training-consume-lesson ${lesson.completed ? "is-complete" : ""}`} key={lesson.id}>
+                              <div className="training-consume-heading">
+                                <div>
+                                  <span className="training-play" aria-hidden="true">{lesson.completed ? "✓" : "▶"}</span>
+                                  <div>
+                                    <strong>{lesson.title}</strong>
+                                    {lesson.description && <p>{lesson.description}</p>}
+                                  </div>
+                                </div>
+                                {lesson.completed ? (
+                                  <span className="status-pill"><i /> Completada</span>
+                                ) : (
+                                  <button
+                                    className="btn btn-secondary"
+                                    type="button"
+                                    onClick={() => completeLesson(lesson.id)}
+                                    disabled={saving}
+                                  >
+                                    Marcar completada
+                                  </button>
+                                )}
+                              </div>
+
+                              {lesson.video_url && (
+                                <div className="training-video">
+                                  {isDirectVideo(lesson.video_url) ? (
+                                    <video controls preload="metadata">
+                                      <source src={lesson.video_url} />
+                                      Tu navegador no puede reproducir este video.
+                                    </video>
+                                  ) : (
+                                    <a
+                                      className="btn btn-ghost"
+                                      href={lesson.video_url}
+                                      target="_blank"
+                                      rel="noreferrer"
+                                    >
+                                      Abrir video ↗
+                                    </a>
+                                  )}
+                                </div>
+                              )}
+                            </article>
+                          ))}
+                        </div>
+                      </article>
+                    ))}
+                  </div>
+                </>
+              ) : (
+                <div className="empty-state">
+                  <strong>Selecciona un curso</strong>
+                  <p>Abre una capacitación para ver sus módulos y lecciones.</p>
+                </div>
+              )}
+            </section>
+          </div>
+        )}
       </section>
+
+      {creatingCourse && (
+        <div className="modal-overlay" role="presentation" onMouseDown={() => setCreatingCourse(false)}>
+          <section className="modal training-course-modal" role="dialog" aria-modal="true" aria-labelledby="create-course-title" onMouseDown={(event) => event.stopPropagation()}>
+            <div className="modal-header">
+              <div>
+                <span className="eyebrow">Nuevo contenido</span>
+                <h2 id="create-course-title">Crear curso</h2>
+                <p>Comienza con la información general. Después podrás agregar módulos y videos.</p>
+              </div>
+              <button className="btn-close" type="button" aria-label="Cerrar" onClick={() => setCreatingCourse(false)}>×</button>
+            </div>
+            <form onSubmit={createCourse}>
+              <div className="form-group">
+                <label htmlFor="training-course-title">Título</label>
+                <input
+                  id="training-course-title"
+                  value={courseForm.title}
+                  onChange={(event) => setCourseForm({ ...courseForm, title: event.target.value })}
+                  placeholder="Ej. Inducción ASIATI"
+                  required
+                />
+              </div>
+              <div className="form-group">
+                <label htmlFor="training-course-description">Descripción</label>
+                <textarea
+                  id="training-course-description"
+                  rows="4"
+                  value={courseForm.description}
+                  onChange={(event) => setCourseForm({ ...courseForm, description: event.target.value })}
+                  placeholder="Objetivo y contexto del curso"
+                />
+              </div>
+              <div className="form-actions">
+                <button className="btn btn-secondary" type="button" onClick={() => setCreatingCourse(false)}>Cancelar</button>
+                <button className="btn btn-primary" type="submit" disabled={saving}>{saving ? "Creando…" : "Crear curso"}</button>
+              </div>
+            </form>
+          </section>
+        </div>
+      )}
     </div>
   );
 }

@@ -29,6 +29,14 @@ def test_create_app_exposes_critical_routes():
     assert "/api/direction/employee-scores/{employee_id}" in paths
     assert "/api/direction/employee-scores/{employee_id}/events" in paths
     assert "/api/direction/employee-scores/events/{event_id}/void" in paths
+    assert "/api/training/courses" in paths
+    assert "/api/training/courses/{course_id}" in paths
+    assert "/api/training/courses/{course_id}/modules" in paths
+    assert "/api/training/modules/{module_id}/lessons" in paths
+    assert "/api/training/courses/{course_id}/assignments/{employee_id}" in paths
+    assert "/api/training/me" in paths
+    assert "/api/training/me/courses/{course_id}" in paths
+    assert "/api/training/me/lessons/{lesson_id}/complete" in paths
 
 
 def test_main_app_uses_same_public_contract():
