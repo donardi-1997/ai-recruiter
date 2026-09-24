@@ -106,8 +106,15 @@ describe("Employees administration", () => {
 
     const roleSelect = screen.getByLabelText("Rol inicial");
     expect(roleSelect).toBeInTheDocument();
-    expect(screen.getByRole("option", { name: "Empleado" })).toBeInTheDocument();
-    expect(screen.getByRole("option", { name: "Administrador" })).toBeInTheDocument();
-    expect(screen.getByRole("option", { name: "Super administrador" })).toBeInTheDocument();
+    expect(Array.from(roleSelect.options).map((option) => option.value)).toEqual([
+      "EMPLOYEE",
+      "ADMIN",
+      "SUPER_ADMIN",
+    ]);
+    expect(Array.from(roleSelect.options).map((option) => option.textContent)).toEqual([
+      "Empleado",
+      "Administrador",
+      "Super administrador",
+    ]);
   });
 });
