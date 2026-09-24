@@ -2836,3 +2836,69 @@ select { appearance: none; padding-right: 42px; background-image: linear-gradien
   scroll-margin-top: 88px;
 }
 
+.training-checklist-items {
+  width: 100%;
+  gap: 10px;
+}
+
+.training-checklist-heading {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.training-checklist-heading > span {
+  color: var(--blue);
+  font-size: .7rem;
+  font-weight: 800;
+}
+
+.training-checklist-items > label {
+  width: 100%;
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 10px 11px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface);
+  cursor: pointer;
+}
+
+.training-checklist-items > label.is-checked {
+  border-color: rgba(34, 197, 94, .25);
+  background: var(--success-bg);
+}
+
+.training-checklist-items > label input {
+  width: auto;
+  margin-top: 2px;
+  accent-color: var(--blue);
+}
+
+.training-checklist-items > label span {
+  color: var(--ink-soft);
+  font-size: .74rem;
+  line-height: 1.45;
+}
+
+.training-checklist-items > label.is-checked span {
+  color: var(--success);
+  text-decoration: line-through;
+  text-decoration-thickness: 1px;
+}
+
+.training-checklist-items > small {
+  color: var(--ink-faint);
+  font-size: .66rem;
+  line-height: 1.45;
+}
+
+.training-checklist-progress-label {
+  color: var(--ink-faint);
+  font-size: .68rem;
+  font-weight: 700;
+}
+
