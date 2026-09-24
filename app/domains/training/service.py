@@ -187,8 +187,8 @@ def add_module(
     description: str | None,
 ) -> TrainingModule:
     course = require_course(db, course_id)
-    if course.status == "ARCHIVED":
-        raise TrainingStateError("Archived courses cannot be edited.")
+    if course.status != "DRAFT":
+        raise TrainingStateError("Only draft courses can change their content.")
     position = (
         db.query(func.coalesce(func.max(TrainingModule.position), 0))
         .filter(TrainingModule.course_id == course_id)
@@ -217,8 +217,8 @@ def add_lesson(
     duration_seconds: int | None,
 ) -> TrainingLesson:
     module = require_module(db, module_id)
-    if module.course.status == "ARCHIVED":
-        raise TrainingStateError("Archived courses cannot be edited.")
+    if module.course.status != "DRAFT":
+        raise TrainingStateError("Only draft courses can change their content.")
     position = (
         db.query(func.coalesce(func.max(TrainingLesson.position), 0))
         .filter(TrainingLesson.module_id == module_id)
@@ -247,7 +247,9 @@ def assign_course(
     assigned_by_sub: str,
 ) -> TrainingAssignment:
     course = require_course(db, course_id)
-    require_employee(db, employee_id)
+    employee = require_employee(db, employee_id)
+    if employee.status != "ACTIVE":
+        raise TrainingAssignmentError("Disabled employees cannot receive new courses.")
     if course.status != "PUBLISHED":
         raise TrainingAssignmentError("Only published courses can be assigned.")
 
