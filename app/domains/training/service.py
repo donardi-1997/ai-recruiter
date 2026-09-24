@@ -336,6 +336,106 @@ def create_course(
     return course
 
 
+ASIATI_ONBOARDING_SOURCE_VIDEO_1_3 = (
+    "https://drive.google.com/file/d/"
+    "1_2XSmYKr66TR0zQm-fZjQgG2tHvwi7yP/view?usp=drivesdk"
+)
+
+
+def _ensure_asiati_corporate_video_lessons(
+    db: Session,
+    *,
+    course: TrainingCourse,
+) -> None:
+    modules_by_title = {
+        module.title: module
+        for module in course.modules
+    }
+
+    asiati_module = modules_by_title.get("Conoce ASIATI")
+    work_module = modules_by_title.get("Así trabajamos")
+    if asiati_module is None or work_module is None:
+        return
+
+    existing_titles = {
+        lesson.title
+        for module in course.modules
+        for lesson in module.lessons
+    }
+
+    # Modules 1–3 are intentionally separate learning activities even though
+    # the corporate source currently ships as one combined Drive video.
+    # Their final S3 media will replace these placeholders after the source
+    # video is physically cut at the approved boundaries.
+    for title, description in [
+        (
+            "Módulo 1 · ASIATI",
+            "Primera parte de la inducción corporativa. Video individual pendiente de corte desde la fuente original.",
+        ),
+        (
+            "Módulo 2 · ASIATI",
+            "Segunda parte de la inducción corporativa. Video individual pendiente de corte desde la fuente original.",
+        ),
+        (
+            "Módulo 3 · ASIATI",
+            "Tercera parte de la inducción corporativa. Video individual pendiente de corte desde la fuente original.",
+        ),
+    ]:
+        if title not in existing_titles:
+            add_lesson(
+                db,
+                module_id=asiati_module.id,
+                title=title,
+                description=description,
+                video_url=None,
+                duration_seconds=None,
+                content_type="VIDEO",
+                external_url=None,
+                estimated_minutes=None,
+                is_optional=False,
+            )
+
+    for title, description, url, duration_seconds in [
+        (
+            "Módulo 4 · Permisos y vacaciones",
+            "Conoce el flujo interno para permisos y vacaciones.",
+            "https://drive.google.com/file/d/1qklJ9U8raurFmxsQMrEL3az_Ez0zpyKs/view?usp=drivesdk",
+            106,
+        ),
+        (
+            "Módulo 5 · Recorrido de sede",
+            "Recorrido breve para ubicarte dentro de la sede.",
+            "https://drive.google.com/file/d/1jOQ2KO7Yu4wa6MhWv0mpcZloVu83sSty/view?usp=drivesdk",
+            160,
+        ),
+        (
+            "Módulo 6 · Cultura interna",
+            "Conoce aspectos clave de la cultura interna de ASIATI.",
+            "https://drive.google.com/file/d/1mUgSYRaIfdaOlaEiSHws-A4mPDbE3dkr/view?usp=drivesdk",
+            29,
+        ),
+        (
+            "Módulo 7 · Lo que esperamos de ti",
+            "Cierre de la inducción corporativa y expectativas para tu rol.",
+            "https://drive.google.com/file/d/1xoFOGQEN-C_QPekFI2fAMK7ta9HYqZLT/view?usp=drivesdk",
+            55,
+        ),
+    ]:
+        if title not in existing_titles:
+            add_lesson(
+                db,
+                module_id=work_module.id,
+                title=title,
+                description=description,
+                video_url=url,
+                duration_seconds=duration_seconds,
+                content_type="VIDEO",
+                external_url=None,
+                estimated_minutes=max(1, (duration_seconds + 59) // 60),
+                is_optional=False,
+            )
+
+
 def create_asiati_onboarding_template(
     db: Session,
     *,
@@ -372,6 +472,8 @@ def create_asiati_onboarding_template(
             changed = False
         if changed:
             db.commit()
+        refreshed = require_course(db, existing.id)
+        _ensure_asiati_corporate_video_lessons(db, course=refreshed)
         return require_course(db, existing.id)
 
     course = create_course(
@@ -508,6 +610,7 @@ def create_asiati_onboarding_template(
         passing_score=70,
         created_by_sub=created_by_sub,
     )
+    _ensure_asiati_corporate_video_lessons(db, course=require_course(db, course.id))
 
     return require_course(db, course.id)
 
