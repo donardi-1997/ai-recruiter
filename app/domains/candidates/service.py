@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 from app.domains.candidates import repository as candidates_repository
 from app.domains.candidates.exceptions import (
     CandidateNotFound,
+    CandidateRetentionProtected,
     InvalidApplicationStatus,
     JobCandidateNotFound,
     JobNotFound,
@@ -201,11 +202,48 @@ def delete_candidate(
     owner_sub: str,
 ) -> bool:
     require_candidate(db, candidate_id, owner_sub)
-    return candidates_repository.delete_candidate(db, candidate_id)
+    raise CandidateRetentionProtected(
+        "Candidate hard-delete is disabled by retention policy."
+    )
 
 
 def delete_all_candidates(db: Session, owner_sub: str) -> tuple[int, int]:
-    return candidates_repository.delete_all_candidates(db, owner_sub=owner_sub)
+    raise CandidateRetentionProtected(
+        "Bulk candidate hard-delete is disabled by retention policy."
+    )
+
+
+def set_candidate_ban(
+    db: Session,
+    *,
+    candidate_id: str,
+    owner_sub: str,
+    reason: str,
+    created_by_sub: str,
+    banned: bool,
+):
+    candidate = require_candidate(db, candidate_id, owner_sub)
+    return candidates_repository.set_candidate_restriction(
+        db,
+        candidate,
+        is_banned=banned,
+        reason=reason.strip(),
+        created_by_sub=created_by_sub,
+    )
+
+
+def get_candidate_restriction_history(
+    db: Session,
+    *,
+    candidate_id: str,
+    owner_sub: str,
+):
+    candidate = require_candidate(db, candidate_id, owner_sub)
+    events = candidates_repository.list_candidate_restriction_events(
+        db,
+        candidate_id=candidate.id,
+    )
+    return candidate, events
 
 
 def _legacy_pdf_filename(original_filename: str | None) -> str:
@@ -278,5 +316,7 @@ __all__ = [
     "get_candidate_download",
     "delete_candidate",
     "delete_all_candidates",
+    "set_candidate_ban",
+    "get_candidate_restriction_history",
     "create_and_index_candidate",
 ]
