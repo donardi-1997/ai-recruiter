@@ -64,6 +64,7 @@ class CreateLessonRequest(BaseModel):
     content_type: str = "VIDEO"
     external_url: str | None = Field(default=None, max_length=2000)
     estimated_minutes: int | None = Field(default=None, ge=1, le=1440)
+    checklist_items: list[str] = Field(default_factory=list, max_length=20)
     is_optional: bool = False
 
     @field_validator("title")
@@ -78,6 +79,20 @@ class CreateLessonRequest(BaseModel):
         if normalized not in {"VIDEO", "ARTICLE", "RESOURCE", "CHECKLIST"}:
             raise ValueError("unsupported lesson content_type")
         return normalized
+
+    @field_validator("checklist_items")
+    @classmethod
+    def normalize_checklist_items(cls, value: list[str]) -> list[str]:
+        normalized = [str(item).strip() for item in value if str(item).strip()]
+        if len(set(normalized)) != len(normalized):
+            raise ValueError("checklist items must be unique")
+        return normalized
+
+    @model_validator(mode="after")
+    def validate_checklist_content(self):
+        if self.checklist_items and self.content_type != "CHECKLIST":
+            raise ValueError("checklist_items require CHECKLIST content_type")
+        return self
 
     @field_validator("video_url", "external_url")
     @classmethod
@@ -128,6 +143,17 @@ class CreateQuizQuestionRequest(BaseModel):
         if self.correct_option >= len(self.options):
             raise ValueError("correct_option is outside the option range")
         return self
+
+
+class UpdateChecklistProgressRequest(BaseModel):
+    completed_items: list[int] = Field(default_factory=list, max_length=20)
+
+    @field_validator("completed_items")
+    @classmethod
+    def normalize_completed_items(cls, value: list[int]) -> list[int]:
+        if any(index < 0 for index in value):
+            raise ValueError("completed_items cannot contain negative indexes")
+        return sorted(set(value))
 
 
 class SubmitQuizAttemptRequest(BaseModel):
