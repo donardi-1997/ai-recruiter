@@ -1,7 +1,8 @@
 import { useState } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { useNavigate } from "react-router-dom";
 import api, { setAccessToken } from "../api/client";
 import BrandMark from "../components/BrandMark";
+import { useSession } from "../context/SessionContext";
 
 function AuthBrand() {
   return (
@@ -13,6 +14,7 @@ function AuthBrand() {
 
 function Login() {
   const navigate = useNavigate();
+  const { refreshSession } = useSession();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
@@ -26,6 +28,7 @@ function Login() {
     try {
       const { data } = await api.post("/auth/login", { email, password });
       setAccessToken(data.access_token);
+      await refreshSession();
       navigate("/dashboard");
     } catch (err) {
       setError(
@@ -88,7 +91,7 @@ function Login() {
             </button>
           </form>
 
-          <p className="login-register">¿Aún no tienes una cuenta? <Link to="/register">Crear cuenta</Link></p>
+          <p className="login-register">Los accesos son creados por el equipo autorizado de ASIATI.</p>
           <p className="auth-security"><span aria-hidden="true">●</span> Tus datos están protegidos por AWS Cognito</p>
         </div>
       </section>
