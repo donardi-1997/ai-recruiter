@@ -106,12 +106,12 @@ def _applicable_modules(
     return modules
 
 
-def _lesson_minutes(lesson: TrainingLesson) -> int:
+def _lesson_minutes(lesson: TrainingLesson) -> int | None:
     if lesson.estimated_minutes:
         return int(lesson.estimated_minutes)
     if lesson.duration_seconds:
         return max(1, (int(lesson.duration_seconds) + 59) // 60)
-    return 1
+    return None
 
 
 def _required_lessons(
@@ -147,6 +147,7 @@ def lesson_payload(lesson: TrainingLesson, *, completed: bool = False) -> dict:
         "content_type": lesson.content_type or "VIDEO",
         "external_url": lesson.external_url,
         "estimated_minutes": _lesson_minutes(lesson),
+        "duration_known": _lesson_minutes(lesson) is not None,
         "is_optional": bool(lesson.is_optional),
         "position": lesson.position,
         "completed": completed,
@@ -164,11 +165,25 @@ def module_payload(
     completed_required = [
         lesson for lesson in required if lesson.id in completed_lesson_ids
     ]
-    estimated_minutes = sum(_lesson_minutes(lesson) for lesson in required)
-    remaining_minutes = sum(
-        _lesson_minutes(lesson)
+    required_minutes = [_lesson_minutes(lesson) for lesson in required]
+    remaining_required = [
+        lesson
         for lesson in required
         if lesson.id not in completed_lesson_ids
+    ]
+    remaining_values = [
+        _lesson_minutes(lesson)
+        for lesson in remaining_required
+    ]
+    estimated_minutes = sum(
+        value for value in required_minutes if value is not None
+    )
+    remaining_minutes = sum(
+        value for value in remaining_values if value is not None
+    )
+    has_unknown_duration = any(value is None for value in required_minutes)
+    has_unknown_remaining_duration = any(
+        value is None for value in remaining_values
     )
     lesson_count = len(required)
     completed_count = len(completed_required)
@@ -190,6 +205,8 @@ def module_payload(
         "is_complete": completed_count >= lesson_count if lesson_count else True,
         "estimated_minutes": estimated_minutes,
         "remaining_minutes": remaining_minutes,
+        "has_unknown_duration": has_unknown_duration,
+        "has_unknown_remaining_duration": has_unknown_remaining_duration,
         "lessons": [
             lesson_payload(
                 lesson,
@@ -224,11 +241,28 @@ def course_payload(
     lesson_count = len(required_lessons)
     completed_count = len(completed_required_ids)
     progress_percent = round((completed_count / lesson_count) * 100) if lesson_count else 0
-    estimated_minutes = sum(_lesson_minutes(lesson) for lesson in required_lessons)
-    remaining_minutes = sum(
+    required_minutes = [
         _lesson_minutes(lesson)
         for lesson in required_lessons
+    ]
+    remaining_required = [
+        lesson
+        for lesson in required_lessons
         if lesson.id not in completed_required_ids
+    ]
+    remaining_values = [
+        _lesson_minutes(lesson)
+        for lesson in remaining_required
+    ]
+    estimated_minutes = sum(
+        value for value in required_minutes if value is not None
+    )
+    remaining_minutes = sum(
+        value for value in remaining_values if value is not None
+    )
+    has_unknown_duration = any(value is None for value in required_minutes)
+    has_unknown_remaining_duration = any(
+        value is None for value in remaining_values
     )
     next_lesson = next(
         (
@@ -252,6 +286,8 @@ def course_payload(
         "progress_percent": progress_percent,
         "estimated_minutes": estimated_minutes,
         "remaining_minutes": remaining_minutes,
+        "has_unknown_duration": has_unknown_duration,
+        "has_unknown_remaining_duration": has_unknown_remaining_duration,
         "next_lesson_id": next_lesson.id if next_lesson else None,
         "has_quiz": course.quiz is not None,
         "created_at": course.created_at.isoformat() if course.created_at else None,
