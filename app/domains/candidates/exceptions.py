@@ -15,3 +15,8 @@ class JobCandidateNotFound(Exception):
 
 class InvalidApplicationStatus(Exception):
     """Requested application status is not part of the local ATS state model."""
+
+
+
+class CandidateRetentionProtected(Exception):
+    """Operational hard-delete is disabled for retained candidates."""
