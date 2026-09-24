@@ -666,7 +666,7 @@ class UserRole(Base):
 
     user_id = Column(
         Text,
-        ForeignKey("user_profiles.id", ondelete="RESTRICT"),
+        ForeignKey("user_profiles.id", ondelete="CASCADE"),
         primary_key=True,
     )
     role_code = Column(
@@ -728,7 +728,7 @@ class EmployeeScoreEvent(Base):
     id = Column(Text, primary_key=True, default=lambda: str(uuid.uuid4()))
     employee_id = Column(
         Text,
-        ForeignKey("user_profiles.id", ondelete="CASCADE"),
+        ForeignKey("user_profiles.id", ondelete="RESTRICT"),
         nullable=False,
     )
     points = Column(Integer, nullable=False)
