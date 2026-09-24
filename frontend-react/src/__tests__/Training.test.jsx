@@ -230,7 +230,7 @@ describe("Training platform", () => {
 
     renderPage();
 
-    expect(await screen.findByText("¿Cuál es la opción correcta?")).toBeInTheDocument();
+    expect(await screen.findByText(/¿Cuál es la opción correcta\?/)).toBeInTheDocument();
     fireEvent.click(screen.getByLabelText("Correcta"));
     fireEvent.click(screen.getByRole("button", { name: "Enviar evaluación" }));
 
