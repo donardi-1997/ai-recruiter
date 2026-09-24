@@ -1088,3 +1088,33 @@ def test_asiati_onboarding_template_scaffolds_short_journey(db):
         lesson["title"] == "El Retrovisor"
         for lesson in resources
     )
+
+    video_titles = [
+        lesson["title"]
+        for module in payload["modules"]
+        for lesson in module["lessons"]
+        if lesson["content_type"] == "VIDEO"
+    ]
+    assert "Módulo 1 · ASIATI" in video_titles
+    assert "Módulo 2 · ASIATI" in video_titles
+    assert "Módulo 3 · ASIATI" in video_titles
+    assert "Módulos 1–3 · Introducción corporativa" not in video_titles
+    assert "Módulo 4 · Permisos y vacaciones" in video_titles
+    assert "Módulo 5 · Recorrido de sede" in video_titles
+    assert "Módulo 6 · Cultura interna" in video_titles
+    assert "Módulo 7 · Lo que esperamos de ti" in video_titles
+
+    split_lessons = [
+        lesson
+        for module in payload["modules"]
+        for lesson in module["lessons"]
+        if lesson["title"] in {
+            "Módulo 1 · ASIATI",
+            "Módulo 2 · ASIATI",
+            "Módulo 3 · ASIATI",
+        }
+    ]
+    assert len(split_lessons) == 3
+    assert all(lesson["video_url"] is None for lesson in split_lessons)
+    assert all(lesson["estimated_minutes"] is None for lesson in split_lessons)
+    assert all(lesson["duration_known"] is False for lesson in split_lessons)

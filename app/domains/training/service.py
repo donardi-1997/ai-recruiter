@@ -106,12 +106,12 @@ def _applicable_modules(
     return modules
 
 
-def _lesson_minutes(lesson: TrainingLesson) -> int:
+def _lesson_minutes(lesson: TrainingLesson) -> int | None:
     if lesson.estimated_minutes:
         return int(lesson.estimated_minutes)
     if lesson.duration_seconds:
         return max(1, (int(lesson.duration_seconds) + 59) // 60)
-    return 1
+    return None
 
 
 def _required_lessons(
@@ -147,6 +147,7 @@ def lesson_payload(lesson: TrainingLesson, *, completed: bool = False) -> dict:
         "content_type": lesson.content_type or "VIDEO",
         "external_url": lesson.external_url,
         "estimated_minutes": _lesson_minutes(lesson),
+        "duration_known": _lesson_minutes(lesson) is not None,
         "is_optional": bool(lesson.is_optional),
         "position": lesson.position,
         "completed": completed,
@@ -164,11 +165,25 @@ def module_payload(
     completed_required = [
         lesson for lesson in required if lesson.id in completed_lesson_ids
     ]
-    estimated_minutes = sum(_lesson_minutes(lesson) for lesson in required)
-    remaining_minutes = sum(
-        _lesson_minutes(lesson)
+    required_minutes = [_lesson_minutes(lesson) for lesson in required]
+    remaining_required = [
+        lesson
         for lesson in required
         if lesson.id not in completed_lesson_ids
+    ]
+    remaining_values = [
+        _lesson_minutes(lesson)
+        for lesson in remaining_required
+    ]
+    estimated_minutes = sum(
+        value for value in required_minutes if value is not None
+    )
+    remaining_minutes = sum(
+        value for value in remaining_values if value is not None
+    )
+    has_unknown_duration = any(value is None for value in required_minutes)
+    has_unknown_remaining_duration = any(
+        value is None for value in remaining_values
     )
     lesson_count = len(required)
     completed_count = len(completed_required)
@@ -190,6 +205,8 @@ def module_payload(
         "is_complete": completed_count >= lesson_count if lesson_count else True,
         "estimated_minutes": estimated_minutes,
         "remaining_minutes": remaining_minutes,
+        "has_unknown_duration": has_unknown_duration,
+        "has_unknown_remaining_duration": has_unknown_remaining_duration,
         "lessons": [
             lesson_payload(
                 lesson,
@@ -224,11 +241,28 @@ def course_payload(
     lesson_count = len(required_lessons)
     completed_count = len(completed_required_ids)
     progress_percent = round((completed_count / lesson_count) * 100) if lesson_count else 0
-    estimated_minutes = sum(_lesson_minutes(lesson) for lesson in required_lessons)
-    remaining_minutes = sum(
+    required_minutes = [
         _lesson_minutes(lesson)
         for lesson in required_lessons
+    ]
+    remaining_required = [
+        lesson
+        for lesson in required_lessons
         if lesson.id not in completed_required_ids
+    ]
+    remaining_values = [
+        _lesson_minutes(lesson)
+        for lesson in remaining_required
+    ]
+    estimated_minutes = sum(
+        value for value in required_minutes if value is not None
+    )
+    remaining_minutes = sum(
+        value for value in remaining_values if value is not None
+    )
+    has_unknown_duration = any(value is None for value in required_minutes)
+    has_unknown_remaining_duration = any(
+        value is None for value in remaining_values
     )
     next_lesson = next(
         (
@@ -252,6 +286,8 @@ def course_payload(
         "progress_percent": progress_percent,
         "estimated_minutes": estimated_minutes,
         "remaining_minutes": remaining_minutes,
+        "has_unknown_duration": has_unknown_duration,
+        "has_unknown_remaining_duration": has_unknown_remaining_duration,
         "next_lesson_id": next_lesson.id if next_lesson else None,
         "has_quiz": course.quiz is not None,
         "created_at": course.created_at.isoformat() if course.created_at else None,
@@ -300,6 +336,106 @@ def create_course(
     return course
 
 
+ASIATI_ONBOARDING_SOURCE_VIDEO_1_3 = (
+    "https://drive.google.com/file/d/"
+    "1_2XSmYKr66TR0zQm-fZjQgG2tHvwi7yP/view?usp=drivesdk"
+)
+
+
+def _ensure_asiati_corporate_video_lessons(
+    db: Session,
+    *,
+    course: TrainingCourse,
+) -> None:
+    modules_by_title = {
+        module.title: module
+        for module in course.modules
+    }
+
+    asiati_module = modules_by_title.get("Conoce ASIATI")
+    work_module = modules_by_title.get("Así trabajamos")
+    if asiati_module is None or work_module is None:
+        return
+
+    existing_titles = {
+        lesson.title
+        for module in course.modules
+        for lesson in module.lessons
+    }
+
+    # Modules 1–3 are intentionally separate learning activities even though
+    # the corporate source currently ships as one combined Drive video.
+    # Their final S3 media will replace these placeholders after the source
+    # video is physically cut at the approved boundaries.
+    for title, description in [
+        (
+            "Módulo 1 · ASIATI",
+            "Primera parte de la inducción corporativa. Video individual pendiente de corte desde la fuente original.",
+        ),
+        (
+            "Módulo 2 · ASIATI",
+            "Segunda parte de la inducción corporativa. Video individual pendiente de corte desde la fuente original.",
+        ),
+        (
+            "Módulo 3 · ASIATI",
+            "Tercera parte de la inducción corporativa. Video individual pendiente de corte desde la fuente original.",
+        ),
+    ]:
+        if title not in existing_titles:
+            add_lesson(
+                db,
+                module_id=asiati_module.id,
+                title=title,
+                description=description,
+                video_url=None,
+                duration_seconds=None,
+                content_type="VIDEO",
+                external_url=None,
+                estimated_minutes=None,
+                is_optional=False,
+            )
+
+    for title, description, url, duration_seconds in [
+        (
+            "Módulo 4 · Permisos y vacaciones",
+            "Conoce el flujo interno para permisos y vacaciones.",
+            "https://drive.google.com/file/d/1qklJ9U8raurFmxsQMrEL3az_Ez0zpyKs/view?usp=drivesdk",
+            106,
+        ),
+        (
+            "Módulo 5 · Recorrido de sede",
+            "Recorrido breve para ubicarte dentro de la sede.",
+            "https://drive.google.com/file/d/1jOQ2KO7Yu4wa6MhWv0mpcZloVu83sSty/view?usp=drivesdk",
+            160,
+        ),
+        (
+            "Módulo 6 · Cultura interna",
+            "Conoce aspectos clave de la cultura interna de ASIATI.",
+            "https://drive.google.com/file/d/1mUgSYRaIfdaOlaEiSHws-A4mPDbE3dkr/view?usp=drivesdk",
+            29,
+        ),
+        (
+            "Módulo 7 · Lo que esperamos de ti",
+            "Cierre de la inducción corporativa y expectativas para tu rol.",
+            "https://drive.google.com/file/d/1xoFOGQEN-C_QPekFI2fAMK7ta9HYqZLT/view?usp=drivesdk",
+            55,
+        ),
+    ]:
+        if title not in existing_titles:
+            add_lesson(
+                db,
+                module_id=work_module.id,
+                title=title,
+                description=description,
+                video_url=url,
+                duration_seconds=duration_seconds,
+                content_type="VIDEO",
+                external_url=None,
+                estimated_minutes=max(1, (duration_seconds + 59) // 60),
+                is_optional=False,
+            )
+
+
 def create_asiati_onboarding_template(
     db: Session,
     *,
@@ -336,6 +472,8 @@ def create_asiati_onboarding_template(
             changed = False
         if changed:
             db.commit()
+        refreshed = require_course(db, existing.id)
+        _ensure_asiati_corporate_video_lessons(db, course=refreshed)
         return require_course(db, existing.id)
 
     course = create_course(
@@ -472,6 +610,7 @@ def create_asiati_onboarding_template(
         passing_score=70,
         created_by_sub=created_by_sub,
     )
+    _ensure_asiati_corporate_video_lessons(db, course=require_course(db, course.id))
 
     return require_course(db, course.id)
 
