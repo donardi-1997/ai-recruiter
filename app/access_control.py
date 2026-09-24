@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import os
+
 from sqlalchemy.orm import Session
 
 from app.models import Permission, Role, RolePermission, UserProfile, UserRole
@@ -93,6 +95,62 @@ def normalize_email(email: str | None) -> str:
     return str(email or "").strip().casefold()
 
 
+ROLE_RANK = {
+    EMPLOYEE: 1,
+    ADMIN: 2,
+    SUPER_ADMIN: 3,
+}
+
+
+def _env_emails(name: str) -> set[str]:
+    return {
+        normalize_email(value)
+        for value in os.getenv(name, "").split(",")
+        if normalize_email(value)
+    }
+
+
+def bootstrap_role_for_email(email: str) -> str:
+    """Return the minimum configured bootstrap role for one email."""
+
+    normalized = normalize_email(email)
+    if normalized in _env_emails("RBAC_BOOTSTRAP_SUPER_ADMIN_EMAILS"):
+        return SUPER_ADMIN
+    if normalized in _env_emails("RBAC_BOOTSTRAP_ADMIN_EMAILS"):
+        return ADMIN
+    return EMPLOYEE
+
+
+def _ensure_minimum_role(
+    db: Session,
+    profile: UserProfile,
+    role_code: str,
+) -> None:
+    current_roles = [
+        code
+        for (code,) in (
+            db.query(UserRole.role_code)
+            .filter(UserRole.user_id == profile.id)
+            .all()
+        )
+    ]
+    current_rank = max((ROLE_RANK.get(code, 0) for code in current_roles), default=0)
+    target_rank = ROLE_RANK.get(role_code, 0)
+
+    if current_rank >= target_rank:
+        return
+
+    db.query(UserRole).filter(UserRole.user_id == profile.id).delete(
+        synchronize_session=False
+    )
+    assign_role(
+        db,
+        profile,
+        role_code,
+        assigned_by_sub="bootstrap-config",
+    )
+
+
 def ensure_rbac_catalog(db: Session) -> None:
     """Idempotently ensure the built-in roles, permissions and grants exist."""
 
@@ -160,7 +218,7 @@ def ensure_user_profile(
     db: Session,
     identity: dict,
     *,
-    default_role: str = EMPLOYEE,
+    default_role: str | None = None,
 ) -> UserProfile:
     """Get or create the internal profile for a validated Cognito identity."""
 
@@ -172,6 +230,8 @@ def ensure_user_profile(
         raise ValueError("Authenticated identity does not contain an email.")
 
     ensure_rbac_catalog(db)
+    bootstrap_role = bootstrap_role_for_email(email)
+    effective_default_role = default_role or bootstrap_role
 
     profile = (
         db.query(UserProfile)
@@ -186,7 +246,7 @@ def ensure_user_profile(
         )
         db.add(profile)
         db.flush()
-        assign_role(db, profile, default_role)
+        assign_role(db, profile, effective_default_role)
     else:
         if normalize_email(profile.email) != email:
             profile.email = email
@@ -197,7 +257,9 @@ def ensure_user_profile(
             is not None
         )
         if not has_role:
-            assign_role(db, profile, default_role)
+            assign_role(db, profile, effective_default_role)
+
+    _ensure_minimum_role(db, profile, bootstrap_role)
 
     db.commit()
     db.refresh(profile)

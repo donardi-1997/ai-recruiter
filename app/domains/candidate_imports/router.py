@@ -3,7 +3,7 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
-from app.deps import get_current_user, get_db
+from app.deps import get_db, require_permission
 from app.domains.candidate_imports import presenter, service
 from app.domains.candidate_imports.exceptions import (
     ImportBatchNotFound,
@@ -29,7 +29,7 @@ def _job_not_found() -> HTTPException:
 def create_import_batch(
     body: CreateImportBatchRequest,
     db: Session = Depends(get_db),
-    user: dict = Depends(get_current_user),
+    user: dict = Depends(require_permission("candidates.evaluate")),
 ):
     try:
         batch, uploads = service.create_batch(
@@ -50,7 +50,7 @@ def create_import_batch(
 def complete_import_batch(
     batch_id: str,
     db: Session = Depends(get_db),
-    user: dict = Depends(get_current_user),
+    user: dict = Depends(require_permission("candidates.evaluate")),
 ):
     try:
         batch = service.complete_batch_uploads(
@@ -79,7 +79,7 @@ def list_recent_import_batches(
     job_id: str = Query(..., min_length=1),
     limit: int = Query(10, ge=1, le=50),
     db: Session = Depends(get_db),
-    user: dict = Depends(get_current_user),
+    user: dict = Depends(require_permission("candidates.evaluate")),
 ):
     try:
         batches = service.list_recent_batches(
@@ -98,7 +98,7 @@ def list_recent_import_batches(
 def get_import_batch(
     batch_id: str,
     db: Session = Depends(get_db),
-    user: dict = Depends(get_current_user),
+    user: dict = Depends(require_permission("candidates.evaluate")),
 ):
     try:
         batch = service.get_batch(
@@ -118,7 +118,7 @@ def list_import_batch_items(
     page: int = Query(1, ge=1),
     page_size: int = Query(100, ge=1, le=100),
     db: Session = Depends(get_db),
-    user: dict = Depends(get_current_user),
+    user: dict = Depends(require_permission("candidates.evaluate")),
 ):
     try:
         items, total = service.list_batch_items(

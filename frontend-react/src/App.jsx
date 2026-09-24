@@ -1,7 +1,9 @@
-import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
-import { useEffect, useState } from "react";
+import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
 
 import Login from "./auth/Login";
+import Layout from "./components/Layout";
+import { ThemeProvider } from "./context/ThemeContext";
+import { SessionProvider, useSession } from "./context/SessionContext";
 
 import Dashboard from "./pages/Dashboard";
 import Jobs from "./pages/Jobs";
@@ -9,84 +11,69 @@ import Candidates from "./pages/Candidates";
 import Ranking from "./pages/Ranking";
 import CandidateDetail from "./pages/CandidateDetail";
 import Integrations from "./pages/Integrations";
+import Employees from "./pages/Employees";
+import Training from "./pages/Training";
 
-import Layout from "./components/Layout";
-import Register from "./auth/Register";
 
-import api, { clearAccessToken, getAccessToken, refreshAccessToken } from "./api/client";
-import { ThemeProvider } from "./context/ThemeContext";
+function ProtectedRoute({ children, permission }) {
+  const { status, hasPermission } = useSession();
 
-function ProtectedRoute({ children }) {
-  const [checking, setChecking] = useState(true);
-  const [valid, setValid] = useState(false);
-
-  useEffect(() => {
-    async function checkAuth() {
-      let token = getAccessToken();
-
-      if (!token) {
-        try {
-          token = await refreshAccessToken();
-        } catch {
-          setValid(false);
-          setChecking(false);
-          return;
-        }
-      }
-
-      try {
-        await api.get("/auth/me");
-        setValid(true);
-      } catch {
-        clearAccessToken();
-        setValid(false);
-      } finally {
-        setChecking(false);
-      }
-    }
-
-    checkAuth();
-  }, []);
-
-  if (checking) {
+  if (status === "loading") {
     return <div className="session-loading"><span aria-hidden="true" />Validando acceso seguro…</div>;
   }
 
-  if (!valid) {
+  if (status !== "authenticated") {
     return <Navigate to="/login" replace />;
+  }
+
+  if (permission && !hasPermission(permission)) {
+    return <Navigate to="/dashboard" replace />;
   }
 
   return children;
 }
 
-function ProtectedPage({ children }) {
+
+function ProtectedPage({ children, permission }) {
   return (
-    <ProtectedRoute>
+    <ProtectedRoute permission={permission}>
       <Layout>{children}</Layout>
     </ProtectedRoute>
   );
 }
 
+
+function AppRoutes() {
+  return (
+    <Routes>
+      <Route path="/login" element={<Login />} />
+
+      <Route path="/dashboard" element={<ProtectedPage><Dashboard /></ProtectedPage>} />
+      <Route path="/training" element={<ProtectedPage permission="training.read"><Training /></ProtectedPage>} />
+      <Route path="/employees" element={<ProtectedPage permission="employees.read"><Employees /></ProtectedPage>} />
+      <Route path="/jobs" element={<ProtectedPage permission="jobs.read"><Jobs /></ProtectedPage>} />
+      <Route path="/candidates" element={<ProtectedPage permission="candidates.read"><Candidates /></ProtectedPage>} />
+      <Route path="/ranking" element={<ProtectedPage permission="ranking.read"><Ranking /></ProtectedPage>} />
+      <Route path="/integrations" element={<ProtectedPage permission="integrations.manage"><Integrations /></ProtectedPage>} />
+      <Route
+        path="/candidates/:candidate_id"
+        element={<ProtectedPage permission="candidates.read"><CandidateDetail /></ProtectedPage>}
+      />
+
+      <Route path="/register" element={<Navigate to="/login" replace />} />
+      <Route path="*" element={<Navigate to="/login" replace />} />
+    </Routes>
+  );
+}
+
+
 function App() {
   return (
     <ThemeProvider>
       <BrowserRouter>
-        <Routes>
-          <Route path="/login" element={<Login />} />
-          <Route path="/register" element={<Register />} />
-
-          <Route path="/dashboard" element={<ProtectedPage><Dashboard /></ProtectedPage>} />
-          <Route path="/jobs" element={<ProtectedPage><Jobs /></ProtectedPage>} />
-          <Route path="/candidates" element={<ProtectedPage><Candidates /></ProtectedPage>} />
-          <Route path="/ranking" element={<ProtectedPage><Ranking /></ProtectedPage>} />
-          <Route path="/integrations" element={<ProtectedPage><Integrations /></ProtectedPage>} />
-          <Route
-            path="/candidates/:candidate_id"
-            element={<ProtectedPage><CandidateDetail /></ProtectedPage>}
-          />
-
-          <Route path="*" element={<Navigate to="/login" replace />} />
-        </Routes>
+        <SessionProvider>
+          <AppRoutes />
+        </SessionProvider>
       </BrowserRouter>
     </ThemeProvider>
   );

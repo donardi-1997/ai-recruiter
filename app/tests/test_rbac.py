@@ -134,3 +134,52 @@ def test_rbac_catalog_is_idempotent(db):
 
     assert first == second
     assert db.query(Role).filter(Role.code == SUPER_ADMIN).one()
+
+def test_bootstrap_admin_email_is_promoted_from_employee(db, monkeypatch):
+    monkeypatch.setenv(
+        "RBAC_BOOTSTRAP_ADMIN_EMAILS",
+        " hr@asiati.com.co , other@asiati.com.co ",
+    )
+
+    first = resolve_principal(
+        db,
+        {"sub": "hr-sub", "email": "hr@asiati.com.co"},
+    )
+    assert first["roles"] == [ADMIN]
+
+    profile = db.query(UserProfile).filter_by(cognito_sub="hr-sub").one()
+    db.query(UserRole).filter(UserRole.user_id == profile.id).delete(
+        synchronize_session=False
+    )
+    assign_role(db, profile, EMPLOYEE)
+    db.commit()
+
+    promoted = resolve_principal(
+        db,
+        {"sub": "hr-sub", "email": "hr@asiati.com.co"},
+    )
+    assert promoted["roles"] == [ADMIN]
+
+
+def test_admin_bootstrap_never_downgrades_super_admin(db, monkeypatch):
+    monkeypatch.setenv("RBAC_BOOTSTRAP_ADMIN_EMAILS", "director@asiati.com.co")
+
+    resolve_principal(
+        db,
+        {"sub": "director-bootstrap", "email": "director@asiati.com.co"},
+    )
+    profile = db.query(UserProfile).filter_by(
+        cognito_sub="director-bootstrap"
+    ).one()
+    db.query(UserRole).filter(UserRole.user_id == profile.id).delete(
+        synchronize_session=False
+    )
+    assign_role(db, profile, SUPER_ADMIN)
+    db.commit()
+
+    principal = resolve_principal(
+        db,
+        {"sub": "director-bootstrap", "email": "director@asiati.com.co"},
+    )
+    assert principal["roles"] == [SUPER_ADMIN]
+

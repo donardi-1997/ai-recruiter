@@ -3,7 +3,7 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
-from app.deps import get_current_user, get_db
+from app.deps import get_db, require_permission
 from app import crud
 from app.domains.ranking.service import recalculate_ranking, build_latest_ranking
 from app.domains.ranking.exceptions import (
@@ -32,7 +32,7 @@ def get_job_ranking(
     scope: str = Query("assigned", pattern=r"^(assigned|all)$"),
     recommendation: str | None = Query(None),
     db: Session = Depends(get_db),
-    _user: dict = Depends(get_current_user),
+    _user: dict = Depends(require_permission("ranking.read")),
 ):
     _require_job(db, job_id, _user["sub"])
 
@@ -60,7 +60,7 @@ def recalculate_ranking_endpoint(
     mode: str = Query("full", pattern=r"^(full|incremental)$"),
     scope: str = Query("assigned", pattern=r"^(assigned|all)$"),
     db: Session = Depends(get_db),
-    _user: dict = Depends(get_current_user),
+    _user: dict = Depends(require_permission("ranking.read")),
 ):
     try:
         return recalculate_ranking(
@@ -80,7 +80,7 @@ def recalculate_ranking_endpoint(
 def get_latest_ranking_endpoint(
     job_id: str,
     db: Session = Depends(get_db),
-    _user: dict = Depends(get_current_user),
+    _user: dict = Depends(require_permission("ranking.read")),
 ):
     try:
         return build_latest_ranking(db, job_id=job_id, owner_sub=_user["sub"])
