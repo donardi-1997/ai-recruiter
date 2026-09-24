@@ -13,6 +13,7 @@ const navItems = [
   { to: "/candidates", label: "Candidatos", icon: "◎", permission: "candidates.read" },
   { to: "/ranking", label: "Ranking IA", icon: "↗", permission: "ranking.read" },
   { to: "/employees", label: "Empleados", icon: "◫", permission: "employees.read" },
+  { to: "/direction/scores", label: "Calificación", icon: "★", permission: "employee_scores.read" },
   { to: "/training", label: "Capacitación", icon: "▶", permission: "training.read" },
   { to: "/integrations", label: "Integraciones", icon: "◇", permission: "integrations.manage" },
 ];
