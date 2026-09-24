@@ -648,3 +648,138 @@ describe("Training onboarding classification", () => {
     });
   });
 });
+
+describe("Focused onboarding sessions", () => {
+  it("recommends a short session and keeps non-active modules collapsed", async () => {
+    vi.clearAllMocks();
+    useSession.mockReturnValue({
+      principal: {
+        profile: { id: "employee-focus", first_name: "Laura" },
+      },
+      hasPermission: (permission) => [
+        "training.read",
+        "training.consume",
+      ].includes(permission),
+    });
+
+    const focusedAssignment = {
+      ...assignment,
+      id: "assignment-focus",
+      course: {
+        ...assignment.course,
+        id: "focus-course",
+        title: "Onboarding ASIATI",
+        lesson_count: 3,
+        completed_lessons: 0,
+        progress_percent: 0,
+        next_lesson_id: "focus-1",
+      },
+    };
+
+    const focusedDetail = {
+      assignment_id: "assignment-focus",
+      assignment_status: "ASSIGNED",
+      course: {
+        ...employeeDetail.course,
+        id: "focus-course",
+        title: "Onboarding ASIATI",
+        lesson_count: 3,
+        completed_lessons: 0,
+        progress_percent: 0,
+        next_lesson_id: "focus-1",
+        modules: [
+          {
+            id: "focus-module-1",
+            title: "Primera etapa",
+            position: 1,
+            lesson_count: 2,
+            completed_lessons: 0,
+            progress_percent: 0,
+            is_complete: false,
+            estimated_minutes: 9,
+            has_unknown_duration: false,
+            lessons: [
+              {
+                id: "focus-1",
+                title: "Bienvenida breve",
+                description: "Introducción.",
+                content_type: "ARTICLE",
+                estimated_minutes: 4,
+                is_optional: false,
+                completed: false,
+                position: 1,
+              },
+              {
+                id: "focus-2",
+                title: "Conoce ASIATI",
+                description: "Contexto.",
+                content_type: "ARTICLE",
+                estimated_minutes: 5,
+                is_optional: false,
+                completed: false,
+                position: 2,
+              },
+              {
+                id: "optional-resource",
+                title: "Instagram opcional",
+                description: "Complementario.",
+                content_type: "RESOURCE",
+                external_url: "https://example.com",
+                estimated_minutes: 2,
+                is_optional: true,
+                completed: false,
+                position: 3,
+              },
+            ],
+          },
+          {
+            id: "focus-module-2",
+            title: "Segundo módulo",
+            position: 2,
+            lesson_count: 1,
+            completed_lessons: 0,
+            progress_percent: 0,
+            is_complete: false,
+            estimated_minutes: 10,
+            has_unknown_duration: false,
+            lessons: [
+              {
+                id: "focus-3",
+                title: "Módulo largo",
+                description: "Siguiente sesión.",
+                content_type: "VIDEO",
+                estimated_minutes: 10,
+                is_optional: false,
+                completed: false,
+                position: 1,
+              },
+            ],
+          },
+        ],
+      },
+    };
+
+    api.get.mockImplementation((url) => {
+      if (url === "/training/me") {
+        return Promise.resolve({ data: { items: [focusedAssignment] } });
+      }
+      if (url === "/training/me/courses/focus-course") {
+        return Promise.resolve({ data: focusedDetail });
+      }
+      return Promise.reject(new Error(`Unexpected GET ${url}`));
+    });
+
+    renderPage();
+
+    expect(await screen.findByText("Sesión recomendada")).toBeInTheDocument();
+    expect(screen.getByText("2 actividades para avanzar")).toBeInTheDocument();
+    expect(screen.getByText("~9 min")).toBeInTheDocument();
+    expect(screen.getAllByText("Bienvenida breve").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Conoce ASIATI").length).toBeGreaterThan(0);
+
+    expect(screen.queryByText("Módulo largo")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /Segundo módulo/i }));
+    expect(await screen.findByText("Módulo largo")).toBeInTheDocument();
+  });
+});
+
