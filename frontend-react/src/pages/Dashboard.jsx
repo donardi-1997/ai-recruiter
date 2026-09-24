@@ -16,7 +16,7 @@ function Dashboard() {
   const canRecruit = hasPermission("jobs.read") && hasPermission("candidates.read");
   const [jobs, setJobs] = useState([]);
   const [candidates, setCandidates] = useState([]);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(canRecruit);
   const [greeting, setGreeting] = useState(() => getGreeting());
   const [loadError, setLoadError] = useState("");
 
@@ -29,7 +29,6 @@ function Dashboard() {
 
   useEffect(() => {
     if (!canRecruit) {
-      setLoading(false);
       return undefined;
     }
 
