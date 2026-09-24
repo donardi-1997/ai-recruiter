@@ -3,11 +3,14 @@ import React, { useCallback, useEffect, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 
 import api from "../api/client";
+import { useSession } from "../context/SessionContext";
 import CandidateImportModal from "../features/candidate-import/CandidateImportModal.jsx";
 
 const PAGE_SIZE = 20;
 
 function Candidates() {
+  const { hasPermission } = useSession();
+  const canRestrictCandidates = hasPermission("candidates.restrict");
   const [candidates, setCandidates] = useState([]);
   const [jobs, setJobs] = useState([]);
   const [selectedJob, setSelectedJob] = useState({});
@@ -19,6 +22,10 @@ function Candidates() {
   const [total, setTotal] = useState(0);
   const [pages, setPages] = useState(0);
   const [searchParams] = useSearchParams();
+  const [restrictionTarget, setRestrictionTarget] = useState(null);
+  const [restrictionMode, setRestrictionMode] = useState("ban");
+  const [restrictionReason, setRestrictionReason] = useState("");
+  const [restrictionSaving, setRestrictionSaving] = useState(false);
 
   const requestedJobId = searchParams.get("job_id") || "";
 
@@ -150,67 +157,38 @@ function Candidates() {
     }
   }
 
-  async function deleteCandidate(candidate) {
-    const confirmed = window.confirm(
-      `¿Seguro que deseas eliminar al candidato "${candidate.name}"?\n\nTambién se eliminarán sus evaluaciones y el CV almacenado.`,
-    );
-    if (!confirmed) return;
-
-    try {
-      await api.delete(`/candidates/${candidate.candidate_id}`);
-
-      if (selectedEvaluation?.candidateId === candidate.candidate_id) {
-        setSelectedEvaluation(null);
-      }
-
-      setSelectedJob((current) => {
-        const updated = { ...current };
-        delete updated[candidate.candidate_id];
-        return updated;
-      });
-
-      const nextTotal = Math.max(total - 1, 0);
-      const nextPages = Math.ceil(nextTotal / PAGE_SIZE);
-      const lastValidPage = Math.max(nextPages, 1);
-      if (page > lastValidPage) {
-        setPage(lastValidPage);
-      } else {
-        await loadData(page);
-      }
-    } catch (error) {
-      alert(
-        error.response?.data?.detail ||
-          "No fue posible eliminar el candidato",
-      );
-    }
+  function openRestriction(candidate, mode) {
+    setRestrictionTarget(candidate);
+    setRestrictionMode(mode);
+    setRestrictionReason("");
   }
 
-  async function deleteAllCandidates() {
-    const confirmed = window.confirm(
-      `¿Seguro que deseas eliminar los ${total} candidatos? Esta acción no se puede deshacer. También se eliminarán sus evaluaciones y CVs.`,
-    );
-    if (!confirmed) return;
+  function closeRestriction() {
+    if (restrictionSaving) return;
+    setRestrictionTarget(null);
+    setRestrictionReason("");
+  }
 
+  async function submitRestriction(event) {
+    event.preventDefault();
+    if (!restrictionTarget || restrictionReason.trim().length < 3) return;
+
+    setRestrictionSaving(true);
     try {
-      setLoading(true);
-      const response = await api.delete("/candidates");
-      const result = response.data;
-      setSelectedJob({});
-      setSelectedEvaluation(null);
-      if (page !== 1) setPage(1);
-      await loadData(1);
-      if (result.failed) {
-        window.alert(
-          `${result.deleted} candidatos eliminados. ${result.failed} no pudieron eliminarse.`,
-        );
-      }
+      await api.post(
+        `/candidates/${restrictionTarget.candidate_id}/${restrictionMode === "ban" ? "ban" : "unban"}`,
+        { reason: restrictionReason.trim() },
+      );
+      setRestrictionTarget(null);
+      setRestrictionReason("");
+      await loadData(page);
     } catch (error) {
       window.alert(
         error.response?.data?.detail ||
-          "No fue posible eliminar los candidatos.",
+          "No fue posible actualizar el veto del candidato.",
       );
     } finally {
-      setLoading(false);
+      setRestrictionSaving(false);
     }
   }
 
@@ -317,15 +295,6 @@ function Candidates() {
               : "perfiles disponibles"}
           </p>
         </div>
-        {total > 0 && (
-          <button
-            className="btn btn-danger"
-            onClick={deleteAllCandidates}
-            disabled={loading}
-          >
-            🗑 Eliminar todos
-          </button>
-        )}
       </div>
 
       {candidates.length === 0 ? (
@@ -350,6 +319,12 @@ function Candidates() {
                 <p className="muted" style={{ marginTop: "6px", fontSize: "14px" }}>
                   Candidato registrado
                 </p>
+                {candidate.is_banned && (
+                  <div className="candidate-ban-alert" role="alert">
+                    <strong>⚠ Candidato vetado</strong>
+                    <span>{candidate.banned_reason || "Este perfil fue vetado por un administrador."}</span>
+                  </div>
+                )}
               </div>
 
               <div
@@ -362,12 +337,14 @@ function Candidates() {
                 >
                   📄 Ver CV
                 </button>
-                <button
-                  className="btn btn-danger"
-                  onClick={() => deleteCandidate(candidate)}
-                >
-                  🗑 Eliminar
-                </button>
+                {canRestrictCandidates && (
+                  <button
+                    className={`btn ${candidate.is_banned ? "btn-secondary" : "btn-danger"}`}
+                    onClick={() => openRestriction(candidate, candidate.is_banned ? "unban" : "ban")}
+                  >
+                    {candidate.is_banned ? "Quitar veto" : "Vetar"}
+                  </button>
+                )}
               </div>
             </div>
 
@@ -417,14 +394,16 @@ function Candidates() {
               <button
                 className="btn btn-primary"
                 onClick={() => assignCandidate(candidate.candidate_id)}
-                disabled={loading}
+                disabled={loading || candidate.is_banned}
+                title={candidate.is_banned ? "Un candidato vetado no puede recibir nuevas asignaciones." : undefined}
               >
                 {loading ? "Asignando..." : "Asignar a vacante"}
               </button>
               <button
                 className="btn btn-secondary"
                 onClick={() => evaluate(candidate.candidate_id)}
-                disabled={loading}
+                disabled={loading || candidate.is_banned}
+                title={candidate.is_banned ? "Quita el veto antes de evaluar nuevamente." : undefined}
               >
                 Evaluar candidato
               </button>
@@ -475,6 +454,85 @@ function Candidates() {
           initialJobId={initialImportJobId}
           onClose={closeCreateCandidateModal}
         />
+      )}
+
+      {restrictionTarget && (
+        <div className="modal-overlay" onMouseDown={closeRestriction}>
+          <section
+            className="modal candidate-restriction-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="candidate-restriction-title"
+            onMouseDown={(event) => event.stopPropagation()}
+          >
+            <div className="modal-header">
+              <div>
+                <span className="eyebrow">Control administrativo</span>
+                <h2 id="candidate-restriction-title">
+                  {restrictionMode === "ban" ? "Vetar candidato" : "Quitar veto"}
+                </h2>
+                <p className="muted">
+                  {restrictionTarget.name}
+                </p>
+              </div>
+              <button
+                type="button"
+                className="btn btn-close"
+                onClick={closeRestriction}
+                disabled={restrictionSaving}
+              >
+                ✕
+              </button>
+            </div>
+
+            {restrictionMode === "ban" && (
+              <div className="candidate-ban-warning">
+                <strong>Este candidato no será eliminado.</strong>
+                <span>
+                  El veto conservará su CV, evaluaciones y postulaciones históricas,
+                  pero lo excluirá de nuevas asignaciones y recomendaciones.
+                </span>
+              </div>
+            )}
+
+            <form onSubmit={submitRestriction}>
+              <div className="form-group">
+                <label htmlFor="candidate-restriction-reason">
+                  {restrictionMode === "ban" ? "Motivo del veto" : "Motivo para quitar el veto"}
+                </label>
+                <textarea
+                  id="candidate-restriction-reason"
+                  rows="4"
+                  value={restrictionReason}
+                  onChange={(event) => setRestrictionReason(event.target.value)}
+                  placeholder="Describe el motivo para dejar trazabilidad."
+                  required
+                />
+              </div>
+              <div className="form-actions">
+                <button
+                  type="button"
+                  className="btn btn-secondary"
+                  onClick={closeRestriction}
+                  disabled={restrictionSaving}
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="submit"
+                  className={`btn ${restrictionMode === "ban" ? "btn-danger" : "btn-primary"}`}
+                  disabled={restrictionSaving || restrictionReason.trim().length < 3}
+                >
+                  {restrictionSaving
+                    ? "Guardando…"
+                    : restrictionMode === "ban"
+                      ? "Confirmar veto"
+                      : "Quitar veto"}
+                </button>
+              </div>
+            </form>
+          </section>
+        </div>
       )}
 
       {selectedEvaluation && (
