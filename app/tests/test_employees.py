@@ -123,6 +123,36 @@ def test_create_employee_provisions_cognito_and_employee_role(db):
     assert cognito.deleted == []
 
 
+
+
+def test_create_employee_falls_back_to_admin_get_user_for_sub(db):
+    class FallbackCognito(FakeCognitoClient):
+        def admin_create_user(self, **kwargs):
+            self.created.append(kwargs)
+            return {
+                "User": {
+                    "Username": kwargs["Username"],
+                    "Attributes": [
+                        {"Name": "email", "Value": kwargs["Username"]},
+                    ],
+                }
+            }
+
+    cognito = FallbackCognito()
+
+    profile = service.create_employee(
+        db,
+        email="fallback@asiati.com.co",
+        first_name="Fallback",
+        last_name="User",
+        job_title=None,
+        department=None,
+        cognito_client=cognito,
+    )
+
+    assert profile.cognito_sub == "sub-fallback@asiati.com.co"
+
+
 def test_create_employee_rejects_duplicate_profile_before_cognito(db):
     _profile(db, email="duplicate@asiati.com.co", role=EMPLOYEE)
     cognito = FakeCognitoClient()
