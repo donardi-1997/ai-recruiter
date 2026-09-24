@@ -23,7 +23,7 @@ function renderRanking() {
 }
 
 async function confirmRecalculation() {
-  await confirmRecalculation();
+  fireEvent.click(screen.getByRole("button", { name: "Recalcular ranking" }));
   expect(await screen.findByRole("heading", { name: "Evaluación masiva" })).toBeInTheDocument();
   fireEvent.click(screen.getByRole("checkbox"));
   fireEvent.click(screen.getByRole("button", { name: "Iniciar evaluación" }));
