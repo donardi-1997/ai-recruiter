@@ -171,8 +171,8 @@ def create_course(
     *,
     title: str,
     description: str | None,
-    is_onboarding: bool,
     created_by_sub: str,
+    is_onboarding: bool = False,
 ) -> TrainingCourse:
     course = TrainingCourse(
         title=title.strip(),
