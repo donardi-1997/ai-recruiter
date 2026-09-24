@@ -13,6 +13,9 @@ from app.models import (
     TrainingLesson,
     TrainingLessonProgress,
     TrainingModule,
+    TrainingQuiz,
+    TrainingQuizAttempt,
+    TrainingQuizQuestion,
     UserProfile,
 )
 
@@ -48,6 +51,13 @@ def require_lesson(db: Session, lesson_id: str) -> TrainingLesson:
     if lesson is None:
         raise TrainingNotFound()
     return lesson
+
+
+def require_quiz(db: Session, quiz_id: str) -> TrainingQuiz:
+    quiz = db.query(TrainingQuiz).filter(TrainingQuiz.id == quiz_id).one_or_none()
+    if quiz is None:
+        raise TrainingNotFound()
+    return quiz
 
 
 def require_employee(db: Session, employee_id: str) -> UserProfile:
@@ -112,6 +122,7 @@ def course_payload(
         "lesson_count": lesson_count,
         "completed_lessons": completed_count,
         "progress_percent": progress_percent,
+        "has_quiz": course.quiz is not None,
         "created_at": course.created_at.isoformat() if course.created_at else None,
         "updated_at": course.updated_at.isoformat() if course.updated_at else None,
     }
@@ -132,7 +143,10 @@ def list_courses(db: Session) -> list[dict]:
 
 
 def get_course(db: Session, course_id: str) -> dict:
-    return course_payload(require_course(db, course_id), include_structure=True)
+    course = require_course(db, course_id)
+    payload = course_payload(course, include_structure=True)
+    payload["quiz"] = quiz_admin_payload(course.quiz) if course.quiz else None
+    return payload
 
 
 def create_course(
@@ -180,6 +194,8 @@ def update_course(
             _, lesson_count = _course_counts(course)
             if lesson_count == 0:
                 raise TrainingStateError("A course needs at least one lesson before publishing.")
+            if course.quiz is not None and not course.quiz.questions:
+                raise TrainingStateError("A course quiz needs at least one question before publishing.")
         course.status = normalized
     db.commit()
     db.refresh(course)
@@ -304,11 +320,24 @@ def assignment_payload(db: Session, assignment: TrainingAssignment) -> dict:
         completed_lesson_ids=completed,
         include_structure=False,
     )
+    attempts = sorted(
+        assignment.quiz_attempts,
+        key=lambda attempt: attempt.attempt_number,
+    )
+    best_score = max((attempt.score_percent for attempt in attempts), default=None)
+    latest_attempt = attempts[-1] if attempts else None
+
     return {
         "id": assignment.id,
         "status": assignment.status,
         "assigned_at": assignment.assigned_at.isoformat() if assignment.assigned_at else None,
         "completed_at": assignment.completed_at.isoformat() if assignment.completed_at else None,
+        "quiz_result": {
+            "attempt_count": len(attempts),
+            "best_score": best_score,
+            "latest_score": latest_attempt.score_percent if latest_attempt else None,
+            "passed": any(attempt.passed for attempt in attempts),
+        } if assignment.course.quiz else None,
         "employee": {
             "id": assignment.employee.id,
             "email": assignment.employee.email,
@@ -426,9 +455,232 @@ def complete_lesson(
         total_lessons
         and completed_count >= total_lessons
         and assignment.status != "COMPLETED"
+        and course.quiz is None
     ):
         assignment.status = "COMPLETED"
         assignment.completed_at = datetime.now(timezone.utc)
 
     db.commit()
     return get_my_course(db, employee_id=employee_id, course_id=course.id)
+
+
+def quiz_admin_payload(quiz: TrainingQuiz) -> dict:
+    return {
+        "id": quiz.id,
+        "course_id": quiz.course_id,
+        "title": quiz.title,
+        "passing_score": quiz.passing_score,
+        "question_count": len(quiz.questions),
+        "questions": [
+            {
+                "id": question.id,
+                "prompt": question.prompt,
+                "options": list(question.options or []),
+                "correct_option": question.correct_option,
+                "position": question.position,
+            }
+            for question in sorted(quiz.questions, key=lambda item: item.position)
+        ],
+    }
+
+
+def quiz_employee_payload(quiz: TrainingQuiz, *, attempts: list[TrainingQuizAttempt]) -> dict:
+    return {
+        "id": quiz.id,
+        "course_id": quiz.course_id,
+        "title": quiz.title,
+        "passing_score": quiz.passing_score,
+        "question_count": len(quiz.questions),
+        "questions": [
+            {
+                "id": question.id,
+                "prompt": question.prompt,
+                "options": list(question.options or []),
+                "position": question.position,
+            }
+            for question in sorted(quiz.questions, key=lambda item: item.position)
+        ],
+        "attempts": [
+            {
+                "id": attempt.id,
+                "attempt_number": attempt.attempt_number,
+                "score_percent": attempt.score_percent,
+                "passed": attempt.passed,
+                "submitted_at": attempt.submitted_at.isoformat()
+                if attempt.submitted_at else None,
+            }
+            for attempt in sorted(attempts, key=lambda item: item.attempt_number)
+        ],
+    }
+
+
+def create_quiz(
+    db: Session,
+    *,
+    course_id: str,
+    title: str,
+    passing_score: int,
+    created_by_sub: str,
+) -> TrainingQuiz:
+    course = require_course(db, course_id)
+    if course.status != "DRAFT":
+        raise TrainingStateError("Only draft courses can change their evaluation.")
+    if course.quiz is not None:
+        raise TrainingStateError("This course already has an evaluation.")
+
+    quiz = TrainingQuiz(
+        course_id=course_id,
+        title=title.strip(),
+        passing_score=passing_score,
+        created_by_sub=created_by_sub,
+    )
+    db.add(quiz)
+    db.commit()
+    db.refresh(quiz)
+    return quiz
+
+
+def add_quiz_question(
+    db: Session,
+    *,
+    quiz_id: str,
+    prompt: str,
+    options: list[str],
+    correct_option: int,
+) -> TrainingQuizQuestion:
+    quiz = require_quiz(db, quiz_id)
+    if quiz.course.status != "DRAFT":
+        raise TrainingStateError("Only draft courses can change their evaluation.")
+    if correct_option < 0 or correct_option >= len(options):
+        raise TrainingStateError("Correct option is outside the option range.")
+
+    position = (
+        db.query(func.coalesce(func.max(TrainingQuizQuestion.position), 0))
+        .filter(TrainingQuizQuestion.quiz_id == quiz_id)
+        .scalar()
+        or 0
+    ) + 1
+
+    question = TrainingQuizQuestion(
+        quiz_id=quiz_id,
+        prompt=prompt.strip(),
+        options=[option.strip() for option in options],
+        correct_option=correct_option,
+        position=position,
+    )
+    db.add(question)
+    db.commit()
+    db.refresh(question)
+    return question
+
+
+def _all_lessons_completed(db: Session, assignment: TrainingAssignment) -> bool:
+    total_lessons = sum(len(module.lessons) for module in assignment.course.modules)
+    if total_lessons == 0:
+        return False
+    completed_count = (
+        db.query(TrainingLessonProgress)
+        .filter(
+            TrainingLessonProgress.assignment_id == assignment.id,
+            TrainingLessonProgress.status == "COMPLETED",
+        )
+        .count()
+    )
+    return completed_count >= total_lessons
+
+
+def get_my_quiz(db: Session, *, employee_id: str, course_id: str) -> dict:
+    assignment = require_my_assignment(
+        db,
+        employee_id=employee_id,
+        course_id=course_id,
+    )
+    course = assignment.course
+    if course.status != "PUBLISHED" or course.quiz is None:
+        raise TrainingNotFound()
+    if not _all_lessons_completed(db, assignment):
+        raise TrainingStateError("Complete all course lessons before taking the evaluation.")
+
+    attempts = (
+        db.query(TrainingQuizAttempt)
+        .filter(TrainingQuizAttempt.assignment_id == assignment.id)
+        .order_by(TrainingQuizAttempt.attempt_number.asc())
+        .all()
+    )
+    return quiz_employee_payload(course.quiz, attempts=attempts)
+
+
+def submit_quiz_attempt(
+    db: Session,
+    *,
+    employee_id: str,
+    course_id: str,
+    answers: dict[str, int],
+) -> dict:
+    assignment = require_my_assignment(
+        db,
+        employee_id=employee_id,
+        course_id=course_id,
+    )
+    course = assignment.course
+    quiz = course.quiz
+    if course.status != "PUBLISHED" or quiz is None:
+        raise TrainingNotFound()
+    if not _all_lessons_completed(db, assignment):
+        raise TrainingStateError("Complete all course lessons before taking the evaluation.")
+
+    questions = sorted(quiz.questions, key=lambda item: item.position)
+    if not questions:
+        raise TrainingStateError("This evaluation has no questions.")
+
+    expected_ids = {question.id for question in questions}
+    if set(answers) != expected_ids:
+        raise TrainingStateError("Answer every question before submitting.")
+
+    correct = 0
+    normalized_answers = {}
+    for question in questions:
+        selected = answers[question.id]
+        if not isinstance(selected, int) or selected < 0 or selected >= len(question.options or []):
+            raise TrainingStateError("One or more selected answers are invalid.")
+        normalized_answers[question.id] = selected
+        if selected == question.correct_option:
+            correct += 1
+
+    score_percent = round((correct / len(questions)) * 100)
+    passed = score_percent >= quiz.passing_score
+    latest_number = (
+        db.query(func.coalesce(func.max(TrainingQuizAttempt.attempt_number), 0))
+        .filter(TrainingQuizAttempt.assignment_id == assignment.id)
+        .scalar()
+        or 0
+    )
+    attempt = TrainingQuizAttempt(
+        assignment_id=assignment.id,
+        quiz_id=quiz.id,
+        answers=normalized_answers,
+        score_percent=score_percent,
+        passed=passed,
+        attempt_number=latest_number + 1,
+    )
+    db.add(attempt)
+
+    if passed and assignment.status != "COMPLETED":
+        assignment.status = "COMPLETED"
+        assignment.completed_at = datetime.now(timezone.utc)
+
+    db.commit()
+    db.refresh(attempt)
+    return {
+        "attempt": {
+            "id": attempt.id,
+            "attempt_number": attempt.attempt_number,
+            "score_percent": attempt.score_percent,
+            "passed": attempt.passed,
+            "submitted_at": attempt.submitted_at.isoformat()
+            if attempt.submitted_at else None,
+        },
+        "assignment_status": assignment.status,
+        "passing_score": quiz.passing_score,
+    }
+
