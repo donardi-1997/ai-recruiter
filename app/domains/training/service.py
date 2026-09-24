@@ -491,6 +491,34 @@ def _ensure_asiati_corporate_video_lessons(
             )
 
 
+ASIATI_ROLE_CHECKLIST_ITEMS = [
+    "Conozco el alcance principal de mi cargo.",
+    "Sé cuáles son mis responsabilidades prioritarias.",
+    "Tengo identificadas las herramientas y accesos que necesito.",
+    "Sé quién es mi líder o punto de apoyo.",
+    "Entiendo los objetivos de mi primera semana.",
+]
+
+
+def _ensure_asiati_role_checklist(
+    db: Session,
+    *,
+    course: TrainingCourse,
+) -> None:
+    changed = False
+    for module in course.modules:
+        for lesson in module.lessons:
+            if (
+                lesson.title == "Tu rol y tus primeros días"
+                and str(lesson.content_type or "").upper() == "CHECKLIST"
+                and not list(lesson.checklist_items or [])
+            ):
+                lesson.checklist_items = list(ASIATI_ROLE_CHECKLIST_ITEMS)
+                changed = True
+    if changed:
+        db.commit()
+
+
 ASIATI_ONBOARDING_BASE_QUIZ = [
     (
         "¿Cuál es el sitio web corporativo oficial incluido en la inducción?",
@@ -602,6 +630,10 @@ def create_asiati_onboarding_template(
             db.commit()
         refreshed = require_course(db, existing.id)
         _ensure_asiati_corporate_video_lessons(db, course=refreshed)
+        _ensure_asiati_role_checklist(
+            db,
+            course=require_course(db, existing.id),
+        )
         return require_course(db, existing.id)
 
     course = create_course(
@@ -730,6 +762,7 @@ def create_asiati_onboarding_template(
         duration_seconds=None,
         content_type="CHECKLIST",
         estimated_minutes=5,
+        checklist_items=ASIATI_ROLE_CHECKLIST_ITEMS,
     )
     quiz = create_quiz(
         db,
@@ -740,6 +773,10 @@ def create_asiati_onboarding_template(
     )
     _ensure_asiati_onboarding_quiz_questions(db, quiz=quiz)
     _ensure_asiati_corporate_video_lessons(db, course=require_course(db, course.id))
+    _ensure_asiati_role_checklist(
+        db,
+        course=require_course(db, course.id),
+    )
 
     return require_course(db, course.id)
 
