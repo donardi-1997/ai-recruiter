@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 
 from sqlalchemy import (
     Boolean,
+    CheckConstraint,
     Column,
     DateTime,
     Float,
@@ -612,6 +613,12 @@ class UserProfile(Base):
         back_populates="user",
         cascade="all, delete-orphan",
     )
+    score_events = relationship(
+        "EmployeeScoreEvent",
+        back_populates="employee",
+        cascade="all, delete-orphan",
+        foreign_keys="EmployeeScoreEvent.employee_id",
+    )
 
 
 class Role(Base):
@@ -702,4 +709,49 @@ class RolePermission(Base):
 
     role = relationship("Role", back_populates="permission_assignments")
     permission = relationship("Permission", back_populates="role_assignments")
+
+
+class EmployeeScoreEvent(Base):
+    """Append-only employee score movement visible only to Direction."""
+
+    __tablename__ = "employee_score_events"
+    __table_args__ = (
+        CheckConstraint("points <> 0", name="ck_employee_score_events_nonzero_points"),
+        Index(
+            "idx_employee_score_events_employee_status_date",
+            "employee_id",
+            "status",
+            "event_date",
+        ),
+    )
+
+    id = Column(Text, primary_key=True, default=lambda: str(uuid.uuid4()))
+    employee_id = Column(
+        Text,
+        ForeignKey("user_profiles.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    points = Column(Integer, nullable=False)
+    description = Column(Text, nullable=False)
+    status = Column(Text, nullable=False, default="ACTIVE")
+    event_date = Column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=lambda: datetime.now(timezone.utc),
+    )
+    created_by_sub = Column(Text, nullable=False)
+    created_at = Column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=lambda: datetime.now(timezone.utc),
+    )
+    voided_at = Column(DateTime(timezone=True), nullable=True)
+    voided_by_sub = Column(Text, nullable=True)
+    void_reason = Column(Text, nullable=True)
+
+    employee = relationship(
+        "UserProfile",
+        back_populates="score_events",
+        foreign_keys=[employee_id],
+    )
 
