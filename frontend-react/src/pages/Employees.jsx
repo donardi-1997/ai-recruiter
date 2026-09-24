@@ -13,7 +13,7 @@ const EMPTY_FORM = {
 };
 
 function Employees() {
-  const { hasRole } = useSession();
+  const { principal, hasRole } = useSession();
   const isSuperAdmin = hasRole("SUPER_ADMIN");
   const [employees, setEmployees] = useState([]);
   const [query, setQuery] = useState("");
@@ -172,7 +172,8 @@ function Employees() {
                 {employees.map((employee) => {
                   const role = employee.roles?.[0] || "EMPLOYEE";
                   const administrative = role === "ADMIN" || role === "SUPER_ADMIN";
-                  const canManageTarget = isSuperAdmin || !administrative;
+                  const isSelf = employee.id === principal?.profile?.id;
+                  const canManageTarget = !isSelf && (isSuperAdmin || !administrative);
                   return (
                     <tr key={employee.id}>
                       <td>
