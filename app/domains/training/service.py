@@ -342,6 +342,8 @@ def add_module(
     course_id: str,
     title: str,
     description: str | None,
+    audience_job_title: str | None = None,
+    audience_department: str | None = None,
 ) -> TrainingModule:
     course = require_course(db, course_id)
     if course.status != "DRAFT":
@@ -356,6 +358,8 @@ def add_module(
         course_id=course_id,
         title=title.strip(),
         description=(description or "").strip() or None,
+        audience_job_title=(audience_job_title or "").strip() or None,
+        audience_department=(audience_department or "").strip() or None,
         position=position,
     )
     db.add(module)
@@ -372,6 +376,10 @@ def add_lesson(
     description: str | None,
     video_url: str | None,
     duration_seconds: int | None,
+    content_type: str = "VIDEO",
+    external_url: str | None = None,
+    estimated_minutes: int | None = None,
+    is_optional: bool = False,
 ) -> TrainingLesson:
     module = require_module(db, module_id)
     if module.course.status != "DRAFT":
@@ -388,6 +396,10 @@ def add_lesson(
         description=(description or "").strip() or None,
         video_url=(video_url or "").strip() or None,
         duration_seconds=duration_seconds,
+        content_type=(content_type or "VIDEO").strip().upper(),
+        external_url=(external_url or "").strip() or None,
+        estimated_minutes=estimated_minutes,
+        is_optional=bool(is_optional),
         position=position,
     )
     db.add(lesson)
@@ -556,6 +568,7 @@ def _assignment_course_payload(
         assignment.course,
         completed_lesson_ids=completed,
         include_structure=include_structure,
+        employee=assignment.employee,
     )
     if assignment.course.quiz is not None:
         passed_quiz = any(attempt.passed for attempt in assignment.quiz_attempts)
@@ -698,15 +711,14 @@ def complete_lesson(
         )
         db.flush()
 
-    total_lessons = sum(len(module.lessons) for module in course.modules)
-    completed_count = (
-        db.query(TrainingLessonProgress)
-        .filter(
-            TrainingLessonProgress.assignment_id == assignment.id,
-            TrainingLessonProgress.status == "COMPLETED",
-        )
-        .count()
-    )
+    if not _module_applies(lesson.module, assignment.employee):
+        raise TrainingStateError("This lesson is not assigned to your profile.")
+
+    required_lessons = _required_lessons(course, assignment.employee)
+    required_ids = {item.id for item in required_lessons}
+    completed_ids = _completed_ids(db, assignment.id)
+    completed_count = len(required_ids & completed_ids)
+    total_lessons = len(required_lessons)
     if (
         total_lessons
         and completed_count >= total_lessons
@@ -834,18 +846,15 @@ def add_quiz_question(
 
 
 def _all_lessons_completed(db: Session, assignment: TrainingAssignment) -> bool:
-    total_lessons = sum(len(module.lessons) for module in assignment.course.modules)
-    if total_lessons == 0:
-        return False
-    completed_count = (
-        db.query(TrainingLessonProgress)
-        .filter(
-            TrainingLessonProgress.assignment_id == assignment.id,
-            TrainingLessonProgress.status == "COMPLETED",
-        )
-        .count()
+    required_lessons = _required_lessons(
+        assignment.course,
+        assignment.employee,
     )
-    return completed_count >= total_lessons
+    if not required_lessons:
+        return False
+    required_ids = {lesson.id for lesson in required_lessons}
+    completed_ids = _completed_ids(db, assignment.id)
+    return required_ids.issubset(completed_ids)
 
 
 def get_my_quiz(db: Session, *, employee_id: str, course_id: str) -> dict:
