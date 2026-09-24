@@ -56,6 +56,18 @@ def create_course(
     return service.course_payload(course, include_structure=True)
 
 
+@router.post("/courses/presets/asiati-onboarding", status_code=201)
+def create_asiati_onboarding_preset(
+    db: Session = Depends(get_db),
+    principal: dict = Depends(require_permission("training.manage")),
+):
+    course = service.create_asiati_onboarding_template(
+        db,
+        created_by_sub=principal["sub"],
+    )
+    return service.get_course(db, course.id)
+
+
 @router.get("/courses/{course_id}")
 def get_course(
     course_id: str,
@@ -102,6 +114,8 @@ def create_module(
             course_id=course_id,
             title=body.title,
             description=body.description,
+            audience_job_title=body.audience_job_title,
+            audience_department=body.audience_department,
         )
         return service.get_course(db, course_id)
     except Exception as exc:
@@ -123,6 +137,10 @@ def create_lesson(
             description=body.description,
             video_url=body.video_url,
             duration_seconds=body.duration_seconds,
+            content_type=body.content_type,
+            external_url=body.external_url,
+            estimated_minutes=body.estimated_minutes,
+            is_optional=body.is_optional,
         )
         return service.get_course(db, lesson.module.course_id)
     except Exception as exc:
