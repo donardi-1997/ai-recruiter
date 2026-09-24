@@ -29,4 +29,7 @@ class VoidScoreEventRequest(BaseModel):
     @field_validator("reason")
     @classmethod
     def normalize_reason(cls, value: str) -> str:
-        return value.strip()
+        normalized = value.strip()
+        if len(normalized) < 3:
+            raise ValueError("reason is required")
+        return normalized
