@@ -5,7 +5,7 @@ import logging
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
 from sqlalchemy.orm import Session
 
-from app.deps import get_current_user, get_db
+from app.deps import get_db, require_permission
 from app.domains.candidates import presenter, service
 from app.domains.candidates.exceptions import (
     CandidateNotFound,
@@ -70,7 +70,7 @@ def assign_candidates_to_job(
     job_id: str,
     body: AssignCandidatesRequest,
     db: Session = Depends(get_db),
-    _user: dict = Depends(get_current_user),
+    _user: dict = Depends(require_permission("candidates.read")),
 ):
     _require_job(db, job_id, _user["sub"])
     if not body.candidate_ids:
@@ -95,7 +95,7 @@ def get_job_candidates(
     page: int = Query(1, ge=1),
     page_size: int = Query(10, ge=1, le=100),
     db: Session = Depends(get_db),
-    _user: dict = Depends(get_current_user),
+    _user: dict = Depends(require_permission("candidates.read")),
 ):
     try:
         items, _total = service.list_job_candidates(
@@ -117,7 +117,7 @@ def update_application_status(
     candidate_id: str,
     body: ApplicationStatusRequest,
     db: Session = Depends(get_db),
-    _user: dict = Depends(get_current_user),
+    _user: dict = Depends(require_permission("candidates.read")),
 ):
     try:
         link, changed = service.set_application_status(
@@ -148,7 +148,7 @@ def get_job_candidate_detail(
     job_id: str,
     candidate_id: str,
     db: Session = Depends(get_db),
-    _user: dict = Depends(get_current_user),
+    _user: dict = Depends(require_permission("candidates.read")),
 ):
     evaluation = _get_job_candidate_evaluation(
         db,
@@ -168,7 +168,7 @@ def get_candidate_explanation(
     job_id: str,
     candidate_id: str,
     db: Session = Depends(get_db),
-    _user: dict = Depends(get_current_user),
+    _user: dict = Depends(require_permission("candidates.read")),
 ):
     evaluation = _get_job_candidate_evaluation(
         db,
@@ -184,7 +184,7 @@ def get_candidate_requirements(
     job_id: str,
     candidate_id: str,
     db: Session = Depends(get_db),
-    _user: dict = Depends(get_current_user),
+    _user: dict = Depends(require_permission("candidates.read")),
 ):
     evaluation = _get_job_candidate_evaluation(
         db,
@@ -200,7 +200,7 @@ def list_candidates(
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=20, le=20),
     db: Session = Depends(get_db),
-    _user: dict = Depends(get_current_user),
+    _user: dict = Depends(require_permission("candidates.read")),
 ):
     candidates, total = service.list_candidates_page(
         db,
@@ -222,7 +222,7 @@ def list_candidates(
 def get_candidate(
     candidate_id: str,
     db: Session = Depends(get_db),
-    _user: dict = Depends(get_current_user),
+    _user: dict = Depends(require_permission("candidates.read")),
 ):
     candidate = _require_candidate(db, candidate_id, _user["sub"])
     return presenter.candidate_to_dict(candidate)
@@ -232,7 +232,7 @@ def get_candidate(
 async def upload_candidates_bulk(
     files: list[UploadFile] = File(...),
     db: Session = Depends(get_db),
-    _user: dict = Depends(get_current_user),
+    _user: dict = Depends(require_permission("candidates.read")),
 ):
     results = []
     errors = []
@@ -320,7 +320,7 @@ async def upload_candidates_bulk(
 @router.delete("")
 def delete_all_candidates(
     db: Session = Depends(get_db),
-    _user: dict = Depends(get_current_user),
+    _user: dict = Depends(require_permission("candidates.read")),
 ):
     try:
         deleted, failed = service.delete_all_candidates(db, _user["sub"])
@@ -334,7 +334,7 @@ def delete_all_candidates(
 def delete_candidate(
     candidate_id: str,
     db: Session = Depends(get_db),
-    _user: dict = Depends(get_current_user),
+    _user: dict = Depends(require_permission("candidates.read")),
 ):
     try:
         service.delete_candidate(db, candidate_id, _user["sub"])
@@ -350,7 +350,7 @@ def delete_candidate(
 def download_candidate_cv(
     candidate_id: str,
     db: Session = Depends(get_db),
-    _user: dict = Depends(get_current_user),
+    _user: dict = Depends(require_permission("candidates.read")),
 ):
     try:
         download = service.get_candidate_download(
@@ -384,7 +384,7 @@ def download_candidate_cv(
 def get_candidate_evaluations(
     candidate_id: str,
     db: Session = Depends(get_db),
-    _user: dict = Depends(get_current_user),
+    _user: dict = Depends(require_permission("candidates.read")),
 ):
     try:
         evaluations = service.get_candidate_evaluations(
