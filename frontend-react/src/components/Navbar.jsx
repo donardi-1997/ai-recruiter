@@ -1,16 +1,22 @@
 import { useEffect, useState } from "react";
 import { NavLink, useNavigate } from "react-router-dom";
-import api, { clearAccessToken } from "../api/client";
+
+import api from "../api/client";
+import { useSession } from "../context/SessionContext";
 import BrandMark from "./BrandMark";
 import ThemeToggle from "./ThemeToggle";
 
+
 const navItems = [
-  { to: "/dashboard", label: "Resumen", icon: "⌁" },
-  { to: "/jobs", label: "Vacantes", icon: "▤" },
-  { to: "/candidates", label: "Candidatos", icon: "◎" },
-  { to: "/ranking", label: "Ranking IA", icon: "↗" },
-  { to: "/integrations", label: "Integraciones", icon: "◇" },
+  { to: "/dashboard", label: "Inicio", icon: "⌁" },
+  { to: "/jobs", label: "Vacantes", icon: "▤", permission: "jobs.read" },
+  { to: "/candidates", label: "Candidatos", icon: "◎", permission: "candidates.read" },
+  { to: "/ranking", label: "Ranking IA", icon: "↗", permission: "ranking.read" },
+  { to: "/employees", label: "Empleados", icon: "◫", permission: "employees.read" },
+  { to: "/training", label: "Capacitación", icon: "▶", permission: "training.read" },
+  { to: "/integrations", label: "Integraciones", icon: "◇", permission: "integrations.manage" },
 ];
+
 
 function Brand() {
   return (
@@ -20,8 +26,17 @@ function Brand() {
   );
 }
 
+
+function roleLabel(roles = []) {
+  if (roles.includes("SUPER_ADMIN")) return "Dirección";
+  if (roles.includes("ADMIN")) return "Administración";
+  return "Empleado";
+}
+
+
 function Navbar() {
   const navigate = useNavigate();
+  const { principal, hasPermission, clearSession } = useSession();
   const [open, setOpen] = useState(false);
 
   useEffect(() => {
@@ -34,9 +49,17 @@ function Navbar() {
 
   async function logout() {
     await api.post("/auth/logout").catch(() => {});
-    clearAccessToken();
+    clearSession();
     navigate("/login");
   }
+
+  const visibleItems = navItems.filter(
+    (item) => !item.permission || hasPermission(item.permission),
+  );
+  const profile = principal?.profile || {};
+  const displayName = [profile.first_name, profile.last_name].filter(Boolean).join(" ")
+    || principal?.email
+    || "Usuario ASIATI";
 
   return (
     <>
@@ -62,12 +85,12 @@ function Navbar() {
           <Brand />
 
           <div className="nav-context">
-            <span className="nav-context-label">Talento Humano</span>
-            <strong>Selección inteligente</strong>
+            <span className="nav-context-label">{roleLabel(principal?.roles)}</span>
+            <strong>{displayName}</strong>
           </div>
 
           <nav id="primary-navigation" className="navbar-links" aria-label="Navegación principal">
-            {navItems.map((item) => (
+            {visibleItems.map((item) => (
               <NavLink
                 key={item.to}
                 to={item.to}
@@ -83,14 +106,14 @@ function Navbar() {
           <div className="nav-insight">
             <span className="nav-insight-dot" aria-hidden="true" />
             <div>
-              <strong>IA para decidir mejor</strong>
-              <span>Evaluación con Amazon Bedrock</span>
+              <strong>{hasPermission("jobs.read") ? "Gestión de talento" : "Tu espacio ASIATI"}</strong>
+              <span>{hasPermission("jobs.read") ? "Selección y capacitación" : "Capacitación y progreso"}</span>
             </div>
           </div>
 
-          <div style={{ display: "flex", gap: "8px", marginTop: "auto", marginBottom: "8px" }}>
+          <div className="navbar-bottom-actions">
             <ThemeToggle />
-            <button className="navbar-logout" onClick={logout} style={{ flex: 1 }}>
+            <button className="navbar-logout" onClick={logout}>
               <span aria-hidden="true">↪</span>
               <span>Cerrar sesión</span>
             </button>
