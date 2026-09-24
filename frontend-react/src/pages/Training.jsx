@@ -20,6 +20,7 @@ function Training() {
   const { principal, hasPermission } = useSession();
   const canManage = hasPermission("training.manage");
   const canAssign = hasPermission("training.assign");
+  const canViewResults = hasPermission("training.results.read");
   const firstName = principal?.profile?.first_name || "equipo";
 
   const [myAssignments, setMyAssignments] = useState([]);
@@ -27,6 +28,7 @@ function Training() {
   const [employees, setEmployees] = useState([]);
   const [selectedCourseId, setSelectedCourseId] = useState("");
   const [selectedCourse, setSelectedCourse] = useState(null);
+  const [courseAssignments, setCourseAssignments] = useState([]);
   const [selectedAssignmentId, setSelectedAssignmentId] = useState("");
   const [employeeCourse, setEmployeeCourse] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -86,18 +88,28 @@ function Training() {
   const loadAdminCourse = useCallback(async (courseId) => {
     if (!canManage || !courseId) {
       setSelectedCourse(null);
+      setCourseAssignments([]);
       return;
     }
     setDetailLoading(true);
     try {
-      const { data } = await api.get(`/training/courses/${courseId}`);
-      setSelectedCourse(data);
+      const requests = [api.get(`/training/courses/${courseId}`)];
+      if (canViewResults) {
+        requests.push(api.get(`/training/courses/${courseId}/assignments`));
+      }
+      const [courseResponse, assignmentsResponse] = await Promise.all(requests);
+      setSelectedCourse(courseResponse.data);
+      setCourseAssignments(
+        canViewResults && Array.isArray(assignmentsResponse?.data?.items)
+          ? assignmentsResponse.data.items
+          : [],
+      );
     } catch (err) {
       setError(err.response?.data?.detail || "No fue posible cargar el curso.");
     } finally {
       setDetailLoading(false);
     }
-  }, [canManage]);
+  }, [canManage, canViewResults]);
 
   const selectedAssignment = useMemo(
     () => myAssignments.find((assignment) => assignment.id === selectedAssignmentId),
@@ -271,6 +283,7 @@ function Training() {
         `/training/courses/${selectedCourseId}/assignments/${assignEmployeeId}`,
       );
       setAssignEmployeeId("");
+      await loadAdminCourse(selectedCourseId);
     } catch (err) {
       setError(err.response?.data?.detail || "No fue posible asignar el curso.");
     } finally {
@@ -424,68 +437,72 @@ function Training() {
                           ))}
                         </div>
 
-                        <form className="training-inline-form" onSubmit={(event) => addLesson(event, module.id)}>
-                          <strong>Nueva lección</strong>
-                          <input
-                            aria-label={`Título de lección para ${module.title}`}
-                            placeholder="Título de la lección"
-                            value={lessonForm(module.id).title}
-                            onChange={(event) => updateLessonForm(module.id, { title: event.target.value })}
-                            required
-                          />
-                          <textarea
-                            aria-label={`Descripción de lección para ${module.title}`}
-                            placeholder="Descripción breve"
-                            value={lessonForm(module.id).description}
-                            onChange={(event) => updateLessonForm(module.id, { description: event.target.value })}
-                            rows="2"
-                          />
-                          <div className="training-inline-grid">
+                        {selectedCourse.status === "DRAFT" && (
+                          <form className="training-inline-form" onSubmit={(event) => addLesson(event, module.id)}>
+                            <strong>Nueva lección</strong>
                             <input
-                              aria-label={`URL de video para ${module.title}`}
-                              type="url"
-                              placeholder="https://.../video.mp4"
-                              value={lessonForm(module.id).video_url}
-                              onChange={(event) => updateLessonForm(module.id, { video_url: event.target.value })}
+                              aria-label={`Título de lección para ${module.title}`}
+                              placeholder="Título de la lección"
+                              value={lessonForm(module.id).title}
+                              onChange={(event) => updateLessonForm(module.id, { title: event.target.value })}
+                              required
                             />
-                            <input
-                              aria-label={`Duración de lección para ${module.title}`}
-                              type="number"
-                              min="1"
-                              placeholder="Duración (segundos)"
-                              value={lessonForm(module.id).duration_seconds}
-                              onChange={(event) => updateLessonForm(module.id, { duration_seconds: event.target.value })}
+                            <textarea
+                              aria-label={`Descripción de lección para ${module.title}`}
+                              placeholder="Descripción breve"
+                              value={lessonForm(module.id).description}
+                              onChange={(event) => updateLessonForm(module.id, { description: event.target.value })}
+                              rows="2"
                             />
-                          </div>
-                          <button className="btn btn-secondary" type="submit" disabled={saving}>
-                            Agregar lección
-                          </button>
-                        </form>
+                            <div className="training-inline-grid">
+                              <input
+                                aria-label={`URL de video para ${module.title}`}
+                                type="url"
+                                placeholder="https://.../video.mp4"
+                                value={lessonForm(module.id).video_url}
+                                onChange={(event) => updateLessonForm(module.id, { video_url: event.target.value })}
+                              />
+                              <input
+                                aria-label={`Duración de lección para ${module.title}`}
+                                type="number"
+                                min="1"
+                                placeholder="Duración (segundos)"
+                                value={lessonForm(module.id).duration_seconds}
+                                onChange={(event) => updateLessonForm(module.id, { duration_seconds: event.target.value })}
+                              />
+                            </div>
+                            <button className="btn btn-secondary" type="submit" disabled={saving}>
+                              Agregar lección
+                            </button>
+                          </form>
+                        )}
                       </article>
                     ))}
                   </div>
 
-                  <form className="training-module-form" onSubmit={addModule}>
-                    <span className="eyebrow">Nuevo módulo</span>
-                    <div className="training-inline-grid">
-                      <input
-                        aria-label="Título del módulo"
-                        placeholder="Ej. Bienvenida a ASIATI"
-                        value={moduleForm.title}
-                        onChange={(event) => setModuleForm({ ...moduleForm, title: event.target.value })}
-                        required
-                      />
-                      <input
-                        aria-label="Descripción del módulo"
-                        placeholder="Descripción breve"
-                        value={moduleForm.description}
-                        onChange={(event) => setModuleForm({ ...moduleForm, description: event.target.value })}
-                      />
-                    </div>
-                    <button className="btn btn-secondary" type="submit" disabled={saving}>
-                      + Agregar módulo
-                    </button>
-                  </form>
+                  {selectedCourse.status === "DRAFT" && (
+                    <form className="training-module-form" onSubmit={addModule}>
+                      <span className="eyebrow">Nuevo módulo</span>
+                      <div className="training-inline-grid">
+                        <input
+                          aria-label="Título del módulo"
+                          placeholder="Ej. Bienvenida a ASIATI"
+                          value={moduleForm.title}
+                          onChange={(event) => setModuleForm({ ...moduleForm, title: event.target.value })}
+                          required
+                        />
+                        <input
+                          aria-label="Descripción del módulo"
+                          placeholder="Descripción breve"
+                          value={moduleForm.description}
+                          onChange={(event) => setModuleForm({ ...moduleForm, description: event.target.value })}
+                        />
+                      </div>
+                      <button className="btn btn-secondary" type="submit" disabled={saving}>
+                        + Agregar módulo
+                      </button>
+                    </form>
+                  )}
                 </section>
 
                 {canAssign && (
@@ -520,6 +537,29 @@ function Training() {
                     </form>
                     {selectedCourse.status !== "PUBLISHED" && (
                       <p className="training-form-note">Publica el curso antes de asignarlo.</p>
+                    )}
+
+                    {canViewResults && courseAssignments.length > 0 && (
+                      <div className="training-results-list">
+                        {courseAssignments.map((assignment) => (
+                          <div className="training-result-row" key={assignment.id}>
+                            <div>
+                              <strong>
+                                {[assignment.employee.first_name, assignment.employee.last_name].filter(Boolean).join(" ")
+                                  || assignment.employee.email}
+                              </strong>
+                              <small>{assignment.employee.job_title || assignment.employee.department || assignment.employee.email}</small>
+                            </div>
+                            <div className="training-result-progress">
+                              <span>{assignment.course.progress_percent}%</span>
+                              <div><i style={{ width: `${assignment.course.progress_percent}%` }} /></div>
+                            </div>
+                            <span className="training-status training-status-published">
+                              {assignment.status === "COMPLETED" ? "Completado" : "En curso"}
+                            </span>
+                          </div>
+                        ))}
+                      </div>
                     )}
                   </section>
                 )}
