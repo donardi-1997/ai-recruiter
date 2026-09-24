@@ -11,15 +11,15 @@ def test_wide_layout_centers_compact_content_without_overstretching():
     assert layout.sync_columns == 3
     assert layout.operation_columns == 3
     assert layout.max_content_width == 980
-    assert layout.shell_padding == 16
+    assert layout.shell_padding == 18
 
 
-def test_compact_layout_keeps_two_columns_and_tighter_content_width():
+def test_compact_layout_keeps_actions_dense_without_overstretching():
     layout = _layout_for_width(840)
 
-    assert layout.metric_columns == 2
-    assert layout.sync_columns == 2
-    assert layout.operation_columns == 2
+    assert layout.metric_columns == 3
+    assert layout.sync_columns == 3
+    assert layout.operation_columns == 3
     assert layout.max_content_width == 820
     assert layout.shell_padding == 12
 
@@ -29,7 +29,7 @@ def test_narrow_layout_stacks_actions_and_metric_cards_for_small_screens():
 
     assert layout.metric_columns == 2
     assert layout.sync_columns == 1
-    assert layout.operation_columns == 1
+    assert layout.operation_columns == 2
     assert layout.max_content_width == 700
     assert layout.shell_padding == 10
 

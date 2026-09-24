@@ -11,11 +11,34 @@ from .worker import WorkerSnapshot
 
 _SAFE_CODE = re.compile(r"^(?:GMAIL|INDEED|RESUME)_[A-Z0-9_]{2,100}$")
 
+_UI = {
+    "bg": "#F4F7FB",
+    "surface": "#FFFFFF",
+    "border": "#D7DFEA",
+    "text": "#172033",
+    "muted": "#667085",
+    "brand": "#2457D6",
+    "brand_hover": "#1E4EBB",
+    "brand_pressed": "#193F98",
+    "soft": "#F8FAFC",
+    "disabled_bg": "#E9EDF3",
+    "disabled_fg": "#98A2B3",
+}
+
 _STATUS_PALETTES = {
-    "ready": ("#eef8f0", "#b9dec1", "#1f6330"),
-    "active": ("#eef5ff", "#a9c8f5", "#1f4f8f"),
-    "warning": ("#fff7e8", "#e7c06a", "#7b5500"),
-    "danger": ("#fff0f2", "#e5a1ac", "#8f2335"),
+    "ready": ("#ECFDF3", "#ABEFC6", "#067647"),
+    "active": ("#EEF4FF", "#B2CCFF", "#2457D6"),
+    "warning": ("#FFFAEB", "#FEDF89", "#B54708"),
+    "danger": ("#FEF3F2", "#FECDCA", "#B42318"),
+}
+
+_METRIC_PALETTES = {
+    "pending": ("#F8FAFC", "#D7DFEA", "#344054", "#667085"),
+    "downloading": ("#EEF4FF", "#B2CCFF", "#2457D6", "#475467"),
+    "completed": ("#ECFDF3", "#ABEFC6", "#067647", "#475467"),
+    "attention": ("#FFFAEB", "#FEDF89", "#B54708", "#475467"),
+    "retry": ("#F4F3FF", "#D9D6FE", "#6938EF", "#475467"),
+    "failed": ("#FEF3F2", "#FECDCA", "#B42318", "#475467"),
 }
 
 
@@ -29,20 +52,20 @@ def _layout_for_width(width: int) -> LayoutSpec:
             sync_columns=3,
             operation_columns=3,
             max_content_width=980,
-            shell_padding=16,
+            shell_padding=18,
         )
     if safe_width >= 780:
         return LayoutSpec(
-            metric_columns=2,
-            sync_columns=2,
-            operation_columns=2,
+            metric_columns=3,
+            sync_columns=3,
+            operation_columns=3,
             max_content_width=max(320, min(820, safe_width - 20)),
             shell_padding=12,
         )
     return LayoutSpec(
         metric_columns=2,
         sync_columns=1,
-        operation_columns=1,
+        operation_columns=2,
         max_content_width=max(320, safe_width - 20),
         shell_padding=10,
     )
@@ -99,28 +122,92 @@ def run_ui(*, worker, api, browser) -> None:
 
     root = tk.Tk()
     root.title("ASIATI Resume Agent")
-    root.geometry("980x680")
-    root.minsize(720, 560)
+    root.geometry("980x640")
+    root.minsize(720, 540)
+    root.configure(background=_UI["bg"])
 
     style = ttk.Style(root)
     try:
-        style.theme_use("vista")
+        style.theme_use("clam")
     except tk.TclError:
         pass
-    style.configure("AgentTitle.TLabel", font=("Segoe UI", 18, "bold"))
-    style.configure("AgentSubtitle.TLabel", font=("Segoe UI", 9))
-    style.configure("MetricValue.TLabel", font=("Segoe UI", 16, "bold"))
-    style.configure("MetricLabel.TLabel", font=("Segoe UI", 8))
-    style.configure("Primary.TButton", font=("Segoe UI", 9, "bold"), padding=(12, 8))
-    style.configure("Secondary.TButton", font=("Segoe UI", 9), padding=(9, 6))
 
-    shell = ttk.Frame(root, padding=16)
+    style.configure("App.TFrame", background=_UI["bg"])
+    style.configure("AgentTitle.TLabel", background=_UI["bg"], foreground=_UI["text"], font=("Segoe UI", 19, "bold"))
+    style.configure("AgentSubtitle.TLabel", background=_UI["bg"], foreground=_UI["muted"], font=("Segoe UI", 9))
+    style.configure(
+        "Section.TLabelframe",
+        background=_UI["surface"],
+        bordercolor=_UI["border"],
+        relief="solid",
+        borderwidth=1,
+    )
+    style.configure(
+        "Section.TLabelframe.Label",
+        background=_UI["surface"],
+        foreground=_UI["muted"],
+        font=("Segoe UI", 9, "bold"),
+    )
+    style.configure(
+        "Primary.TButton",
+        background=_UI["brand"],
+        foreground="#FFFFFF",
+        font=("Segoe UI", 9, "bold"),
+        padding=(14, 9),
+        borderwidth=0,
+        relief="flat",
+        anchor="center",
+    )
+    style.map(
+        "Primary.TButton",
+        background=[
+            ("disabled", _UI["disabled_bg"]),
+            ("pressed", _UI["brand_pressed"]),
+            ("active", _UI["brand_hover"]),
+        ],
+        foreground=[("disabled", _UI["disabled_fg"]), ("!disabled", "#FFFFFF")],
+    )
+    style.configure(
+        "Secondary.TButton",
+        background=_UI["surface"],
+        foreground="#344054",
+        font=("Segoe UI", 9),
+        padding=(11, 8),
+        borderwidth=1,
+        relief="solid",
+        anchor="center",
+    )
+    style.map(
+        "Secondary.TButton",
+        background=[
+            ("disabled", _UI["disabled_bg"]),
+            ("pressed", "#EAECF0"),
+            ("active", "#F2F4F7"),
+        ],
+        foreground=[("disabled", _UI["disabled_fg"]), ("!disabled", "#344054")],
+    )
+    style.configure(
+        "Tertiary.TButton",
+        background=_UI["soft"],
+        foreground="#475467",
+        font=("Segoe UI", 9),
+        padding=(10, 7),
+        borderwidth=1,
+        relief="solid",
+        anchor="center",
+    )
+    style.map(
+        "Tertiary.TButton",
+        background=[("pressed", "#EAECF0"), ("active", "#F2F4F7")],
+    )
+
+    shell = ttk.Frame(root, style="App.TFrame", padding=18)
     shell.pack(fill="both", expand=True)
 
-    header = ttk.Frame(shell)
+    header = ttk.Frame(shell, style="App.TFrame")
     header.pack(fill="x")
     header.columnconfigure(0, weight=1)
-    title_box = ttk.Frame(header)
+    title_box = ttk.Frame(header, style="App.TFrame")
     title_box.grid(row=0, column=0, sticky="ew")
     ttk.Label(title_box, text="ASIATI Resume Agent", style="AgentTitle.TLabel").pack(anchor="w")
     ttk.Label(
@@ -130,9 +217,34 @@ def run_ui(*, worker, api, browser) -> None:
     ).pack(anchor="w", pady=(1, 0))
 
     session_var = tk.StringVar(value="Iniciando")
-    session_box = ttk.LabelFrame(header, text="Sesión Indeed", padding=(10, 6))
+    session_box = tk.Frame(
+        header,
+        background=_UI["surface"],
+        highlightthickness=1,
+        highlightbackground=_UI["border"],
+        bd=0,
+        padx=10,
+        pady=6,
+    )
     session_box.grid(row=0, column=1, sticky="e", padx=(10, 0))
-    ttk.Label(session_box, textvariable=session_var, font=("Segoe UI", 9, "bold")).pack()
+    session_heading_widget = tk.Label(
+        session_box,
+        text="SESIÓN INDEED",
+        background=_UI["surface"],
+        foreground=_UI["muted"],
+        font=("Segoe UI", 8, "bold"),
+        anchor="w",
+    )
+    session_heading_widget.pack(fill="x")
+    session_value_widget = tk.Label(
+        session_box,
+        textvariable=session_var,
+        background=_UI["surface"],
+        foreground=_UI["text"],
+        font=("Segoe UI", 9, "bold"),
+        anchor="w",
+    )
+    session_value_widget.pack(fill="x", pady=(1, 0))
 
     status_var = tk.StringVar(value="Iniciando agente...")
     status_bg, status_border, status_fg = _STATUS_PALETTES["active"]
@@ -142,10 +254,10 @@ def run_ui(*, worker, api, browser) -> None:
         highlightthickness=1,
         highlightbackground=status_border,
         bd=0,
-        padx=12,
-        pady=8,
+        padx=14,
+        pady=9,
     )
-    phase.pack(fill="x", pady=(12, 10))
+    phase.pack(fill="x", pady=(10, 8))
     status_heading_widget = tk.Label(
         phase,
         text="ESTADO ACTUAL",
@@ -162,7 +274,7 @@ def run_ui(*, worker, api, browser) -> None:
         justify="left",
         anchor="w",
         background=status_bg,
-        foreground="#202530",
+        foreground=_UI["text"],
         font=("Segoe UI", 9),
     )
     status_label_widget.pack(fill="x", anchor="w", pady=(3, 0))
@@ -171,8 +283,8 @@ def run_ui(*, worker, api, browser) -> None:
         name: tk.StringVar(value="0")
         for name in ("pending", "downloading", "completed", "attention", "retry", "failed")
     }
-    metrics = ttk.Frame(shell)
-    metrics.pack(fill="x", pady=(0, 10))
+    metrics = ttk.Frame(shell, style="App.TFrame")
+    metrics.pack(fill="x", pady=(0, 8))
     metric_defs = [
         ("Pendientes", "pending"),
         ("Procesando", "downloading"),
@@ -183,14 +295,37 @@ def run_ui(*, worker, api, browser) -> None:
     ]
     metric_cards = []
     for label, key in metric_defs:
-        card = ttk.Frame(metrics, padding=(12, 8), relief="solid", borderwidth=1)
+        metric_bg, metric_border, value_fg, label_fg = _METRIC_PALETTES[key]
+        card = tk.Frame(
+            metrics,
+            background=metric_bg,
+            highlightthickness=1,
+            highlightbackground=metric_border,
+            bd=0,
+            padx=12,
+            pady=8,
+        )
         metric_cards.append(card)
-        ttk.Label(card, textvariable=counters[key], style="MetricValue.TLabel").pack(anchor="w")
-        ttk.Label(card, text=label, style="MetricLabel.TLabel").pack(anchor="w")
+        tk.Label(
+            card,
+            textvariable=counters[key],
+            background=metric_bg,
+            foreground=value_fg,
+            font=("Segoe UI", 16, "bold"),
+            anchor="w",
+        ).pack(fill="x")
+        tk.Label(
+            card,
+            text=label,
+            background=metric_bg,
+            foreground=label_fg,
+            font=("Segoe UI", 9),
+            anchor="w",
+        ).pack(fill="x", pady=(1, 0))
 
     candidate_var = tk.StringVar(value="-")
-    candidate_card = ttk.LabelFrame(shell, text="Candidato actual", padding=10)
-    candidate_card.pack(fill="x", pady=(0, 10))
+    candidate_card = ttk.LabelFrame(shell, text="Candidato actual", style="Section.TLabelframe", padding=10)
+    candidate_card.pack(fill="x", pady=(0, 8))
     candidate_label_widget = ttk.Label(
         candidate_card,
         textvariable=candidate_var,
@@ -203,8 +338,8 @@ def run_ui(*, worker, api, browser) -> None:
     updates: queue.Queue[UiState] = queue.Queue()
     stop_event = threading.Event()
 
-    action_card = ttk.LabelFrame(shell, text="Sincronización", padding=10)
-    action_card.pack(fill="x", pady=(0, 9))
+    action_card = ttk.LabelFrame(shell, text="Sincronización", style="Section.TLabelframe", padding=9)
+    action_card.pack(fill="x", pady=(0, 8))
     sync_all_button = ttk.Button(
         action_card,
         text="Sincronizar todo",
@@ -214,19 +349,19 @@ def run_ui(*, worker, api, browser) -> None:
     sync_jobs_button = ttk.Button(
         action_card,
         text="Actualizar vacantes",
-        style="Primary.TButton",
+        style="Secondary.TButton",
         command=lambda: commands.put("sync_jobs"),
     )
     sync_candidates_button = ttk.Button(
         action_card,
         text="Actualizar candidatos",
-        style="Primary.TButton",
+        style="Secondary.TButton",
         command=lambda: commands.put("sync_candidates"),
     )
     sync_buttons = [sync_all_button, sync_jobs_button, sync_candidates_button]
 
-    operations = ttk.LabelFrame(shell, text="Operación", padding=9)
-    operations.pack(fill="x", pady=(0, 9))
+    operations = ttk.LabelFrame(shell, text="Operación", style="Section.TLabelframe", padding=9)
+    operations.pack(fill="x", pady=(0, 8))
     pause_button = ttk.Button(
         operations,
         text="Pausar",
@@ -265,16 +400,18 @@ def run_ui(*, worker, api, browser) -> None:
         open_button,
     ]
 
-    tools = ttk.LabelFrame(shell, text="Diagnóstico", padding=8)
+    tools = ttk.LabelFrame(shell, text="Diagnóstico", style="Section.TLabelframe", padding=8)
     tools.pack(fill="x")
     diagnostic_start_button = ttk.Button(
         tools,
         text="Iniciar diagnóstico",
+        style="Tertiary.TButton",
         command=lambda: commands.put("diagnostic_start"),
     )
     diagnostic_stop_button = ttk.Button(
         tools,
         text="Guardar diagnóstico",
+        style="Tertiary.TButton",
         command=lambda: commands.put("diagnostic_stop"),
     )
     diagnostic_buttons = [diagnostic_start_button, diagnostic_stop_button]
@@ -302,7 +439,7 @@ def run_ui(*, worker, api, browser) -> None:
         horizontal_padding = max(layout.shell_padding, (width - layout.max_content_width) // 2)
         shell.configure(padding=(horizontal_padding, layout.shell_padding))
         usable_width = max(320, min(width - (horizontal_padding * 2), layout.max_content_width))
-        wraplength = max(280, usable_width - 36)
+        wraplength = max(280, usable_width - 32)
         status_label_widget.configure(wraplength=wraplength)
         candidate_label_widget.configure(wraplength=wraplength)
 
@@ -734,6 +871,10 @@ def run_ui(*, worker, api, browser) -> None:
                 phase.configure(background=bg, highlightbackground=border)
                 status_heading_widget.configure(background=bg, foreground=fg)
                 status_label_widget.configure(background=bg)
+
+                session_box.configure(background=bg, highlightbackground=border)
+                session_heading_widget.configure(background=bg, foreground=fg)
+                session_value_widget.configure(background=bg, foreground=fg)
 
                 state = "disabled" if ui.busy else "normal"
                 for button in conflict_buttons:
