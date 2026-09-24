@@ -43,7 +43,12 @@ function Training() {
     description: "",
     is_onboarding: false,
   });
-  const [moduleForm, setModuleForm] = useState({ title: "", description: "" });
+  const [moduleForm, setModuleForm] = useState({
+    title: "",
+    description: "",
+    audience_job_title: "",
+    audience_department: "",
+  });
   const [lessonForms, setLessonForms] = useState({});
   const [assignEmployeeId, setAssignEmployeeId] = useState("");
   const [quizForm, setQuizForm] = useState({
@@ -58,6 +63,8 @@ function Training() {
   const [employeeQuiz, setEmployeeQuiz] = useState(null);
   const [quizAnswers, setQuizAnswers] = useState({});
   const [quizResult, setQuizResult] = useState(null);
+  const [activeLessonId, setActiveLessonId] = useState("");
+  const [creatingPreset, setCreatingPreset] = useState(false);
 
   const loadHome = useCallback(async () => {
     setLoading(true);
@@ -134,6 +141,20 @@ function Training() {
     [myAssignments, selectedAssignmentId],
   );
 
+  const journeyLessons = useMemo(
+    () => (
+      employeeCourse?.course?.modules || []
+    ).flatMap((module) => (
+      module.lessons || []
+    ).map((lesson) => ({ ...lesson, module }))),
+    [employeeCourse],
+  );
+
+  const activeJourneyLesson = useMemo(
+    () => journeyLessons.find((lesson) => lesson.id === activeLessonId) || null,
+    [activeLessonId, journeyLessons],
+  );
+
   const loadEmployeeCourse = useCallback(async (courseId) => {
     if (!courseId) {
       setEmployeeCourse(null);
@@ -144,6 +165,15 @@ function Training() {
     try {
       const { data } = await api.get(`/training/me/courses/${courseId}`);
       setEmployeeCourse(data);
+      setActiveLessonId((current) => (
+        current && (data.course?.modules || []).some((module) => (
+          (module.lessons || []).some((lesson) => lesson.id === current)
+        ))
+          ? current
+          : data.course?.next_lesson_id
+            || data.course?.modules?.[0]?.lessons?.[0]?.id
+            || ""
+      ));
       setQuizResult(null);
       setQuizAnswers({});
 
@@ -209,6 +239,21 @@ function Training() {
     }
   }
 
+  async function createAsiatiPreset() {
+    setCreatingPreset(true);
+    setError("");
+    try {
+      const { data } = await api.post("/training/courses/presets/asiati-onboarding");
+      await loadHome();
+      setSelectedCourseId(data.id);
+      setSelectedCourse(data);
+    } catch (err) {
+      setError(err.response?.data?.detail || "No fue posible crear la ruta ASIATI.");
+    } finally {
+      setCreatingPreset(false);
+    }
+  }
+
   async function publishCourse() {
     if (!selectedCourseId) return;
     setSaving(true);
@@ -237,10 +282,17 @@ function Training() {
         {
           title: moduleForm.title.trim(),
           description: moduleForm.description.trim() || null,
+          audience_job_title: moduleForm.audience_job_title.trim() || null,
+          audience_department: moduleForm.audience_department.trim() || null,
         },
       );
       setSelectedCourse(data);
-      setModuleForm({ title: "", description: "" });
+      setModuleForm({
+        title: "",
+        description: "",
+        audience_job_title: "",
+        audience_department: "",
+      });
       await loadHome();
     } catch (err) {
       setError(err.response?.data?.detail || "No fue posible agregar el módulo.");
@@ -267,6 +319,10 @@ function Training() {
           description: "",
           video_url: "",
           duration_seconds: "",
+          content_type: "VIDEO",
+          external_url: "",
+          estimated_minutes: "",
+          is_optional: false,
         }),
         ...patch,
       },
@@ -282,11 +338,18 @@ function Training() {
       const duration = form.duration_seconds
         ? Number.parseInt(form.duration_seconds, 10)
         : null;
+      const estimatedMinutes = form.estimated_minutes
+        ? Number.parseInt(form.estimated_minutes, 10)
+        : null;
       const { data } = await api.post(`/training/modules/${moduleId}/lessons`, {
         title: form.title.trim(),
         description: form.description.trim() || null,
         video_url: form.video_url.trim() || null,
         duration_seconds: Number.isInteger(duration) ? duration : null,
+        content_type: form.content_type,
+        external_url: form.external_url.trim() || null,
+        estimated_minutes: Number.isInteger(estimatedMinutes) ? estimatedMinutes : null,
+        is_optional: Boolean(form.is_optional),
       });
       setSelectedCourse(data);
       setLessonForms((current) => ({
@@ -296,6 +359,10 @@ function Training() {
           description: "",
           video_url: "",
           duration_seconds: "",
+          content_type: "VIDEO",
+          external_url: "",
+          estimated_minutes: "",
+          is_optional: false,
         },
       }));
       await loadHome();
