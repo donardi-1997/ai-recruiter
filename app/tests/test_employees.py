@@ -194,6 +194,21 @@ def test_employee_status_is_mirrored_to_cognito(db):
     assert cognito.enabled[0]["Username"] == "employee@asiati.com.co"
 
 
+def test_existing_cognito_user_can_be_materialized_for_role_bootstrap(db):
+    cognito = FakeCognitoClient()
+
+    profile = service.ensure_existing_cognito_profile(
+        db,
+        email="existing@asiati.com.co",
+        created_by_sub="bootstrap-script",
+        cognito_client=cognito,
+    )
+
+    assert profile.email == "existing@asiati.com.co"
+    assert profile.cognito_sub == "sub-existing@asiati.com.co"
+    assert service.roles_for_profile(db, profile.id) == []
+
+
 def test_set_employee_role_replaces_previous_role(db):
     employee = _profile(db, email="role@asiati.com.co", role=EMPLOYEE)
 
