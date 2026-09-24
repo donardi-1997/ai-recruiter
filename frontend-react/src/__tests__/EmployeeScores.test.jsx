@@ -90,7 +90,7 @@ describe("Direction employee scoring", () => {
     expect((await screen.findAllByText("Ana Pérez")).length).toBeGreaterThan(0);
     expect(await screen.findByText("Completó el proyecto.")).toBeInTheDocument();
     expect(screen.getByText("Ausencia registrada.")).toBeInTheDocument();
-    expect(screen.getByText("+25")).toBeInTheDocument();
+    expect(screen.getAllByText("+25").length).toBeGreaterThan(0);
   });
 
   it("submits arbitrary positive points with a description", async () => {
