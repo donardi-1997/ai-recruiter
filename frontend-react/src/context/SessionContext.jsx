@@ -38,7 +38,10 @@ export function SessionProvider({ children }) {
   }, []);
 
   useEffect(() => {
-    loadSession();
+    const timeoutId = window.setTimeout(() => {
+      void loadSession();
+    }, 0);
+    return () => window.clearTimeout(timeoutId);
   }, [loadSession]);
 
   const value = useMemo(() => ({
@@ -57,6 +60,7 @@ export function SessionProvider({ children }) {
   );
 }
 
+// eslint-disable-next-line react-refresh/only-export-components
 export function useSession() {
   const value = useContext(SessionContext);
   if (!value) {
