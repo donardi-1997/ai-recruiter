@@ -7,6 +7,7 @@ from sqlalchemy import (
     Boolean,
     CheckConstraint,
     Column,
+    Date,
     DateTime,
     Float,
     ForeignKey,
@@ -594,6 +595,10 @@ class UserProfile(Base):
     last_name = Column(Text, nullable=True)
     job_title = Column(Text, nullable=True)
     department = Column(Text, nullable=True)
+    hire_date = Column(Date, nullable=True)
+    onboarding_status = Column(Text, nullable=False, default="PENDING")
+    onboarding_started_at = Column(DateTime(timezone=True), nullable=True)
+    onboarding_completed_at = Column(DateTime(timezone=True), nullable=True)
     status = Column(Text, nullable=False, default="ACTIVE")
     created_by_sub = Column(Text, nullable=True)
     created_at = Column(
@@ -767,6 +772,7 @@ class TrainingCourse(Base):
     id = Column(Text, primary_key=True, default=lambda: str(uuid.uuid4()))
     title = Column(Text, nullable=False)
     description = Column(Text, nullable=True)
+    is_onboarding = Column(Boolean, nullable=False, default=False)
     status = Column(Text, nullable=False, default="DRAFT")
     created_by_sub = Column(Text, nullable=False)
     created_at = Column(
