@@ -33,6 +33,7 @@ CORE_TABLES = {
     "training_quizzes",
     "training_quiz_questions",
     "training_quiz_attempts",
+    "candidate_restriction_events",
 }
 
 
@@ -83,6 +84,7 @@ def test_alembic_head_builds_current_postgres_schema():
             "training_quizzes",
             "training_quiz_questions",
             "training_quiz_attempts",
+            "candidate_restriction_events",
         }.issubset(tables)
 
         for table_name in sorted(CORE_TABLES):
@@ -228,6 +230,28 @@ def test_alembic_head_builds_current_postgres_schema():
                     "AND permission_code LIKE 'employee_scores.%'"
                 )
             ).scalar_one()
+        candidate_columns = {
+            column["name"] for column in inspector.get_columns("candidates")
+        }
+        assert {
+            "is_banned",
+            "banned_at",
+            "banned_by_sub",
+            "banned_reason",
+        }.issubset(candidate_columns)
+
+        restriction_event_columns = {
+            column["name"]
+            for column in inspector.get_columns("candidate_restriction_events")
+        }
+        assert {
+            "candidate_id",
+            "action",
+            "reason",
+            "created_by_sub",
+            "created_at",
+        }.issubset(restriction_event_columns)
+
         job_columns = {column["name"] for column in inspector.get_columns("jobs")}
         assert {"indeed_description", "ai_description", "active_description_source"}.issubset(job_columns)
 
@@ -283,6 +307,6 @@ def test_alembic_head_builds_current_postgres_schema():
         }.issubset(training_lesson_columns)
 
         assert admin_score_grants == 0
-        assert revision == "021"
+        assert revision == "022"
     finally:
         engine.dispose()

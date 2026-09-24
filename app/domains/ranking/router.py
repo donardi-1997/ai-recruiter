@@ -5,6 +5,8 @@ from sqlalchemy.orm import Session
 
 from app.deps import get_db, require_permission
 from app import crud
+from app.domains.candidates import repository as candidates_repository
+from app.domains.ranking.costs import estimate_mass_evaluation_cost
 from app.domains.ranking.service import recalculate_ranking, build_latest_ranking
 from app.domains.ranking.exceptions import (
     RankingJobNotFound,
@@ -20,6 +22,71 @@ def _require_job(db: Session, job_id: str, owner_sub: str):
     if not job:
         raise HTTPException(status_code=404, detail="Vacante no encontrada.")
     return job
+
+
+@router.get("/{job_id}/ranking/cost-estimate")
+def get_mass_evaluation_cost_estimate(
+    job_id: str,
+    mode: str = Query("fast", pattern=r"^(fast|exhaustive)$"),
+    scope: str = Query("all", pattern=r"^(assigned|all)$"),
+    candidate_count: int | None = Query(None, ge=1),
+    deep_candidate_count: int | None = Query(None, ge=1),
+    db: Session = Depends(get_db),
+    _user: dict = Depends(require_permission("candidates.evaluate")),
+):
+    _require_job(db, job_id, _user["sub"])
+
+    if scope == "all":
+        available = candidates_repository.count_candidates(
+            db,
+            owner_sub=_user["sub"],
+            include_banned=False,
+        )
+        total_including_banned = candidates_repository.count_candidates(
+            db,
+            owner_sub=_user["sub"],
+            include_banned=True,
+        )
+    else:
+        available = candidates_repository.count_candidates_for_job(
+            db,
+            job_id=job_id,
+            owner_sub=_user["sub"],
+            include_banned=False,
+        )
+        total_including_banned = candidates_repository.count_candidates_for_job(
+            db,
+            job_id=job_id,
+            owner_sub=_user["sub"],
+            include_banned=True,
+        )
+
+    if candidate_count is not None and candidate_count > available:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"Solo hay {available} candidatos elegibles para este alcance."
+            ),
+        )
+
+    selected_count = available if candidate_count is None else candidate_count
+    estimate = estimate_mass_evaluation_cost(
+        candidate_count=selected_count,
+        mode=mode,
+        deep_candidate_count=deep_candidate_count,
+    )
+    estimate.update(
+        {
+            "job_id": job_id,
+            "scope": scope,
+            "available_candidate_count": available,
+            "excluded_banned_count": max(
+                total_including_banned - available,
+                0,
+            ),
+        }
+    )
+    return estimate
 
 
 @router.get("/{job_id}/ranking")

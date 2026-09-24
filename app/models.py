@@ -40,10 +40,54 @@ class Candidate(Base):
         default=lambda: datetime.now(timezone.utc),
     )
     metadata_ = Column("metadata", JSON, nullable=True, default=dict)
+    is_banned = Column(Boolean, nullable=False, default=False)
+    banned_at = Column(DateTime(timezone=True), nullable=True)
+    banned_by_sub = Column(Text, nullable=True)
+    banned_reason = Column(Text, nullable=True)
 
     rankings = relationship("RankingItem", back_populates="candidate", cascade="all, delete-orphan")
     jobs = relationship("JobCandidate", back_populates="candidate", cascade="all, delete-orphan")
     indeed_links = relationship("IndeedCandidateLink", back_populates="candidate", cascade="all, delete-orphan")
+    restriction_events = relationship(
+        "CandidateRestrictionEvent",
+        back_populates="candidate",
+        passive_deletes=True,
+        order_by="CandidateRestrictionEvent.created_at",
+    )
+
+
+class CandidateRestrictionEvent(Base):
+    """Auditable ban/unban event for a retained candidate."""
+
+    __tablename__ = "candidate_restriction_events"
+    __table_args__ = (
+        Index(
+            "idx_candidate_restriction_events_candidate_created",
+            "candidate_id",
+            "created_at",
+        ),
+    )
+
+    id = Column(
+        UUID(as_uuid=False),
+        primary_key=True,
+        default=lambda: str(uuid.uuid4()),
+    )
+    candidate_id = Column(
+        UUID(as_uuid=False),
+        ForeignKey("candidates.id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    action = Column(Text, nullable=False)
+    reason = Column(Text, nullable=False)
+    created_by_sub = Column(Text, nullable=False)
+    created_at = Column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=lambda: datetime.now(timezone.utc),
+    )
+
+    candidate = relationship("Candidate", back_populates="restriction_events")
 
 
 class Job(Base):

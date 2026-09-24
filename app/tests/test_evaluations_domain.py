@@ -8,7 +8,7 @@ from app.domains.evaluations import service
 
 
 def test_owner_scoped_entrypoint_resolves_objects_then_delegates(monkeypatch):
-    candidate = SimpleNamespace(id="candidate-1")
+    candidate = SimpleNamespace(id="candidate-1", is_banned=False)
     job = SimpleNamespace(
         id="job-1",
         description="Python y APIs REST.",
@@ -69,7 +69,7 @@ def test_owner_scoped_entrypoint_propagates_candidate_not_found(monkeypatch):
 
 
 def test_owner_scoped_entrypoint_raises_job_not_found(monkeypatch):
-    candidate = SimpleNamespace(id="candidate-1")
+    candidate = SimpleNamespace(id="candidate-1", is_banned=False)
     monkeypatch.setattr(
         service.candidates_service,
         "require_candidate",
@@ -86,5 +86,23 @@ def test_owner_scoped_entrypoint_raises_job_not_found(monkeypatch):
             object(),
             candidate_id="candidate-1",
             job_id="missing-job",
+            owner_sub="owner-1",
+        )
+
+
+
+def test_owner_scoped_entrypoint_rejects_banned_candidate(monkeypatch):
+    candidate = SimpleNamespace(id="candidate-1", is_banned=True)
+    monkeypatch.setattr(
+        service.candidates_service,
+        "require_candidate",
+        lambda *args, **kwargs: candidate,
+    )
+
+    with pytest.raises(service.CandidateBanned):
+        service.evaluate_candidate_for_owner(
+            object(),
+            candidate_id="candidate-1",
+            job_id="job-1",
             owner_sub="owner-1",
         )

@@ -3,7 +3,7 @@
 from datetime import datetime
 from typing import Any
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, field_validator
 
 
 class CandidateResponse(BaseModel):
@@ -14,6 +14,10 @@ class CandidateResponse(BaseModel):
     created_at: datetime | None = None
     metadata: dict[str, Any] | None = None
     filename: str | None = None
+    is_banned: bool = False
+    banned_at: datetime | None = None
+    banned_by_sub: str | None = None
+    banned_reason: str | None = None
 
     model_config = {"from_attributes": True}
 
@@ -41,3 +45,16 @@ class CandidateEvaluationsResponse(BaseModel):
 
 class ApplicationStatusRequest(BaseModel):
     status: str
+
+
+
+class CandidateRestrictionRequest(BaseModel):
+    reason: str = Field(min_length=3, max_length=1000)
+
+    @field_validator("reason")
+    @classmethod
+    def normalize_reason(cls, value: str) -> str:
+        normalized = value.strip()
+        if len(normalized) < 3:
+            raise ValueError("reason is required")
+        return normalized

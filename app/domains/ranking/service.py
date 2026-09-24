@@ -95,6 +95,12 @@ def recalculate_ranking(
                 owner_sub=owner_sub,
             )
 
+        ranking_candidates = [
+            candidate
+            for candidate in ranking_candidates
+            if not candidate.is_banned
+        ]
+
         evaluated_count = 0
         failed_count = 0
         failures = []
@@ -245,6 +251,12 @@ def materialize_ranking_from_evaluations(
                 owner_sub=owner_sub,
             )
 
+        ranking_candidates = [
+            candidate
+            for candidate in ranking_candidates
+            if not candidate.is_banned
+        ]
+
         evaluated_count = 0
         failed_count = 0
         failures: list[dict[str, str]] = []
@@ -344,6 +356,8 @@ def build_latest_ranking(
                 "candidate_id": item.candidate_id,
                 "match_score": evaluation.match_score,
                 "candidate_name": item.candidate.name if item.candidate else "",
+                "is_banned": bool(item.candidate.is_banned) if item.candidate else False,
+                "banned_reason": item.candidate.banned_reason if item.candidate else None,
                 "recommendation": evaluation.recommendation,
                 "status": "COMPLETED",
                 "strengths": evaluation.strengths or [],
@@ -356,6 +370,8 @@ def build_latest_ranking(
                 "candidate_id": item.candidate_id,
                 "match_score": None,
                 "candidate_name": item.candidate.name if item.candidate else "",
+                "is_banned": bool(item.candidate.is_banned) if item.candidate else False,
+                "banned_reason": item.candidate.banned_reason if item.candidate else None,
                 "recommendation": "EVALUATION_FAILED",
                 "status": "FAILED",
                 "strengths": [],
@@ -368,6 +384,8 @@ def build_latest_ranking(
                 "candidate_id": item.candidate_id,
                 "match_score": None,
                 "candidate_name": item.candidate.name if item.candidate else "",
+                "is_banned": bool(item.candidate.is_banned) if item.candidate else False,
+                "banned_reason": item.candidate.banned_reason if item.candidate else None,
                 "recommendation": "PENDING",
                 "status": "PENDING",
                 "strengths": [],

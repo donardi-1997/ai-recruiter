@@ -30,6 +30,10 @@ function Ranking() {
   const [isRefreshingRanking, setIsRefreshingRanking] = useState(false);
   const [isRecalculating, setIsRecalculating] = useState(false);
   const [actionFeedback, setActionFeedback] = useState(null);
+  const [costDialogOpen, setCostDialogOpen] = useState(false);
+  const [costEstimate, setCostEstimate] = useState(null);
+  const [costEstimateLoading, setCostEstimateLoading] = useState(false);
+  const [costAccepted, setCostAccepted] = useState(false);
 
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(10);
@@ -269,6 +273,9 @@ async function evaluateCandidates() {
       );
 
       const result = response.data;
+      setCostDialogOpen(false);
+      setCostEstimate(null);
+      setCostAccepted(false);
 
       setPage(1);
       const refreshed = await loadRanking(1, pageSize, selectedJob, rankingScope);
@@ -397,7 +404,7 @@ async function refreshRanking() {
 
 // Full recalculation forces evaluation of all assigned
 // candidates and therefore may invoke Bedrock/LLM.
-async function recalculateRanking() {
+async function openRecalculationDisclaimer() {
     if (!selectedJob) {
       setActionFeedback({
         type: "info",
@@ -410,16 +417,43 @@ async function recalculateRanking() {
       return;
     }
 
-    const scopeLabel =
-      rankingScope === "all"
-        ? "todos tus candidatos"
-        : "todos los candidatos asignados a esta vacante";
+    setCostDialogOpen(true);
+    setCostEstimate(null);
+    setCostAccepted(false);
+    setCostEstimateLoading(true);
+    try {
+      const response = await api.get(
+        `/jobs/${selectedJob}/ranking/cost-estimate`,
+        {
+          params: {
+            mode: "exhaustive",
+            scope: rankingScope,
+          },
+        },
+      );
+      setCostEstimate(response.data);
+    } catch (error) {
+      setCostDialogOpen(false);
+      setActionFeedback({
+        type: "error",
+        message:
+          error.response?.data?.detail ||
+          "No fue posible calcular el costo estimado de la evaluación.",
+      });
+    } finally {
+      setCostEstimateLoading(false);
+    }
+}
 
-    const confirmed = window.confirm(
-      `Se volverán a evaluar ${scopeLabel} y se reconstruirá el ranking. Esta operación puede tardar y consumir recursos de IA. ¿Deseas continuar?`,
-    );
+function closeCostDialog() {
+    if (isRecalculating) return;
+    setCostDialogOpen(false);
+    setCostEstimate(null);
+    setCostAccepted(false);
+}
 
-    if (!confirmed) {
+async function recalculateRanking() {
+    if (!selectedJob || !costAccepted || !costEstimate) {
       return;
     }
 
@@ -732,7 +766,7 @@ async function recalculateRanking() {
             </button>
             <button
               className="btn ranking-btn-recalculate"
-              onClick={recalculateRanking}
+              onClick={openRecalculationDisclaimer}
               disabled={!selectedJob || loading || rankingActionBusy}
               title="Vuelve a evaluar todos los candidatos de esta vacante."
             >
@@ -929,6 +963,9 @@ async function recalculateRanking() {
                   <div className="ranking-candidate-header-left">
                     <span className="ranking-candidate-position">#{position}</span>
                     <span className="ranking-candidate-name">{candidate.candidate_name}</span>
+                    {candidate.is_banned && (
+                      <span className="ranking-banned-chip">Vetado</span>
+                    )}
                     <span className="ranking-candidate-status">
                       <span className={`ranking-badge ${getRecommendationClass(candidate.recommendation)}`}>
                         {getRecommendationLabel(candidate.recommendation)}
@@ -996,6 +1033,13 @@ async function recalculateRanking() {
                   )}
                 </div>
 
+                {candidate.is_banned && (
+                  <div className="ranking-banned-alert" role="alert">
+                    <strong>⚠ Candidato vetado</strong>
+                    <span>{candidate.banned_reason || "Este perfil fue vetado por un administrador."}</span>
+                  </div>
+                )}
+
                 <div className="ranking-candidate-actions">
                   <button
                     className="btn btn-secondary ranking-analysis-btn"
@@ -1045,6 +1089,137 @@ async function recalculateRanking() {
               Siguiente
             </button>
           </div>
+        </div>
+      )}
+
+      {costDialogOpen && (
+        <div className="modal-overlay" onMouseDown={closeCostDialog}>
+          <section
+            className="modal ranking-cost-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="ranking-cost-title"
+            onMouseDown={(event) => event.stopPropagation()}
+          >
+            <div className="modal-header">
+              <div>
+                <span className="eyebrow">Confirmación de costo</span>
+                <h2 id="ranking-cost-title">Evaluación masiva</h2>
+                <p className="muted">
+                  Revisa la estimación antes de volver a evaluar esta vacante.
+                </p>
+              </div>
+              <button
+                type="button"
+                className="btn btn-close"
+                onClick={closeCostDialog}
+                disabled={isRecalculating}
+                aria-label="Cerrar estimación de costo"
+              >
+                ✕
+              </button>
+            </div>
+
+            {costEstimateLoading ? (
+              <div className="page-loading compact-loading">
+                <span /> Calculando costo estimado…
+              </div>
+            ) : costEstimate ? (
+              <>
+                <div className="ranking-cost-grid">
+                  <div>
+                    <span>Candidatos a evaluar</span>
+                    <strong>{costEstimate.candidate_count.toLocaleString("es-CO")}</strong>
+                  </div>
+                  <div>
+                    <span>IA profunda</span>
+                    <strong>{costEstimate.deep_candidate_count.toLocaleString("es-CO")}</strong>
+                  </div>
+                  <div>
+                    <span>Costo estimado</span>
+                    <strong>USD ${Number(costEstimate.estimated_cost_usd).toFixed(2)}</strong>
+                  </div>
+                  <div>
+                    <span>Máximo con margen</span>
+                    <strong>USD ${Number(costEstimate.estimated_cost_with_margin_usd).toFixed(2)}</strong>
+                  </div>
+                </div>
+
+                {costEstimate.excluded_banned_count > 0 && (
+                  <div className="ranking-cost-note">
+                    {costEstimate.excluded_banned_count.toLocaleString("es-CO")} candidato
+                    {costEstimate.excluded_banned_count === 1 ? "" : "s"} vetado
+                    {costEstimate.excluded_banned_count === 1 ? "" : "s"} quedará
+                    {costEstimate.excluded_banned_count === 1 ? "" : "n"} fuera de esta corrida.
+                  </div>
+                )}
+
+                <div className="ranking-cost-details">
+                  <div>
+                    <span>Tokens entrada estimados</span>
+                    <b>{costEstimate.input_tokens_estimated.toLocaleString("es-CO")}</b>
+                  </div>
+                  <div>
+                    <span>Tokens salida estimados</span>
+                    <b>{costEstimate.output_tokens_estimated.toLocaleString("es-CO")}</b>
+                  </div>
+                  <div>
+                    <span>Margen preventivo</span>
+                    <b>{costEstimate.margin_percent}%</b>
+                  </div>
+                  <div>
+                    <span>Referencia de tiempo mínima teórica</span>
+                    <b>
+                      {costEstimate.theoretical_min_seconds > 0
+                        ? `~${Math.ceil(costEstimate.theoretical_min_seconds / 60)} min`
+                        : "—"}
+                    </b>
+                  </div>
+                </div>
+
+                <div className="ranking-cost-disclaimer">
+                  <strong>Importante</strong>
+                  <p>{costEstimate.disclaimer}</p>
+                  <p>
+                    Esta confirmación usa la cantidad real de candidatos elegibles para
+                    el alcance seleccionado. El cálculo es informativo y no constituye
+                    una factura ni un tope garantizado de AWS.
+                  </p>
+                </div>
+
+                <label className="ranking-cost-acceptance">
+                  <input
+                    type="checkbox"
+                    checked={costAccepted}
+                    onChange={(event) => setCostAccepted(event.target.checked)}
+                  />
+                  <span>
+                    Entiendo que esta operación puede generar costos adicionales y que
+                    el valor real puede variar.
+                  </span>
+                </label>
+
+                <div className="form-actions">
+                  <button
+                    type="button"
+                    className="btn btn-secondary"
+                    onClick={closeCostDialog}
+                    disabled={isRecalculating}
+                  >
+                    Cancelar
+                  </button>
+                  <button
+                    type="button"
+                    className="btn btn-primary"
+                    onClick={recalculateRanking}
+                    disabled={!costAccepted || isRecalculating || costEstimate.candidate_count === 0}
+                  >
+                    {isRecalculating ? "Iniciando…" : "Iniciar evaluación"}
+                  </button>
+                </div>
+              </>
+            ) : null}
+          </section>
         </div>
       )}
 

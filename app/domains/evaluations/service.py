@@ -10,7 +10,7 @@ import logging
 from sqlalchemy.orm import Session
 
 from app.domains.candidates import service as candidates_service
-from app.domains.candidates.exceptions import CandidateNotFound, JobNotFound
+from app.domains.candidates.exceptions import CandidateBanned, CandidateNotFound, JobNotFound
 from app.domains.evaluations import repository as evaluations_repository
 from app.domains.evaluations.rules import (
     normalize_completed_evaluation_result,
@@ -55,6 +55,9 @@ def evaluate_candidate_for_owner(
         candidate_id,
         owner_sub,
     )
+    if getattr(candidate, "is_banned", False):
+        raise CandidateBanned(candidate_id)
+
     job = jobs_repository.get_job(db, job_id, owner_sub=owner_sub)
     if job is None:
         raise JobNotFound(job_id)

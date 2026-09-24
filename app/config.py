@@ -15,6 +15,19 @@ CORS_ORIGINS = (
 
 
 @dataclass(frozen=True)
+class MassEvaluationCostSettings:
+    """Planning assumptions used by the pre-run mass-evaluation calculator."""
+
+    nova_input_usd_per_million: float
+    nova_output_usd_per_million: float
+    input_tokens_per_deep_candidate: int
+    output_tokens_per_deep_candidate: int
+    fast_default_deep_candidates: int
+    cost_margin_percent: float
+    max_deep_requests_per_minute: int
+
+
+@dataclass(frozen=True)
 class IndeedSettings:
     enabled: bool
     client_id: str
@@ -115,6 +128,39 @@ def get_import_evaluation_concurrency() -> int:
 def get_import_lease_timeout_seconds() -> int:
     """Return the stale-worker lease timeout used for crash recovery."""
     return int(os.getenv("IMPORT_LEASE_TIMEOUT_SECONDS", "300"))
+
+
+def get_mass_evaluation_cost_settings() -> MassEvaluationCostSettings:
+    """Return configurable pricing assumptions for mass evaluation previews."""
+
+    return MassEvaluationCostSettings(
+        nova_input_usd_per_million=float(
+            os.getenv("MASS_EVAL_NOVA_INPUT_USD_PER_MILLION", "0.30")
+        ),
+        nova_output_usd_per_million=float(
+            os.getenv("MASS_EVAL_NOVA_OUTPUT_USD_PER_MILLION", "2.50")
+        ),
+        input_tokens_per_deep_candidate=max(
+            1,
+            int(os.getenv("MASS_EVAL_INPUT_TOKENS_PER_CANDIDATE", "4500")),
+        ),
+        output_tokens_per_deep_candidate=max(
+            1,
+            int(os.getenv("MASS_EVAL_OUTPUT_TOKENS_PER_CANDIDATE", "600")),
+        ),
+        fast_default_deep_candidates=max(
+            1,
+            int(os.getenv("MASS_EVAL_FAST_DEEP_CANDIDATES", "1000")),
+        ),
+        cost_margin_percent=max(
+            0.0,
+            float(os.getenv("MASS_EVAL_COST_MARGIN_PERCENT", "25")),
+        ),
+        max_deep_requests_per_minute=max(
+            1,
+            int(os.getenv("MASS_EVAL_MAX_DEEP_REQUESTS_PER_MINUTE", "2000")),
+        ),
+    )
 
 
 def get_gmail_settings() -> GmailSettings:

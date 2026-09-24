@@ -7,6 +7,7 @@ from app.deps import get_db, require_permission
 from app.domains.evaluations.presenter import public_evaluation_payload
 from app.domains.evaluations.schemas import EvaluateRequest
 from app.domains.evaluations.service import (
+    CandidateBanned,
     CandidateNotFound,
     EvaluationCriteriaMissing,
     JobNotFound,
@@ -32,6 +33,11 @@ def evaluate_candidate_endpoint(
         )
     except CandidateNotFound as exc:
         raise HTTPException(status_code=404, detail="Candidato no encontrado.") from exc
+    except CandidateBanned as exc:
+        raise HTTPException(
+            status_code=409,
+            detail="El candidato está vetado. Quita el veto antes de evaluarlo.",
+        ) from exc
     except JobNotFound as exc:
         raise HTTPException(status_code=404, detail="Vacante no encontrada.") from exc
     except EvaluationCriteriaMissing as exc:

@@ -17,6 +17,12 @@ import {
 
 import Candidates from "../pages/Candidates";
 
+vi.mock("../context/SessionContext", () => ({
+  useSession: () => ({
+    hasPermission: (permission) => permission === "candidates.restrict",
+  }),
+}));
+
 vi.mock("../api/client", () => ({
   default: {
     get: vi.fn(),
@@ -232,6 +238,39 @@ describe("Candidates evaluation", () => {
     expect(
       screen.queryByText("Sin clasificación"),
     ).not.toBeInTheDocument();
+  });
+
+  it("replaces deletion with an auditable veto action", async () => {
+    api.post.mockResolvedValueOnce({
+      data: {
+        candidate: {
+          candidate_id: "candidate-1",
+          name: "Ana Test",
+          is_banned: true,
+          banned_reason: "Fraude documental",
+        },
+        changed: true,
+      },
+    });
+
+    renderCandidates();
+    await screen.findByText("Ana Test");
+
+    expect(screen.queryByRole("button", { name: /Eliminar/i })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Vetar" }));
+
+    expect(await screen.findByRole("heading", { name: "Vetar candidato" })).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("Motivo del veto"), {
+      target: { value: "Fraude documental" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Confirmar veto" }));
+
+    await waitFor(() => {
+      expect(api.post).toHaveBeenCalledWith(
+        "/candidates/candidate-1/ban",
+        { reason: "Fraude documental" },
+      );
+    });
   });
 
   it("shows Agregar candidato on Candidates page and opens the upload modal", async () => {

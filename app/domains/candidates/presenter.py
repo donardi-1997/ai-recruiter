@@ -15,6 +15,10 @@ def candidate_to_dict(candidate) -> dict:
         "created_at": candidate.created_at.isoformat() if candidate.created_at else None,
         "metadata": metadata,
         "filename": metadata.get("filename") if metadata else None,
+        "is_banned": bool(candidate.is_banned),
+        "banned_at": candidate.banned_at.isoformat() if candidate.banned_at else None,
+        "banned_by_sub": candidate.banned_by_sub,
+        "banned_reason": candidate.banned_reason,
     }
 
 
@@ -89,3 +93,15 @@ def evaluation_requirements_to_dict(evaluation) -> dict:
             }
         )
     return {"requirements": requirements}
+
+
+
+def restriction_event_to_dict(event) -> dict:
+    return {
+        "id": event.id,
+        "candidate_id": event.candidate_id,
+        "action": event.action,
+        "reason": event.reason,
+        "created_by_sub": event.created_by_sub,
+        "created_at": event.created_at.isoformat() if event.created_at else None,
+    }
