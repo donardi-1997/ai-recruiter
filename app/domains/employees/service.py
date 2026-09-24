@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import date
 import os
 
 from botocore.exceptions import ClientError
@@ -60,6 +61,16 @@ def employee_payload(db: Session, profile: UserProfile) -> dict:
         "last_name": profile.last_name,
         "job_title": profile.job_title,
         "department": profile.department,
+        "hire_date": profile.hire_date.isoformat() if profile.hire_date else None,
+        "onboarding_status": profile.onboarding_status,
+        "onboarding_started_at": (
+            profile.onboarding_started_at.isoformat()
+            if profile.onboarding_started_at else None
+        ),
+        "onboarding_completed_at": (
+            profile.onboarding_completed_at.isoformat()
+            if profile.onboarding_completed_at else None
+        ),
         "status": profile.status,
         "roles": roles_for_profile(db, profile.id),
         "created_at": profile.created_at.isoformat() if profile.created_at else None,
@@ -173,6 +184,7 @@ def create_employee(
     last_name: str,
     job_title: str | None,
     department: str | None,
+    hire_date: date | None = None,
     role_code: str = EMPLOYEE,
     created_by_sub: str | None = None,
     cognito_client=None,
@@ -213,6 +225,8 @@ def create_employee(
             last_name=last_name,
             job_title=job_title,
             department=department,
+            hire_date=hire_date,
+            onboarding_status="PENDING",
             status="ACTIVE",
             created_by_sub=created_by_sub,
         )
@@ -256,7 +270,7 @@ def update_employee(
     cognito_client=None,
 ) -> UserProfile:
     profile = require_employee(db, employee_id)
-    allowed = {"first_name", "last_name", "job_title", "department"}
+    allowed = {"first_name", "last_name", "job_title", "department", "hire_date"}
     changes = {key: value for key, value in changes.items() if key in allowed}
 
     identity_changes = []
@@ -337,3 +351,42 @@ def set_employee_role(
     db.commit()
     db.refresh(profile)
     return profile
+
+
+def employee_summary(db: Session) -> dict:
+    profiles = db.query(UserProfile).all()
+    total = len(profiles)
+    active = sum(1 for profile in profiles if profile.status == "ACTIVE")
+    disabled = total - active
+
+    onboarding_counts = {
+        "PENDING": 0,
+        "IN_PROGRESS": 0,
+        "COMPLETED": 0,
+    }
+    for profile in profiles:
+        status = profile.onboarding_status
+        if status in onboarding_counts:
+            onboarding_counts[status] += 1
+
+    onboarding_total = sum(onboarding_counts.values())
+    completed = onboarding_counts["COMPLETED"]
+    completion_percent = (
+        round((completed / onboarding_total) * 100)
+        if onboarding_total
+        else 0
+    )
+
+    return {
+        "employees_total": total,
+        "active": active,
+        "disabled": disabled,
+        "onboarding": {
+            "total": onboarding_total,
+            "pending": onboarding_counts["PENDING"],
+            "in_progress": onboarding_counts["IN_PROGRESS"],
+            "completed": completed,
+            "completion_percent": completion_percent,
+        },
+    }
+
