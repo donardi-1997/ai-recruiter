@@ -3,6 +3,7 @@
 import os
 
 import pytest
+from fastapi import Depends
 
 # Ensure SQLite is used for all tests
 os.environ.setdefault("DATABASE_URL", "sqlite:///:memory:")
@@ -10,35 +11,35 @@ os.environ.setdefault("DATABASE_URL", "sqlite:///:memory:")
 
 @pytest.fixture(autouse=True)
 def default_recruiter_rbac_principal():
-    """Preserve the legacy test assumption that HTTP clients are recruiters.
+    """Preserve legacy HTTP-test identity while adding recruiter permissions.
 
     Production still defaults newly materialized Cognito users to EMPLOYEE.
-    Existing endpoint tests historically override only get_current_user, so
-    this test-only principal keeps those contracts focused on their domain
-    behavior while dedicated RBAC tests cover authorization separately.
+    Existing endpoint tests historically override only get_current_user; this
+    test-only dependency keeps that exact subject/email for owner-scope tests
+    and adds the permissions those recruiter scenarios require.
     """
 
     from app.access_control import PERMISSION_DEFINITIONS, SUPER_ADMIN
-    from app.deps import get_current_principal
+    from app.deps import get_current_principal, get_current_user
     from app.main import app
 
-    principal = {
-        "sub": "test-rbac-principal",
-        "email": "test-rbac@example.com",
-        "profile": {
-            "id": "test-rbac-profile",
-            "first_name": "Test",
-            "last_name": "Recruiter",
-            "job_title": "Test",
-            "department": "QA",
-            "status": "ACTIVE",
-        },
-        "roles": [SUPER_ADMIN],
-        "permissions": sorted(PERMISSION_DEFINITIONS),
-    }
-
-    def override_principal():
-        return principal
+    def override_principal(
+        current_user: dict = Depends(get_current_user),
+    ):
+        return {
+            "sub": current_user.get("sub"),
+            "email": current_user.get("email"),
+            "profile": {
+                "id": f"test-profile-{current_user.get('sub')}",
+                "first_name": "Test",
+                "last_name": "Recruiter",
+                "job_title": "Test",
+                "department": "QA",
+                "status": "ACTIVE",
+            },
+            "roles": [SUPER_ADMIN],
+            "permissions": sorted(PERMISSION_DEFINITIONS),
+        }
 
     app.dependency_overrides.setdefault(
         get_current_principal,
