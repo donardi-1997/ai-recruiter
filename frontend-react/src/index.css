@@ -2781,3 +2781,58 @@ select { appearance: none; padding-right: 42px; background-image: linear-gradien
   }
 }
 
+.training-journey-quiz-step {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 10px;
+  padding: 11px 12px;
+  border: 1px dashed var(--border);
+  border-radius: 12px;
+  background: var(--surface);
+  text-align: left;
+  cursor: pointer;
+}
+
+.training-journey-quiz-step:hover {
+  border-color: var(--blue);
+}
+
+.training-journey-quiz-step > span {
+  display: grid;
+  width: 28px;
+  height: 28px;
+  place-items: center;
+  border-radius: 50%;
+  background: rgba(59, 130, 246, .1);
+  color: var(--blue);
+  font-size: .72rem;
+  font-weight: 900;
+}
+
+.training-journey-quiz-step.is-complete > span {
+  background: var(--success-bg);
+  color: var(--success);
+}
+
+.training-journey-quiz-step strong,
+.training-journey-quiz-step small {
+  display: block;
+}
+
+.training-journey-quiz-step strong {
+  color: var(--ink);
+  font-size: .72rem;
+}
+
+.training-journey-quiz-step small {
+  margin-top: 2px;
+  color: var(--ink-faint);
+  font-size: .62rem;
+}
+
+#training-final-quiz {
+  scroll-margin-top: 88px;
+}
+

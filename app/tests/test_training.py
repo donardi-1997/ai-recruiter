@@ -883,6 +883,60 @@ def test_optional_resources_do_not_block_course_completion(db):
     assert result["course"]["progress_percent"] == 100
 
 
+def test_employee_journey_hides_empty_admin_scaffold_modules(db):
+    employee = _employee(db)
+    course = service.create_course(
+        db,
+        title="Ruta limpia",
+        description=None,
+        created_by_sub="admin-sub",
+    )
+    visible = service.add_module(
+        db,
+        course_id=course.id,
+        title="Contenido listo",
+        description=None,
+    )
+    service.add_lesson(
+        db,
+        module_id=visible.id,
+        title="Actividad",
+        description=None,
+        video_url=None,
+        duration_seconds=None,
+        content_type="ARTICLE",
+        estimated_minutes=2,
+    )
+    service.add_module(
+        db,
+        course_id=course.id,
+        title="Pendiente de configurar",
+        description="Solo visible en administración hasta tener contenido.",
+    )
+    service.update_course(db, course.id, status="PUBLISHED")
+    service.assign_course(
+        db,
+        course_id=course.id,
+        employee_id=employee.id,
+        assigned_by_sub="admin-sub",
+    )
+
+    employee_payload = service.get_my_course(
+        db,
+        employee_id=employee.id,
+        course_id=course.id,
+    )["course"]
+    admin_payload = service.get_course(db, course.id)
+
+    assert [module["title"] for module in employee_payload["modules"]] == [
+        "Contenido listo",
+    ]
+    assert [module["title"] for module in admin_payload["modules"]] == [
+        "Contenido listo",
+        "Pendiente de configurar",
+    ]
+
+
 def test_role_targeted_modules_are_filtered_for_employee(db):
     employee = _employee(db)
     employee.job_title = "Comercial"
@@ -965,6 +1019,36 @@ def test_role_targeted_modules_are_filtered_for_employee(db):
     assert payload["estimated_minutes"] == 3
 
 
+def test_asiati_onboarding_template_repairs_existing_draft_without_duplicate(db):
+    course = service.create_course(
+        db,
+        title="Onboarding ASIATI",
+        description="Versión existente",
+        created_by_sub="admin-sub",
+        is_onboarding=True,
+    )
+    service.add_module(
+        db,
+        course_id=course.id,
+        title="Evaluación final",
+        description="Placeholder anterior",
+    )
+
+    repaired = service.create_asiati_onboarding_template(
+        db,
+        created_by_sub="admin-sub",
+    )
+    payload = service.get_course(db, repaired.id)
+
+    assert repaired.id == course.id
+    assert all(
+        module["title"] != "Evaluación final"
+        for module in payload["modules"]
+    )
+    assert payload["quiz"]["title"] == "Evaluación final"
+    assert payload["quiz"]["passing_score"] == 70
+
+
 def test_asiati_onboarding_template_scaffolds_short_journey(db):
     course = service.create_asiati_onboarding_template(
         db,
@@ -981,8 +1065,10 @@ def test_asiati_onboarding_template_scaffolds_short_journey(db):
         "Nuestro ecosistema",
         "Así trabajamos",
         "Tu cargo en ASIATI",
-        "Evaluación final",
     ]
+    assert payload["quiz"]["title"] == "Evaluación final"
+    assert payload["quiz"]["passing_score"] == 70
+    assert payload["quiz"]["question_count"] == 0
 
     resources = [
         lesson
