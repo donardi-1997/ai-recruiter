@@ -350,7 +350,7 @@ def require_my_assignment(
         .one_or_none()
     )
     if assignment is None:
-        raise TrainingAssignmentError("Course is not assigned to this employee.")
+        raise TrainingNotFound()
     return assignment
 
 
