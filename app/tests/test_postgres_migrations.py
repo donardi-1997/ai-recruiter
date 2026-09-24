@@ -24,6 +24,7 @@ CORE_TABLES = {
     "permissions",
     "user_roles",
     "role_permissions",
+    "employee_score_events",
 }
 
 
@@ -65,6 +66,7 @@ def test_alembic_head_builds_current_postgres_schema():
             "permissions",
             "user_roles",
             "role_permissions",
+            "employee_score_events",
         }.issubset(tables)
 
         for table_name in sorted(CORE_TABLES):
@@ -220,7 +222,24 @@ def test_alembic_head_builds_current_postgres_schema():
             "employee_scores.correct",
             "employee_scores.export",
         }
+        score_event_columns = {
+            column["name"]
+            for column in inspector.get_columns("employee_score_events")
+        }
+        assert {
+            "employee_id",
+            "points",
+            "description",
+            "status",
+            "event_date",
+            "created_by_sub",
+            "created_at",
+            "voided_at",
+            "voided_by_sub",
+            "void_reason",
+        }.issubset(score_event_columns)
+
         assert admin_score_grants == 0
-        assert revision == "016"
+        assert revision == "017"
     finally:
         engine.dispose()
