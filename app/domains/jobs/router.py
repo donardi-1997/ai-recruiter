@@ -5,7 +5,7 @@ from typing import Literal
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
-from app.deps import get_current_user, get_db
+from app.deps import get_db, require_permission
 from app.domains.jobs import presenter, service
 from app.domains.jobs.enrichment import JobEnrichmentError, enrich_job_draft
 from app.domains.jobs.exceptions import JobNotFound
@@ -32,7 +32,7 @@ def _evaluation_profile(body) -> dict | None:
 @router.get("")
 def list_jobs(
     db: Session = Depends(get_db),
-    _user: dict = Depends(get_current_user),
+    _user: dict = Depends(require_permission("jobs.read")),
 ):
     return [
         presenter.job_payload(job, candidate_count=candidate_count)
@@ -43,7 +43,7 @@ def list_jobs(
 @router.get("/page")
 def list_jobs_page(
     db: Session = Depends(get_db),
-    _user: dict = Depends(get_current_user),
+    _user: dict = Depends(require_permission("jobs.read")),
     page: int = Query(1, ge=1),
     page_size: int = Query(12, ge=1, le=100),
     sort: Literal[
@@ -78,7 +78,7 @@ def list_jobs_page(
 def enrich_job(
     body: JobEnrichmentRequest,
     db: Session = Depends(get_db),
-    _user: dict = Depends(get_current_user),
+    _user: dict = Depends(require_permission("jobs.read")),
 ):
     try:
         proposal, context_version = enrich_job_draft(
@@ -99,7 +99,7 @@ def enrich_job(
 def create_job(
     body: CreateJobRequest,
     db: Session = Depends(get_db),
-    _user: dict = Depends(get_current_user),
+    _user: dict = Depends(require_permission("jobs.read")),
 ):
     job = service.create_job(
         db,
@@ -120,7 +120,7 @@ def update_job(
     job_id: str,
     body: UpdateJobRequest,
     db: Session = Depends(get_db),
-    _user: dict = Depends(get_current_user),
+    _user: dict = Depends(require_permission("jobs.read")),
 ):
     try:
         job = service.update_job(
@@ -146,7 +146,7 @@ def delete_job(
     job_id: str,
     delete_candidates: bool = Query(False),
     db: Session = Depends(get_db),
-    _user: dict = Depends(get_current_user),
+    _user: dict = Depends(require_permission("jobs.read")),
 ):
     try:
         deleted_count = service.delete_job(
