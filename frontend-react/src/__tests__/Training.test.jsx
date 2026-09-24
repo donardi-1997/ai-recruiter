@@ -142,6 +142,106 @@ describe("Training platform", () => {
     });
   });
 
+  it("lets an employee submit a course quiz after completing the lessons", async () => {
+    useSession.mockReturnValue({
+      principal: {
+        profile: { id: "employee-1", first_name: "Ana" },
+      },
+      hasPermission: (permission) => [
+        "training.read",
+        "training.consume",
+        "training.quiz.take",
+      ].includes(permission),
+    });
+
+    const quizAssignment = {
+      ...assignment,
+      course: {
+        ...assignment.course,
+        has_quiz: true,
+        completed_lessons: 1,
+        lesson_count: 1,
+        progress_percent: 50,
+      },
+    };
+    const quizCourseDetail = {
+      ...employeeDetail,
+      course: {
+        ...employeeDetail.course,
+        has_quiz: true,
+        completed_lessons: 1,
+        lesson_count: 1,
+        progress_percent: 50,
+        modules: [
+          {
+            ...employeeDetail.course.modules[0],
+            lessons: [
+              {
+                ...employeeDetail.course.modules[0].lessons[0],
+                completed: true,
+              },
+            ],
+          },
+        ],
+      },
+    };
+    const quizPayload = {
+      id: "quiz-1",
+      course_id: "course-1",
+      title: "Evaluación final",
+      passing_score: 70,
+      question_count: 1,
+      questions: [
+        {
+          id: "question-1",
+          prompt: "¿Cuál es la opción correcta?",
+          options: ["Incorrecta", "Correcta"],
+          position: 1,
+        },
+      ],
+      attempts: [],
+    };
+
+    api.get.mockImplementation((url) => {
+      if (url === "/training/me") {
+        return Promise.resolve({ data: { items: [quizAssignment] } });
+      }
+      if (url === "/training/me/courses/course-1") {
+        return Promise.resolve({ data: quizCourseDetail });
+      }
+      if (url === "/training/me/courses/course-1/quiz") {
+        return Promise.resolve({ data: quizPayload });
+      }
+      return Promise.reject(new Error(`Unexpected GET ${url}`));
+    });
+
+    api.post.mockResolvedValueOnce({
+      data: {
+        attempt: {
+          id: "attempt-1",
+          attempt_number: 1,
+          score_percent: 100,
+          passed: true,
+        },
+        assignment_status: "COMPLETED",
+        passing_score: 70,
+      },
+    });
+
+    renderPage();
+
+    expect(await screen.findByText("¿Cuál es la opción correcta?")).toBeInTheDocument();
+    fireEvent.click(screen.getByLabelText("Correcta"));
+    fireEvent.click(screen.getByRole("button", { name: "Enviar evaluación" }));
+
+    await waitFor(() => {
+      expect(api.post).toHaveBeenCalledWith(
+        "/training/me/courses/course-1/quiz/attempts",
+        { answers: { "question-1": 1 } },
+      );
+    });
+  });
+
   it("shows course administration to an ADMIN and creates a course", async () => {
     useSession.mockReturnValue({
       principal: {
