@@ -358,6 +358,184 @@ def course_payload(
         ]
     return payload
 
+def course_quality_report(
+    course: TrainingCourse,
+    *,
+    employee: UserProfile | None = None,
+) -> dict:
+    modules = _applicable_modules(course, employee)
+    lessons = [
+        lesson
+        for module in modules
+        for lesson in _module_lessons(module, employee)
+    ]
+    required_lessons = [
+        lesson
+        for lesson in lessons
+        if not lesson.is_optional
+    ]
+    issues: list[dict] = []
+
+    for module in modules:
+        visible_lessons = _module_lessons(module, employee)
+        if not visible_lessons:
+            issues.append(
+                {
+                    "severity": "info",
+                    "code": "EMPTY_MODULE",
+                    "message": f'El módulo "{module.title}" aún no tiene contenido visible.',
+                    "module_id": module.id,
+                    "lesson_id": None,
+                }
+            )
+
+    for lesson in required_lessons:
+        minutes = _lesson_minutes(lesson)
+        if minutes is None:
+            issues.append(
+                {
+                    "severity": "warning",
+                    "code": "UNKNOWN_DURATION",
+                    "message": f'Confirma la duración de "{lesson.title}".',
+                    "module_id": lesson.module_id,
+                    "lesson_id": lesson.id,
+                }
+            )
+        elif minutes > 7:
+            issues.append(
+                {
+                    "severity": "warning",
+                    "code": "LONG_ACTIVITY",
+                    "message": (
+                        f'"{lesson.title}" dura ~{minutes} min. '
+                        "Conviene dividirla en bloques de máximo ~7 min."
+                    ),
+                    "module_id": lesson.module_id,
+                    "lesson_id": lesson.id,
+                }
+            )
+
+        if (
+            str(lesson.content_type or "").upper() == "VIDEO"
+            and not lesson.video_storage_key
+            and not lesson.video_url
+        ):
+            issues.append(
+                {
+                    "severity": "warning",
+                    "code": "MISSING_VIDEO",
+                    "message": f'Falta cargar el video de "{lesson.title}".',
+                    "module_id": lesson.module_id,
+                    "lesson_id": lesson.id,
+                }
+            )
+
+    known_minutes = [
+        _lesson_minutes(lesson)
+        for lesson in required_lessons
+        if _lesson_minutes(lesson) is not None
+    ]
+    total_known_minutes = sum(known_minutes)
+    if total_known_minutes > 60:
+        issues.append(
+            {
+                "severity": "warning",
+                "code": "LONG_JOURNEY",
+                "message": (
+                    f"La ruta acumula ~{total_known_minutes} min conocidos. "
+                    "Considera dividirla en varias sesiones o días."
+                ),
+                "module_id": None,
+                "lesson_id": None,
+            }
+        )
+
+    quiz_question_count = len(course.quiz.questions) if course.quiz else 0
+    if course.is_onboarding:
+        if course.quiz is None:
+            issues.append(
+                {
+                    "severity": "warning",
+                    "code": "MISSING_QUIZ",
+                    "message": "La ruta de onboarding no tiene evaluación final.",
+                    "module_id": None,
+                    "lesson_id": None,
+                }
+            )
+        elif quiz_question_count < 5:
+            issues.append(
+                {
+                    "severity": "info",
+                    "code": "QUIZ_TOO_SHORT",
+                    "message": (
+                        f"El quiz tiene {quiz_question_count} preguntas. "
+                        "La recomendación para onboarding es 5–8."
+                    ),
+                    "module_id": None,
+                    "lesson_id": None,
+                }
+            )
+        elif quiz_question_count > 8:
+            issues.append(
+                {
+                    "severity": "warning",
+                    "code": "QUIZ_TOO_LONG",
+                    "message": (
+                        f"El quiz tiene {quiz_question_count} preguntas. "
+                        "Para una inducción ligera recomendamos máximo 8."
+                    ),
+                    "module_id": None,
+                    "lesson_id": None,
+                }
+            )
+
+    return {
+        "issue_count": len(issues),
+        "warning_count": sum(
+            1 for issue in issues if issue["severity"] == "warning"
+        ),
+        "info_count": sum(
+            1 for issue in issues if issue["severity"] == "info"
+        ),
+        "known_minutes": total_known_minutes,
+        "required_activity_count": len(required_lessons),
+        "quiz_question_count": quiz_question_count,
+        "issues": issues,
+    }
+
+
+def get_course_preview(
+    db: Session,
+    course_id: str,
+    *,
+    employee_id: str | None = None,
+) -> dict:
+    course = require_course(db, course_id)
+    employee = require_employee(db, employee_id) if employee_id else None
+    payload = course_payload(
+        course,
+        include_structure=True,
+        employee=employee,
+    )
+    payload["quality"] = course_quality_report(
+        course,
+        employee=employee,
+    )
+    payload["preview_employee"] = (
+        {
+            "id": employee.id,
+            "email": employee.email,
+            "first_name": employee.first_name,
+            "last_name": employee.last_name,
+            "job_title": employee.job_title,
+            "department": employee.department,
+        }
+        if employee is not None
+        else None
+    )
+    return payload
+
+
 def list_courses(db: Session) -> list[dict]:
     courses = db.query(TrainingCourse).order_by(TrainingCourse.created_at.desc()).all()
     return [course_payload(course) for course in courses]
@@ -367,6 +545,7 @@ def get_course(db: Session, course_id: str) -> dict:
     course = require_course(db, course_id)
     payload = course_payload(course, include_structure=True)
     payload["quiz"] = quiz_admin_payload(course.quiz) if course.quiz else None
+    payload["quality"] = course_quality_report(course)
     return payload
 
 

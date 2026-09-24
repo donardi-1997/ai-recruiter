@@ -69,6 +69,23 @@ def create_asiati_onboarding_preset(
     return service.get_course(db, course.id)
 
 
+@router.get("/courses/{course_id}/preview")
+def preview_course(
+    course_id: str,
+    employee_id: str | None = None,
+    db: Session = Depends(get_db),
+    _principal: dict = Depends(require_permission("training.manage")),
+):
+    try:
+        return service.get_course_preview(
+            db,
+            course_id,
+            employee_id=employee_id,
+        )
+    except Exception as exc:
+        _translate(exc)
+
+
 @router.get("/courses/{course_id}")
 def get_course(
     course_id: str,

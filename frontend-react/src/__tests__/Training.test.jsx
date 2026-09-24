@@ -783,3 +783,175 @@ describe("Focused onboarding sessions", () => {
   });
 });
 
+describe("Onboarding quality preview", () => {
+  it("shows quality warnings and previews the route for a selected employee", async () => {
+    vi.clearAllMocks();
+    useSession.mockReturnValue({
+      principal: {
+        profile: { id: "admin-quality", first_name: "Administrador" },
+      },
+      hasPermission: (permission) => [
+        "training.read",
+        "training.manage",
+        "training.assign",
+        "training.results.read",
+      ].includes(permission),
+    });
+
+    const adminCourse = {
+      id: "quality-course",
+      title: "Onboarding ASIATI",
+      description: "Ruta corporativa",
+      is_onboarding: true,
+      status: "DRAFT",
+      module_count: 2,
+      lesson_count: 2,
+      progress_percent: 0,
+      modules: [],
+      quiz: {
+        id: "quiz-quality",
+        title: "Evaluación final",
+        passing_score: 70,
+        question_count: 5,
+        questions: [],
+      },
+      quality: {
+        issue_count: 1,
+        warning_count: 1,
+        info_count: 0,
+        known_minutes: 12,
+        required_activity_count: 2,
+        quiz_question_count: 5,
+        issues: [
+          {
+            severity: "warning",
+            code: "LONG_ACTIVITY",
+            message: '"Video corporativo" dura ~9 min. Conviene dividirla en bloques de máximo ~7 min.',
+            module_id: "module-quality",
+            lesson_id: "lesson-quality",
+          },
+        ],
+      },
+    };
+
+    const employee = {
+      id: "employee-quality",
+      email: "laura@asiati.com.co",
+      first_name: "Laura",
+      last_name: "Pérez",
+      job_title: "Comercial",
+      department: "Ventas",
+    };
+
+    const genericPreview = {
+      ...adminCourse,
+      preview_employee: null,
+      modules: [
+        {
+          id: "module-common",
+          title: "Bienvenida",
+          position: 1,
+          lesson_count: 1,
+          audience_job_title: null,
+          audience_department: null,
+          lessons: [
+            {
+              id: "lesson-common",
+              title: "Conoce ASIATI",
+              content_type: "ARTICLE",
+              estimated_minutes: 3,
+              is_optional: false,
+            },
+          ],
+        },
+        {
+          id: "module-dev",
+          title: "Desarrollo",
+          position: 2,
+          lesson_count: 1,
+          audience_job_title: "Desarrollador",
+          audience_department: null,
+          lessons: [
+            {
+              id: "lesson-dev",
+              title: "Git",
+              content_type: "ARTICLE",
+              estimated_minutes: 3,
+              is_optional: false,
+            },
+          ],
+        },
+      ],
+    };
+
+    const employeePreview = {
+      ...genericPreview,
+      module_count: 1,
+      lesson_count: 1,
+      preview_employee: employee,
+      modules: [genericPreview.modules[0]],
+      quality: {
+        ...genericPreview.quality,
+        required_activity_count: 1,
+        known_minutes: 3,
+        issues: [],
+        issue_count: 0,
+        warning_count: 0,
+      },
+    };
+
+    api.get.mockImplementation((url, config) => {
+      if (url === "/training/me") {
+        return Promise.resolve({ data: { items: [] } });
+      }
+      if (url === "/training/courses") {
+        return Promise.resolve({ data: { items: [adminCourse] } });
+      }
+      if (url === "/employees") {
+        return Promise.resolve({ data: { items: [employee] } });
+      }
+      if (url === "/training/courses/quality-course") {
+        return Promise.resolve({ data: adminCourse });
+      }
+      if (url === "/training/courses/quality-course/assignments") {
+        return Promise.resolve({ data: { items: [] } });
+      }
+      if (url === "/training/courses/quality-course/preview") {
+        return Promise.resolve({
+          data: config?.params?.employee_id
+            ? employeePreview
+            : genericPreview,
+        });
+      }
+      return Promise.reject(new Error(`Unexpected GET ${url}`));
+    });
+
+    renderPage();
+
+    expect(await screen.findByText("Control de calidad")).toBeInTheDocument();
+    expect(screen.getByText("1 por revisar")).toBeInTheDocument();
+    expect(screen.getByText("Actividad extensa")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Vista previa" }));
+
+    expect(
+      await screen.findByRole("heading", { name: "Así verá la ruta el empleado" }),
+    ).toBeInTheDocument();
+    expect(screen.getByText("Desarrollo")).toBeInTheDocument();
+
+    fireEvent.change(screen.getByLabelText("Previsualizar como"), {
+      target: { value: "employee-quality" },
+    });
+
+    await waitFor(() => {
+      expect(api.get).toHaveBeenCalledWith(
+        "/training/courses/quality-course/preview",
+        { params: { employee_id: "employee-quality" } },
+      );
+    });
+    expect((await screen.findAllByText("Laura Pérez")).length).toBeGreaterThan(1);
+    expect(screen.queryByText("Desarrollo")).not.toBeInTheDocument();
+    expect(screen.getByText("Bienvenida")).toBeInTheDocument();
+  });
+});
+
