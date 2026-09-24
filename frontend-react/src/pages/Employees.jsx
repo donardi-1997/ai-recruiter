@@ -20,6 +20,7 @@ function emptyEmployeeForm() {
     department: "",
     hire_date: todayInputValue(),
     role: "EMPLOYEE",
+    assign_onboarding: true,
   };
 }
 
@@ -69,7 +70,13 @@ function Employees() {
     setSaving(true);
     setError("");
     try {
-      await api.post("/employees", form);
+      const { data } = await api.post("/employees", {
+        ...form,
+        assign_onboarding: form.role === "EMPLOYEE" && form.assign_onboarding,
+      });
+      if (data?.onboarding_assignment_warning) {
+        setError(data.onboarding_assignment_warning);
+      }
       setForm(emptyEmployeeForm());
       setFormOpen(false);
       await loadEmployees();
@@ -312,6 +319,25 @@ function Employees() {
                     <option value="SUPER_ADMIN">Super administrador</option>
                   </select>
                 </div>
+              )}
+              {form.role === "EMPLOYEE" && (
+                <label className="employee-onboarding-assignment-toggle">
+                  <input
+                    type="checkbox"
+                    checked={form.assign_onboarding}
+                    onChange={(event) => setForm({
+                      ...form,
+                      assign_onboarding: event.target.checked,
+                    })}
+                  />
+                  <span>
+                    <strong>Asignar onboarding publicado automáticamente</strong>
+                    <small>
+                      Si todavía no existe una ruta publicada, el empleado se creará
+                      normalmente y quedará pendiente de asignación.
+                    </small>
+                  </span>
+                </label>
               )}
               <div className="form-actions">
                 <button className="btn btn-secondary" type="button" onClick={() => setFormOpen(false)}>Cancelar</button>
