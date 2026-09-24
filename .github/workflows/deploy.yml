@@ -219,7 +219,7 @@ jobs:
             sudo docker pull "$ECR_REGISTRY/$ECR_BACKEND_REPO:${{ github.sha }}"
             sudo docker pull "$ECR_REGISTRY/$ECR_FRONTEND_REPO:${{ github.sha }}"
             chmod +x /tmp/ai-recruiter-deploy-api.sh /tmp/ai-recruiter-deploy-worker.sh
-            AWS_ACCOUNT_ID="$AWS_ACCOUNT_ID" ECR_TAG="${{ github.sha }}" IMPORT_STAGING_BUCKET="$IMPORT_STAGING_BUCKET" IMPORT_QUEUE_URL="$IMPORT_QUEUE_URL" TRAINING_CONTENT_BUCKET="$TRAINING_CONTENT_BUCKET" IMPORT_EVALUATION_CONCURRENCY="1" S3_BUCKET="$S3_BUCKET" KNOWLEDGE_BASE_ID="$KNOWLEDGE_BASE_ID" DATA_SOURCE_ID="$DATA_SOURCE_ID" COGNITO_USER_POOL_ID="$COGNITO_USER_POOL_ID" COGNITO_CLIENT_ID="$COGNITO_CLIENT_ID" ALLOW_PUBLIC_REGISTRATION="false" RBAC_BOOTSTRAP_ADMIN_EMAILS="talentohumano@asiati.com.co" RBAC_BOOTSTRAP_SUPER_ADMIN_EMAILS="" sudo -H -E /tmp/ai-recruiter-deploy-api.sh
+            AWS_ACCOUNT_ID="$AWS_ACCOUNT_ID" ECR_TAG="${{ github.sha }}" IMPORT_STAGING_BUCKET="$IMPORT_STAGING_BUCKET" IMPORT_QUEUE_URL="$IMPORT_QUEUE_URL" TRAINING_CONTENT_BUCKET="$TRAINING_CONTENT_BUCKET" IMPORT_EVALUATION_CONCURRENCY="1" S3_BUCKET="$S3_BUCKET" KNOWLEDGE_BASE_ID="$KNOWLEDGE_BASE_ID" DATA_SOURCE_ID="$DATA_SOURCE_ID" COGNITO_USER_POOL_ID="$COGNITO_USER_POOL_ID" COGNITO_CLIENT_ID="$COGNITO_CLIENT_ID" ALLOW_PUBLIC_REGISTRATION="false" RBAC_BOOTSTRAP_ADMIN_EMAILS="talentohumano@asiati.com.co" RBAC_BOOTSTRAP_SUPER_ADMIN_EMAILS="natali.garzon@asiati.com.co" sudo -H -E /tmp/ai-recruiter-deploy-api.sh
             API_STATUS=\$(sudo docker inspect ai-recruiter-api --format '{{.State.Status}}')
             API_IMAGE=\$(sudo docker inspect ai-recruiter-api --format '{{.Config.Image}}')
             test "\$API_STATUS" = running
