@@ -42,6 +42,9 @@ const assignment = {
     lesson_count: 1,
     completed_lessons: 0,
     progress_percent: 0,
+    estimated_minutes: 2,
+    remaining_minutes: 2,
+    next_lesson_id: "lesson-1",
   },
 };
 
@@ -55,12 +58,22 @@ const employeeDetail = {
     description: "Conoce la empresa.",
     status: "PUBLISHED",
     progress_percent: 0,
+    lesson_count: 1,
+    completed_lessons: 0,
+    estimated_minutes: 2,
+    remaining_minutes: 2,
+    next_lesson_id: "lesson-1",
     modules: [
       {
         id: "module-1",
         title: "Bienvenida",
         description: null,
         position: 1,
+        lesson_count: 1,
+        completed_lessons: 0,
+        progress_percent: 0,
+        is_complete: false,
+        estimated_minutes: 2,
         lessons: [
           {
             id: "lesson-1",
@@ -68,6 +81,10 @@ const employeeDetail = {
             description: "Introducción.",
             video_url: "https://cdn.example.com/intro.mp4",
             duration_seconds: 120,
+            content_type: "VIDEO",
+            external_url: null,
+            estimated_minutes: 2,
+            is_optional: false,
             position: 1,
             completed: false,
           },
@@ -238,6 +255,48 @@ describe("Training platform", () => {
       expect(api.post).toHaveBeenCalledWith(
         "/training/me/courses/course-1/quiz/attempts",
         { answers: { "question-1": 1 } },
+      );
+    });
+  });
+
+  it("lets an ADMIN scaffold the ASIATI onboarding journey", async () => {
+    useSession.mockReturnValue({
+      principal: {
+        profile: { id: "admin-1", first_name: "Admin" },
+      },
+      hasPermission: (permission) => [
+        "training.read",
+        "training.manage",
+        "training.assign",
+        "training.results.read",
+      ].includes(permission),
+    });
+
+    api.get.mockImplementation((url) => {
+      if (url === "/training/me") return Promise.resolve({ data: { items: [] } });
+      if (url === "/training/courses") return Promise.resolve({ data: { items: [] } });
+      if (url === "/employees") return Promise.resolve({ data: { items: [] } });
+      return Promise.reject(new Error(`Unexpected GET ${url}`));
+    });
+
+    api.post.mockResolvedValueOnce({
+      data: {
+        id: "preset-1",
+        title: "Onboarding ASIATI",
+        description: "Ruta corporativa",
+        is_onboarding: true,
+        status: "DRAFT",
+        modules: [],
+      },
+    });
+
+    renderPage();
+
+    fireEvent.click(await screen.findByRole("button", { name: "Crear ruta ASIATI" }));
+
+    await waitFor(() => {
+      expect(api.post).toHaveBeenCalledWith(
+        "/training/courses/presets/asiati-onboarding",
       );
     });
   });
