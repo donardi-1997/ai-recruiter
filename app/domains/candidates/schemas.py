@@ -3,7 +3,7 @@
 from datetime import datetime
 from typing import Any
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, field_validator
 
 
 class CandidateResponse(BaseModel):
@@ -41,3 +41,16 @@ class CandidateEvaluationsResponse(BaseModel):
 
 class ApplicationStatusRequest(BaseModel):
     status: str
+
+
+
+class CandidateRestrictionRequest(BaseModel):
+    reason: str = Field(min_length=3, max_length=1000)
+
+    @field_validator("reason")
+    @classmethod
+    def normalize_reason(cls, value: str) -> str:
+        normalized = value.strip()
+        if len(normalized) < 3:
+            raise ValueError("reason is required")
+        return normalized
