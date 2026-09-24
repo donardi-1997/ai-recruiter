@@ -297,6 +297,161 @@ def create_course(
     return course
 
 
+def create_asiati_onboarding_template(
+    db: Session,
+    *,
+    created_by_sub: str,
+) -> TrainingCourse:
+    existing = (
+        db.query(TrainingCourse)
+        .filter(
+            TrainingCourse.title == "Onboarding ASIATI",
+            TrainingCourse.is_onboarding.is_(True),
+            TrainingCourse.status == "DRAFT",
+        )
+        .order_by(TrainingCourse.created_at.desc())
+        .first()
+    )
+    if existing is not None:
+        return existing
+
+    course = create_course(
+        db,
+        title="Onboarding ASIATI",
+        description=(
+            "Ruta de inducción corporativa en bloques cortos: ASIATI, ecosistema, "
+            "forma de trabajo, rol y evaluación final."
+        ),
+        created_by_sub=created_by_sub,
+        is_onboarding=True,
+    )
+
+    welcome = add_module(
+        db,
+        course_id=course.id,
+        title="Bienvenida",
+        description="Empieza aquí. Esta ruta está diseñada para completarse por etapas.",
+    )
+    add_lesson(
+        db,
+        module_id=welcome.id,
+        title="Tu ruta de inducción",
+        description=(
+            "Conocerás ASIATI, sus marcas, nuestra forma de trabajo y el alcance "
+            "de tu rol. Puedes detenerte y continuar después."
+        ),
+        video_url=None,
+        duration_seconds=None,
+        content_type="ARTICLE",
+        estimated_minutes=2,
+    )
+
+    asiati = add_module(
+        db,
+        course_id=course.id,
+        title="Conoce ASIATI",
+        description="Contexto corporativo, propósito y presencia oficial.",
+    )
+    for title, url, minutes, optional in [
+        ("Presentación ASIATI I", "https://canva.link/ub9ggivhfxawuoh", 5, False),
+        ("Presentación ASIATI II", "https://canva.link/kma1whh1rya59td", 5, False),
+        ("Página oficial de ASIATI Corp", "https://www.asiaticorp.com/", 3, True),
+    ]:
+        add_lesson(
+            db,
+            module_id=asiati.id,
+            title=title,
+            description="Recurso corporativo oficial.",
+            video_url=None,
+            duration_seconds=None,
+            content_type="RESOURCE",
+            external_url=url,
+            estimated_minutes=minutes,
+            is_optional=optional,
+        )
+
+    ecosystem = add_module(
+        db,
+        course_id=course.id,
+        title="Nuestro ecosistema",
+        description="Conoce las marcas y proyectos que forman parte de ASIATI.",
+    )
+    add_lesson(
+        db,
+        module_id=ecosystem.id,
+        title="Mapa del ecosistema ASIATI",
+        description=(
+            "ASIATI Corp integra iniciativas de comercio, logística, marcas de "
+            "consumo y contenido. Revisa las tarjetas de cada marca como material "
+            "complementario."
+        ),
+        video_url=None,
+        duration_seconds=None,
+        content_type="ARTICLE",
+        estimated_minutes=3,
+    )
+    for title, url in [
+        ("ASIATI Corp", "https://www.instagram.com/asiati_corp/?hl=es"),
+        ("ASIATI Commerce", "https://www.instagram.com/asiati_ecommerce/?hl=es"),
+        ("Wiilog", "https://www.instagram.com/wiilog_logistica/?hl=es"),
+        ("Origen Vital", "https://www.instagram.com/origen_vital_col/"),
+        ("Chin Chin", "https://www.instagram.com/chin_chin_bodega/?hl=es-la"),
+        ("El Retrovisor", "https://www.youtube.com/@Elretrovisor.podcast"),
+    ]:
+        add_lesson(
+            db,
+            module_id=ecosystem.id,
+            title=title,
+            description="Material complementario para conocer esta marca.",
+            video_url=None,
+            duration_seconds=None,
+            content_type="RESOURCE",
+            external_url=url,
+            estimated_minutes=2,
+            is_optional=True,
+        )
+
+    add_module(
+        db,
+        course_id=course.id,
+        title="Así trabajamos",
+        description=(
+            "Carga aquí los videos corporativos del onboarding. Recomendación: "
+            "segmentos de 4–6 minutos por lección."
+        ),
+    )
+    role_module = add_module(
+        db,
+        course_id=course.id,
+        title="Tu cargo en ASIATI",
+        description=(
+            "Crea aquí módulos específicos por cargo o área usando la segmentación "
+            "de audiencia."
+        ),
+    )
+    add_lesson(
+        db,
+        module_id=role_module.id,
+        title="Tu rol y tus primeros días",
+        description=(
+            "Revisa con tu líder el alcance de tu cargo, responsabilidades, "
+            "herramientas y objetivos de la primera semana."
+        ),
+        video_url=None,
+        duration_seconds=None,
+        content_type="CHECKLIST",
+        estimated_minutes=5,
+    )
+    add_module(
+        db,
+        course_id=course.id,
+        title="Evaluación final",
+        description="Añade un quiz de 5–8 preguntas antes de publicar la ruta.",
+    )
+
+    return require_course(db, course.id)
+
+
 def update_course(
     db: Session,
     course_id: str,
@@ -692,6 +847,8 @@ def complete_lesson(
     )
     if course.status != "PUBLISHED":
         raise TrainingStateError("This course is not available.")
+    if not _module_applies(lesson.module, assignment.employee):
+        raise TrainingStateError("This lesson is not assigned to your profile.")
 
     existing = (
         db.query(TrainingLessonProgress)
@@ -710,9 +867,6 @@ def complete_lesson(
             )
         )
         db.flush()
-
-    if not _module_applies(lesson.module, assignment.employee):
-        raise TrainingStateError("This lesson is not assigned to your profile.")
 
     required_lessons = _required_lessons(course, assignment.employee)
     required_ids = {item.id for item in required_lessons}
