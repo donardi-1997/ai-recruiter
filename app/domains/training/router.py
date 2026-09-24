@@ -9,6 +9,9 @@ from app.domains.training.schemas import (
     CreateCourseRequest,
     CreateLessonRequest,
     CreateModuleRequest,
+    CreateQuizQuestionRequest,
+    CreateQuizRequest,
+    SubmitQuizAttemptRequest,
     UpdateCourseRequest,
 )
 
@@ -193,3 +196,78 @@ def complete_lesson(
         )
     except Exception as exc:
         _translate(exc)
+
+
+@router.post("/courses/{course_id}/quiz", status_code=201)
+def create_quiz(
+    course_id: str,
+    body: CreateQuizRequest,
+    db: Session = Depends(get_db),
+    principal: dict = Depends(require_permission("training.manage")),
+):
+    try:
+        quiz = service.create_quiz(
+            db,
+            course_id=course_id,
+            title=body.title,
+            passing_score=body.passing_score,
+            created_by_sub=principal["sub"],
+        )
+        return service.quiz_admin_payload(quiz)
+    except Exception as exc:
+        _translate(exc)
+
+
+@router.post("/quizzes/{quiz_id}/questions", status_code=201)
+def create_quiz_question(
+    quiz_id: str,
+    body: CreateQuizQuestionRequest,
+    db: Session = Depends(get_db),
+    _principal: dict = Depends(require_permission("training.manage")),
+):
+    try:
+        question = service.add_quiz_question(
+            db,
+            quiz_id=quiz_id,
+            prompt=body.prompt,
+            options=body.options,
+            correct_option=body.correct_option,
+        )
+        return service.quiz_admin_payload(question.quiz)
+    except Exception as exc:
+        _translate(exc)
+
+
+@router.get("/me/courses/{course_id}/quiz")
+def my_quiz(
+    course_id: str,
+    db: Session = Depends(get_db),
+    principal: dict = Depends(require_permission("training.quiz.take")),
+):
+    try:
+        return service.get_my_quiz(
+            db,
+            employee_id=principal["profile"]["id"],
+            course_id=course_id,
+        )
+    except Exception as exc:
+        _translate(exc)
+
+
+@router.post("/me/courses/{course_id}/quiz/attempts", status_code=201)
+def submit_quiz_attempt(
+    course_id: str,
+    body: SubmitQuizAttemptRequest,
+    db: Session = Depends(get_db),
+    principal: dict = Depends(require_permission("training.quiz.take")),
+):
+    try:
+        return service.submit_quiz_attempt(
+            db,
+            employee_id=principal["profile"]["id"],
+            course_id=course_id,
+            answers=body.answers,
+        )
+    except Exception as exc:
+        _translate(exc)
+

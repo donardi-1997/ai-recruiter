@@ -12,6 +12,7 @@ from app.models import (
     TrainingLesson,
     TrainingLessonProgress,
     TrainingModule,
+    TrainingQuizAttempt,
     UserProfile,
 )
 
@@ -266,3 +267,205 @@ def test_repeated_completion_preserves_course_completion_timestamp(db):
     db.refresh(assignment)
 
     assert assignment.completed_at == first_completed_at
+
+
+
+def _published_course_with_quiz(db):
+    course = service.create_course(
+        db,
+        title="Inducción con evaluación",
+        description="Curso con quiz",
+        created_by_sub="admin-sub",
+    )
+    module = service.add_module(
+        db,
+        course_id=course.id,
+        title="Bienvenida",
+        description=None,
+    )
+    lesson = service.add_lesson(
+        db,
+        module_id=module.id,
+        title="Lección base",
+        description=None,
+        video_url=None,
+        duration_seconds=None,
+    )
+    quiz = service.create_quiz(
+        db,
+        course_id=course.id,
+        title="Evaluación final",
+        passing_score=70,
+        created_by_sub="admin-sub",
+    )
+    question = service.add_quiz_question(
+        db,
+        quiz_id=quiz.id,
+        prompt="¿Cuál es la respuesta correcta?",
+        options=["A", "B", "C"],
+        correct_option=1,
+    )
+    service.update_course(db, course.id, status="PUBLISHED")
+    return course, lesson, quiz, question
+
+
+def test_course_with_empty_quiz_cannot_publish(db):
+    course = service.create_course(
+        db,
+        title="Curso",
+        description=None,
+        created_by_sub="admin-sub",
+    )
+    module = service.add_module(
+        db,
+        course_id=course.id,
+        title="Módulo",
+        description=None,
+    )
+    service.add_lesson(
+        db,
+        module_id=module.id,
+        title="Lección",
+        description=None,
+        video_url=None,
+        duration_seconds=None,
+    )
+    service.create_quiz(
+        db,
+        course_id=course.id,
+        title="Quiz",
+        passing_score=80,
+        created_by_sub="admin-sub",
+    )
+
+    with pytest.raises(service.TrainingStateError):
+        service.update_course(db, course.id, status="PUBLISHED")
+
+
+def test_quiz_correct_answer_is_not_exposed_to_employee(db):
+    employee = _employee(db)
+    course, lesson, _, question = _published_course_with_quiz(db)
+    assignment = service.assign_course(
+        db,
+        course_id=course.id,
+        employee_id=employee.id,
+        assigned_by_sub="admin-sub",
+    )
+
+    service.complete_lesson(db, employee_id=employee.id, lesson_id=lesson.id)
+    db.refresh(assignment)
+
+    payload = service.get_my_quiz(
+        db,
+        employee_id=employee.id,
+        course_id=course.id,
+    )
+
+    assert assignment.status == "ASSIGNED"
+    assert payload["questions"][0]["id"] == question.id
+    assert "correct_option" not in payload["questions"][0]
+
+
+def test_quiz_requires_all_lessons_completed(db):
+    employee = _employee(db)
+    course, _, _, _ = _published_course_with_quiz(db)
+    service.assign_course(
+        db,
+        course_id=course.id,
+        employee_id=employee.id,
+        assigned_by_sub="admin-sub",
+    )
+
+    with pytest.raises(service.TrainingStateError):
+        service.get_my_quiz(
+            db,
+            employee_id=employee.id,
+            course_id=course.id,
+        )
+
+
+def test_failed_quiz_attempt_keeps_assignment_open(db):
+    employee = _employee(db)
+    course, lesson, _, question = _published_course_with_quiz(db)
+    assignment = service.assign_course(
+        db,
+        course_id=course.id,
+        employee_id=employee.id,
+        assigned_by_sub="admin-sub",
+    )
+    service.complete_lesson(db, employee_id=employee.id, lesson_id=lesson.id)
+
+    result = service.submit_quiz_attempt(
+        db,
+        employee_id=employee.id,
+        course_id=course.id,
+        answers={question.id: 0},
+    )
+
+    db.refresh(assignment)
+    assert result["attempt"]["score_percent"] == 0
+    assert result["attempt"]["passed"] is False
+    assert assignment.status == "ASSIGNED"
+    assert assignment.completed_at is None
+
+
+def test_passing_quiz_attempt_completes_assignment_and_keeps_attempt_history(db):
+    employee = _employee(db)
+    course, lesson, _, question = _published_course_with_quiz(db)
+    assignment = service.assign_course(
+        db,
+        course_id=course.id,
+        employee_id=employee.id,
+        assigned_by_sub="admin-sub",
+    )
+    service.complete_lesson(db, employee_id=employee.id, lesson_id=lesson.id)
+
+    first = service.submit_quiz_attempt(
+        db,
+        employee_id=employee.id,
+        course_id=course.id,
+        answers={question.id: 0},
+    )
+    second = service.submit_quiz_attempt(
+        db,
+        employee_id=employee.id,
+        course_id=course.id,
+        answers={question.id: 1},
+    )
+
+    db.refresh(assignment)
+    payload = service.assignment_payload(db, assignment)
+
+    assert first["attempt"]["attempt_number"] == 1
+    assert second["attempt"]["attempt_number"] == 2
+    assert second["attempt"]["score_percent"] == 100
+    assert second["attempt"]["passed"] is True
+    assert assignment.status == "COMPLETED"
+    assert assignment.completed_at is not None
+    assert db.query(TrainingQuizAttempt).count() == 2
+    assert payload["quiz_result"] == {
+        "attempt_count": 2,
+        "best_score": 100,
+        "latest_score": 100,
+        "passed": True,
+    }
+
+
+def test_quiz_submission_requires_every_question(db):
+    employee = _employee(db)
+    course, lesson, _, _ = _published_course_with_quiz(db)
+    service.assign_course(
+        db,
+        course_id=course.id,
+        employee_id=employee.id,
+        assigned_by_sub="admin-sub",
+    )
+    service.complete_lesson(db, employee_id=employee.id, lesson_id=lesson.id)
+
+    with pytest.raises(service.TrainingStateError):
+        service.submit_quiz_attempt(
+            db,
+            employee_id=employee.id,
+            course_id=course.id,
+            answers={},
+        )

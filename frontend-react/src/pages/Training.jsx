@@ -21,6 +21,7 @@ function Training() {
   const canManage = hasPermission("training.manage");
   const canAssign = hasPermission("training.assign");
   const canViewResults = hasPermission("training.results.read");
+  const canTakeQuiz = hasPermission("training.quiz.take");
   const firstName = principal?.profile?.first_name || "equipo";
 
   const [myAssignments, setMyAssignments] = useState([]);
@@ -40,6 +41,18 @@ function Training() {
   const [moduleForm, setModuleForm] = useState({ title: "", description: "" });
   const [lessonForms, setLessonForms] = useState({});
   const [assignEmployeeId, setAssignEmployeeId] = useState("");
+  const [quizForm, setQuizForm] = useState({
+    title: "Evaluación final",
+    passing_score: "70",
+  });
+  const [questionForm, setQuestionForm] = useState({
+    prompt: "",
+    options: ["", "", "", ""],
+    correct_option: "0",
+  });
+  const [employeeQuiz, setEmployeeQuiz] = useState(null);
+  const [quizAnswers, setQuizAnswers] = useState({});
+  const [quizResult, setQuizResult] = useState(null);
 
   const loadHome = useCallback(async () => {
     setLoading(true);
@@ -119,18 +132,32 @@ function Training() {
   const loadEmployeeCourse = useCallback(async (courseId) => {
     if (!courseId) {
       setEmployeeCourse(null);
+      setEmployeeQuiz(null);
       return;
     }
     setDetailLoading(true);
     try {
       const { data } = await api.get(`/training/me/courses/${courseId}`);
       setEmployeeCourse(data);
+      setQuizResult(null);
+      setQuizAnswers({});
+
+      const lessonsComplete = (
+        data.course?.lesson_count > 0
+        && data.course?.completed_lessons >= data.course?.lesson_count
+      );
+      if (canTakeQuiz && data.course?.has_quiz && lessonsComplete) {
+        const quizResponse = await api.get(`/training/me/courses/${courseId}/quiz`);
+        setEmployeeQuiz(quizResponse.data);
+      } else {
+        setEmployeeQuiz(null);
+      }
     } catch (err) {
       setError(err.response?.data?.detail || "No fue posible abrir el curso.");
     } finally {
       setDetailLoading(false);
     }
-  }, []);
+  }, [canTakeQuiz]);
 
   useEffect(() => {
     const timeoutId = window.setTimeout(() => {
@@ -299,9 +326,88 @@ function Training() {
         `/training/me/lessons/${lessonId}/complete`,
       );
       setEmployeeCourse(data);
-      await loadHome();
+      await Promise.all([
+        loadHome(),
+        loadEmployeeCourse(data.course.id),
+      ]);
     } catch (err) {
       setError(err.response?.data?.detail || "No fue posible guardar el avance.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function createQuiz(event) {
+    event.preventDefault();
+    if (!selectedCourseId) return;
+    setSaving(true);
+    setError("");
+    try {
+      await api.post(`/training/courses/${selectedCourseId}/quiz`, {
+        title: quizForm.title.trim(),
+        passing_score: Number.parseInt(quizForm.passing_score, 10),
+      });
+      await loadAdminCourse(selectedCourseId);
+    } catch (err) {
+      setError(err.response?.data?.detail || "No fue posible crear la evaluación.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  function updateQuestionOption(index, value) {
+    setQuestionForm((current) => ({
+      ...current,
+      options: current.options.map((option, optionIndex) => (
+        optionIndex === index ? value : option
+      )),
+    }));
+  }
+
+  async function addQuizQuestion(event) {
+    event.preventDefault();
+    const quizId = selectedCourse?.quiz?.id;
+    if (!quizId) return;
+    setSaving(true);
+    setError("");
+    try {
+      await api.post(`/training/quizzes/${quizId}/questions`, {
+        prompt: questionForm.prompt.trim(),
+        options: questionForm.options.map((option) => option.trim()),
+        correct_option: Number.parseInt(questionForm.correct_option, 10),
+      });
+      setQuestionForm({
+        prompt: "",
+        options: ["", "", "", ""],
+        correct_option: "0",
+      });
+      await loadAdminCourse(selectedCourseId);
+    } catch (err) {
+      setError(err.response?.data?.detail || "No fue posible agregar la pregunta.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function submitQuiz(event) {
+    event.preventDefault();
+    const courseId = employeeCourse?.course?.id;
+    if (!courseId || !employeeQuiz) return;
+    setSaving(true);
+    setError("");
+    try {
+      const { data } = await api.post(
+        `/training/me/courses/${courseId}/quiz/attempts`,
+        { answers: quizAnswers },
+      );
+      setQuizResult(data);
+      await Promise.all([
+        loadHome(),
+        loadEmployeeCourse(courseId),
+      ]);
+      setQuizResult(data);
+    } catch (err) {
+      setError(err.response?.data?.detail || "No fue posible enviar la evaluación.");
     } finally {
       setSaving(false);
     }
@@ -505,6 +611,122 @@ function Training() {
                   )}
                 </section>
 
+                <section className="panel training-quiz-admin">
+                  <div className="panel-heading">
+                    <div>
+                      <span className="eyebrow">Evaluación</span>
+                      <h2>Quiz del curso</h2>
+                    </div>
+                    {selectedCourse.quiz && (
+                      <span className="training-status training-status-published">
+                        Aprueba con {selectedCourse.quiz.passing_score}%
+                      </span>
+                    )}
+                  </div>
+
+                  {!selectedCourse.quiz ? (
+                    selectedCourse.status === "DRAFT" ? (
+                      <form className="training-quiz-create-form" onSubmit={createQuiz}>
+                        <div className="training-inline-grid">
+                          <input
+                            aria-label="Título de la evaluación"
+                            value={quizForm.title}
+                            onChange={(event) => setQuizForm({ ...quizForm, title: event.target.value })}
+                            placeholder="Evaluación final"
+                            required
+                          />
+                          <input
+                            aria-label="Puntaje mínimo para aprobar"
+                            type="number"
+                            min="1"
+                            max="100"
+                            value={quizForm.passing_score}
+                            onChange={(event) => setQuizForm({ ...quizForm, passing_score: event.target.value })}
+                            required
+                          />
+                        </div>
+                        <button className="btn btn-secondary" type="submit" disabled={saving}>
+                          + Crear evaluación
+                        </button>
+                      </form>
+                    ) : (
+                      <div className="empty-state compact">
+                        <strong>Curso sin evaluación</strong>
+                        <p>Este curso se completa únicamente con sus lecciones.</p>
+                      </div>
+                    )
+                  ) : (
+                    <div className="training-quiz-admin-body">
+                      <div className="training-quiz-summary">
+                        <div>
+                          <strong>{selectedCourse.quiz.title}</strong>
+                          <small>{selectedCourse.quiz.question_count} preguntas · mínimo {selectedCourse.quiz.passing_score}%</small>
+                        </div>
+                      </div>
+
+                      {selectedCourse.quiz.questions?.length > 0 && (
+                        <div className="training-quiz-question-list">
+                          {selectedCourse.quiz.questions.map((question) => (
+                            <article className="training-quiz-question-admin" key={question.id}>
+                              <span>{question.position}</span>
+                              <div>
+                                <strong>{question.prompt}</strong>
+                                <ol type="A">
+                                  {question.options.map((option, index) => (
+                                    <li className={index === question.correct_option ? "is-correct" : ""} key={option}>
+                                      {option}
+                                    </li>
+                                  ))}
+                                </ol>
+                              </div>
+                            </article>
+                          ))}
+                        </div>
+                      )}
+
+                      {selectedCourse.status === "DRAFT" && (
+                        <form className="training-quiz-question-form" onSubmit={addQuizQuestion}>
+                          <strong>Nueva pregunta</strong>
+                          <textarea
+                            aria-label="Pregunta de evaluación"
+                            rows="2"
+                            value={questionForm.prompt}
+                            onChange={(event) => setQuestionForm({ ...questionForm, prompt: event.target.value })}
+                            placeholder="Escribe la pregunta"
+                            required
+                          />
+                          <div className="training-quiz-options-grid">
+                            {questionForm.options.map((option, index) => (
+                              <input
+                                key={index}
+                                aria-label={`Opción ${index + 1}`}
+                                value={option}
+                                onChange={(event) => updateQuestionOption(index, event.target.value)}
+                                placeholder={`Opción ${index + 1}`}
+                                required
+                              />
+                            ))}
+                          </div>
+                          <div className="training-quiz-question-actions">
+                            <select
+                              aria-label="Respuesta correcta"
+                              value={questionForm.correct_option}
+                              onChange={(event) => setQuestionForm({ ...questionForm, correct_option: event.target.value })}
+                            >
+                              {questionForm.options.map((_, index) => (
+                                <option key={index} value={String(index)}>Correcta: opción {index + 1}</option>
+                              ))}
+                            </select>
+                            <button className="btn btn-secondary" type="submit" disabled={saving}>
+                              Agregar pregunta
+                            </button>
+                          </div>
+                        </form>
+                      )}
+                    </div>
+                  )}
+                </section>
+
                 {canAssign && (
                   <section className="panel">
                     <div className="panel-heading">
@@ -549,6 +771,12 @@ function Training() {
                                   || assignment.employee.email}
                               </strong>
                               <small>{assignment.employee.job_title || assignment.employee.department || assignment.employee.email}</small>
+                              {assignment.quiz_result && (
+                                <small>
+                                  Quiz: {assignment.quiz_result.latest_score ?? "—"}%
+                                  {assignment.quiz_result.passed ? " · aprobado" : assignment.quiz_result.attempt_count ? " · pendiente" : " · sin intento"}
+                                </small>
+                              )}
                             </div>
                             <div className="training-result-progress">
                               <span>{assignment.course.progress_percent}%</span>
@@ -688,6 +916,84 @@ function Training() {
                       </article>
                     ))}
                   </div>
+
+                  {employeeCourse.course.has_quiz && (
+                    <section className="training-quiz-employee">
+                      <div className="training-quiz-employee-heading">
+                        <div>
+                          <span className="eyebrow">Evaluación final</span>
+                          <h3>{employeeQuiz?.title || "Quiz del curso"}</h3>
+                        </div>
+                        {employeeQuiz && (
+                          <span className="training-status training-status-published">
+                            Mínimo {employeeQuiz.passing_score}%
+                          </span>
+                        )}
+                      </div>
+
+                      {employeeCourse.course.completed_lessons < employeeCourse.course.lesson_count ? (
+                        <div className="training-quiz-lock">
+                          <strong>Completa todas las lecciones para habilitar la evaluación.</strong>
+                        </div>
+                      ) : employeeQuiz ? (
+                        <form className="training-quiz-attempt-form" onSubmit={submitQuiz}>
+                          {employeeQuiz.attempts?.length > 0 && (
+                            <div className="training-quiz-attempt-history">
+                              <span>Intentos anteriores</span>
+                              {employeeQuiz.attempts.map((attempt) => (
+                                <b className={attempt.passed ? "score-positive" : "score-negative"} key={attempt.id}>
+                                  #{attempt.attempt_number}: {attempt.score_percent}% {attempt.passed ? "✓" : ""}
+                                </b>
+                              ))}
+                            </div>
+                          )}
+
+                          {employeeQuiz.questions.map((question, questionIndex) => (
+                            <fieldset className="training-quiz-question" key={question.id}>
+                              <legend>{questionIndex + 1}. {question.prompt}</legend>
+                              {question.options.map((option, optionIndex) => (
+                                <label key={option}>
+                                  <input
+                                    type="radio"
+                                    name={`quiz-${question.id}`}
+                                    value={optionIndex}
+                                    checked={quizAnswers[question.id] === optionIndex}
+                                    onChange={() => setQuizAnswers((current) => ({
+                                      ...current,
+                                      [question.id]: optionIndex,
+                                    }))}
+                                    required
+                                  />
+                                  <span>{option}</span>
+                                </label>
+                              ))}
+                            </fieldset>
+                          ))}
+
+                          {quizResult && (
+                            <div className={`training-quiz-result ${quizResult.attempt.passed ? "is-pass" : "is-fail"}`}>
+                              <strong>{quizResult.attempt.score_percent}%</strong>
+                              <span>
+                                {quizResult.attempt.passed
+                                  ? "Evaluación aprobada. Curso completado."
+                                  : `Aún no alcanzas el ${quizResult.passing_score}%. Puedes intentarlo de nuevo.`}
+                              </span>
+                            </div>
+                          )}
+
+                          <button
+                            className="btn btn-primary"
+                            type="submit"
+                            disabled={saving || Object.keys(quizAnswers).length !== employeeQuiz.question_count}
+                          >
+                            {saving ? "Enviando…" : "Enviar evaluación"}
+                          </button>
+                        </form>
+                      ) : (
+                        <div className="page-loading compact-loading"><span /> Preparando evaluación…</div>
+                      )}
+                    </section>
+                  )}
                 </>
               ) : (
                 <div className="empty-state">
