@@ -5,10 +5,11 @@ import logging
 
 import boto3
 from botocore.exceptions import ClientError
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field, field_validator
 
+from app.deps import get_current_principal
 from app.infrastructure.bedrock.session import get_cached_session
 
 logger = logging.getLogger(__name__)
@@ -196,18 +197,6 @@ def logout():
 
 
 @router.get("/me")
-def me(request: Request):
-    auth_header = request.headers.get("Authorization", "")
-    if not auth_header.startswith("Bearer "):
-        raise HTTPException(status_code=401, detail="No token provided.")
-    token = auth_header[7:]
-    try:
-        response = cognito_client.get_user(AccessToken=token)
-        attrs = {a["Name"]: a["Value"] for a in response.get("UserAttributes", [])}
-        return {
-            "sub": attrs.get("sub") or response.get("Username"),
-            "email": attrs.get("email"),
-            "email_verified": attrs.get("email_verified"),
-        }
-    except ClientError:
-        raise HTTPException(status_code=401, detail="Token invalido o expirado.")
+def me(principal: dict = Depends(get_current_principal)):
+    """Return the authenticated user enriched with internal roles and permissions."""
+    return principal
