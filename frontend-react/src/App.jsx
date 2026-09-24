@@ -13,6 +13,7 @@ import CandidateDetail from "./pages/CandidateDetail";
 import Integrations from "./pages/Integrations";
 import Employees from "./pages/Employees";
 import Training from "./pages/Training";
+import EmployeeScores from "./pages/EmployeeScores";
 
 
 function ProtectedRoute({ children, permission }) {
@@ -51,6 +52,7 @@ function AppRoutes() {
       <Route path="/dashboard" element={<ProtectedPage><Dashboard /></ProtectedPage>} />
       <Route path="/training" element={<ProtectedPage permission="training.read"><Training /></ProtectedPage>} />
       <Route path="/employees" element={<ProtectedPage permission="employees.read"><Employees /></ProtectedPage>} />
+      <Route path="/direction/scores" element={<ProtectedPage permission="employee_scores.read"><EmployeeScores /></ProtectedPage>} />
       <Route path="/jobs" element={<ProtectedPage permission="jobs.read"><Jobs /></ProtectedPage>} />
       <Route path="/candidates" element={<ProtectedPage permission="candidates.read"><Candidates /></ProtectedPage>} />
       <Route path="/ranking" element={<ProtectedPage permission="ranking.read"><Ranking /></ProtectedPage>} />
