@@ -1,5 +1,6 @@
 """Employee administration HTTP routes."""
 
+import logging
 from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -8,6 +9,7 @@ from sqlalchemy.orm import Session
 from app.access_control import EMPLOYEE, SUPER_ADMIN
 from app.deps import get_db, require_permission
 from app.domains.employees import service
+from app.domains.training import service as training_service
 from app.domains.employees.schemas import (
     CreateEmployeeRequest,
     SetEmployeeRoleRequest,
@@ -17,6 +19,7 @@ from app.domains.employees.schemas import (
 
 
 router = APIRouter(prefix="/api/employees", tags=["employees"])
+logger = logging.getLogger(__name__)
 
 
 def _is_super_admin(principal: dict) -> bool:
@@ -135,7 +138,32 @@ def create_employee(
             role_code=body.role,
             created_by_sub=principal.get("sub"),
         )
-        return service.employee_payload(db, employee)
+
+        onboarding_assignments = []
+        onboarding_warning = None
+        if body.role == EMPLOYEE and body.assign_onboarding:
+            try:
+                onboarding_assignments = (
+                    training_service.assign_published_onboarding_courses(
+                        db,
+                        employee_id=employee.id,
+                        assigned_by_sub=principal.get("sub") or employee.cognito_sub,
+                    )
+                )
+            except Exception:
+                logger.exception(
+                    "Employee %s was created but automatic onboarding assignment failed.",
+                    employee.id,
+                )
+                onboarding_warning = (
+                    "El empleado fue creado, pero no fue posible asignar "
+                    "automáticamente la capacitación de onboarding."
+                )
+
+        payload = service.employee_payload(db, employee)
+        payload["onboarding_assigned_count"] = len(onboarding_assignments)
+        payload["onboarding_assignment_warning"] = onboarding_warning
+        return payload
     except Exception as exc:
         _translate_service_error(exc)
 
