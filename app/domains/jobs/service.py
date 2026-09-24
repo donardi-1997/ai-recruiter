@@ -33,6 +33,25 @@ def list_jobs(db: Session, owner_sub: str):
     ]
 
 
+def list_jobs_page(
+    db: Session,
+    *,
+    owner_sub: str,
+    page: int,
+    page_size: int,
+    sort: str,
+    q: str = "",
+):
+    return repository.list_jobs_page(
+        db,
+        owner_sub=owner_sub,
+        page=page,
+        page_size=page_size,
+        sort=sort,
+        q=q,
+    )
+
+
 def create_job(
     db: Session,
     *,

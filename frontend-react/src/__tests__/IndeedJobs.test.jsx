@@ -53,7 +53,15 @@ describe("Jobs Indeed integration", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     api.get.mockImplementation((url) => {
-      if (url === "/jobs") return Promise.resolve({ data: [JOB] });
+      if (url === "/jobs/page") return Promise.resolve({
+        data: {
+          items: [JOB],
+          page: 1,
+          page_size: 12,
+          total: 1,
+          total_pages: 1,
+        },
+      });
       if (url === "/integrations/indeed/status") {
         return Promise.resolve({
           data: {
@@ -167,7 +175,15 @@ describe("Jobs Indeed integration", () => {
 
   it("keeps controls unavailable while Indeed is disabled", async () => {
     api.get.mockImplementation((url) => {
-      if (url === "/jobs") return Promise.resolve({ data: [JOB] });
+      if (url === "/jobs/page") return Promise.resolve({
+        data: {
+          items: [JOB],
+          page: 1,
+          page_size: 12,
+          total: 1,
+          total_pages: 1,
+        },
+      });
       if (url === "/integrations/indeed/status") {
         return Promise.resolve({ data: { enabled: false, configured: false } });
       }

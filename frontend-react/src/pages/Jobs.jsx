@@ -1,10 +1,31 @@
 // eslint-disable-next-line no-unused-vars
 import React, { useEffect, useState, useCallback, useRef } from "react";
-import { Link } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import api from "../api/client";
 import "./Jobs.css";
+import "./JobsPagination.css";
 
 const MAX_PAGES = 100;
+const PAGE_SIZE_OPTIONS = [12, 24, 48];
+const SORT_OPTIONS = new Set([
+  "created_desc",
+  "created_asc",
+  "candidates_desc",
+  "candidates_asc",
+]);
+
+function positiveInteger(value, fallback) {
+  const parsed = Number.parseInt(String(value || ""), 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+function compactPageNumbers(totalPages, currentPage) {
+  if (totalPages <= 7) return Array.from({ length: totalPages }, (_, index) => index + 1);
+  const pages = new Set([1, totalPages, currentPage - 1, currentPage, currentPage + 1]);
+  return [...pages]
+    .filter((page) => page >= 1 && page <= totalPages)
+    .sort((a, b) => a - b);
+}
 
 function formatDate(iso) {
   if (!iso) return "Sin fecha";
@@ -97,7 +118,22 @@ async function loadAllJobCandidates(jobId) {
 }
 
 function Jobs() {
+  const [searchParams, setSearchParams] = useSearchParams();
+  const page = positiveInteger(searchParams.get("page"), 1);
+  const requestedPageSize = positiveInteger(searchParams.get("page_size"), 12);
+  const pageSize = PAGE_SIZE_OPTIONS.includes(requestedPageSize) ? requestedPageSize : 12;
+  const requestedSort = searchParams.get("sort") || "created_desc";
+  const sort = SORT_OPTIONS.has(requestedSort) ? requestedSort : "created_desc";
+  const query = searchParams.get("q") || "";
+
   const [jobs, setJobs] = useState([]);
+  const [jobsPage, setJobsPage] = useState({
+    page,
+    page_size: pageSize,
+    total: 0,
+    total_pages: 0,
+  });
+  const [jobSearch, setJobSearch] = useState(query);
   const [title, setTitle] = useState("");
   const [indeedDescription, setIndeedDescription] = useState("");
   const [aiDescription, setAiDescription] = useState("");
@@ -135,14 +171,53 @@ function Jobs() {
   const [successMessage, setSuccessMessage] = useState("");
   const detailsRequestRef = useRef(0);
 
-  async function loadJobs() {
+  const loadJobs = useCallback(async () => {
     try {
-      const { data } = await api.get("/jobs");
-      setJobs(Array.isArray(data) ? data : Array.isArray(data.jobs) ? data.jobs : []);
+      const { data } = await api.get("/jobs/page", {
+        params: {
+          page,
+          page_size: pageSize,
+          sort,
+          q: query,
+        },
+      });
+      setJobs(Array.isArray(data?.items) ? data.items : []);
+      setJobsPage({
+        page: Number(data?.page || page),
+        page_size: Number(data?.page_size || pageSize),
+        total: Number(data?.total || 0),
+        total_pages: Number(data?.total_pages || 0),
+      });
+      setError("");
     } catch (requestError) {
       setJobs([]);
+      setJobsPage({ page, page_size: pageSize, total: 0, total_pages: 0 });
       setError(requestError.response?.data?.detail || requestError.response?.data?.error || "No fue posible cargar las vacantes.");
     }
+  }, [page, pageSize, query, sort]);
+
+  function updateListParams(nextValues) {
+    const next = new URLSearchParams(searchParams);
+    Object.entries(nextValues).forEach(([key, value]) => {
+      if (key === "q" && !String(value || "").trim()) next.delete(key);
+      else next.set(key, String(value));
+    });
+    setSearchParams(next, { replace: true });
+  }
+
+  function submitJobSearch(event) {
+    event.preventDefault();
+    updateListParams({ page: 1, q: jobSearch.trim() });
+  }
+
+  function clearJobSearch() {
+    setJobSearch("");
+    updateListParams({ page: 1, q: "" });
+  }
+
+  function goToPage(nextPage) {
+    if (nextPage < 1 || nextPage > Math.max(jobsPage.total_pages, 1) || nextPage === page) return;
+    updateListParams({ page: nextPage });
   }
 
   async function loadIndeedIntegrationStatus() {
@@ -155,8 +230,10 @@ function Jobs() {
   }
 
   useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect
     loadJobs();
+  }, [loadJobs]);
+
+  useEffect(() => {
     loadIndeedIntegrationStatus();
   }, []);
 
@@ -536,6 +613,9 @@ function Jobs() {
   const lifecycle = indeedLifecycle(indeedJobStatus);
   const indeedPublished = !!(indeedJobStatus?.sourced_posting_id && !indeedJobStatus?.unpublished);
   const editingJobData = editingJob ? jobs.find((job) => job.job_id === editingJob) : null;
+  const pageStart = jobsPage.total ? ((page - 1) * pageSize) + 1 : 0;
+  const pageEnd = jobsPage.total ? Math.min(page * pageSize, jobsPage.total) : 0;
+  const visiblePages = compactPageNumbers(jobsPage.total_pages, page);
 
   return (
     <div className="page">
@@ -660,9 +740,64 @@ function Jobs() {
       )}
 
       <section className="jobs-section">
-        <div className="section-heading"><div><h2>Posiciones registradas</h2><p>{jobs.length} {jobs.length === 1 ? "vacante activa" : "vacantes activas"}</p></div></div>
+        <div className="section-heading"><div><h2>Posiciones registradas</h2><p>{jobsPage.total} {jobsPage.total === 1 ? "vacante activa" : "vacantes activas"}</p></div></div>
+
+        <div className="jobs-list-toolbar">
+          <form className="jobs-search" onSubmit={submitJobSearch}>
+            <label className="jobs-filter jobs-search-filter">
+              <span>Buscar vacante</span>
+              <input
+                aria-label="Buscar vacante"
+                type="search"
+                placeholder="Título de la vacante"
+                value={jobSearch}
+                onChange={(event) => setJobSearch(event.target.value)}
+              />
+            </label>
+            <button type="submit" className="btn btn-secondary">Buscar</button>
+            {query && <button type="button" className="btn btn-ghost" onClick={clearJobSearch}>Limpiar</button>}
+          </form>
+
+          <div className="jobs-list-filters">
+            <label className="jobs-filter">
+              <span>Ordenar por</span>
+              <select
+                aria-label="Ordenar por"
+                value={sort}
+                onChange={(event) => updateListParams({ page: 1, sort: event.target.value })}
+              >
+                <option value="created_desc">Más recientes</option>
+                <option value="created_asc">Más antiguas</option>
+                <option value="candidates_desc">Más candidatos</option>
+                <option value="candidates_asc">Menos candidatos</option>
+              </select>
+            </label>
+            <label className="jobs-filter">
+              <span>Vacantes por página</span>
+              <select
+                aria-label="Vacantes por página"
+                value={String(pageSize)}
+                onChange={(event) => updateListParams({ page: 1, page_size: event.target.value })}
+              >
+                {PAGE_SIZE_OPTIONS.map((size) => <option key={size} value={size}>{size}</option>)}
+              </select>
+            </label>
+          </div>
+        </div>
+
+        <div className="jobs-page-meta">
+          <span>Mostrando {pageStart}–{pageEnd} de {jobsPage.total} vacantes</span>
+        </div>
+
         {jobs.length === 0 ? (
-          <div className="empty-state"><span aria-hidden="true">▤</span><strong>Tu tablero de vacantes está vacío</strong><p>Crea una posición para comenzar a comparar candidatos.</p><button className="btn btn-secondary" onClick={() => setShowForm(true)}>Crear primera vacante</button></div>
+          <div className="empty-state">
+            <span aria-hidden="true">▤</span>
+            <strong>{query ? "No encontramos vacantes con ese filtro" : "Tu tablero de vacantes está vacío"}</strong>
+            <p>{query ? "Prueba otro título o limpia la búsqueda." : "Crea una posición para comenzar a comparar candidatos."}</p>
+            {query
+              ? <button className="btn btn-secondary" type="button" onClick={clearJobSearch}>Limpiar búsqueda</button>
+              : <button className="btn btn-secondary" onClick={() => setShowForm(true)}>Crear primera vacante</button>}
+          </div>
         ) : (
           <div className="jobs-grid">
             {jobs.map((job) => (
@@ -683,6 +818,46 @@ function Jobs() {
               </article>
             ))}
           </div>
+        )}
+
+        {jobsPage.total_pages > 1 && (
+          <nav className="jobs-pagination" aria-label="Paginación de vacantes">
+            <button
+              type="button"
+              className="jobs-page-button jobs-page-edge"
+              disabled={page <= 1}
+              onClick={() => goToPage(page - 1)}
+            >
+              ‹ Anterior
+            </button>
+            <div className="jobs-page-numbers">
+              {visiblePages.map((pageNumber, index) => {
+                const previous = visiblePages[index - 1];
+                return (
+                  <React.Fragment key={pageNumber}>
+                    {previous && pageNumber - previous > 1 && <span className="jobs-page-ellipsis" aria-hidden="true">…</span>}
+                    <button
+                      type="button"
+                      className={`jobs-page-button ${pageNumber === page ? "is-active" : ""}`}
+                      aria-current={pageNumber === page ? "page" : undefined}
+                      aria-label={`Página ${pageNumber}`}
+                      onClick={() => goToPage(pageNumber)}
+                    >
+                      {pageNumber}
+                    </button>
+                  </React.Fragment>
+                );
+              })}
+            </div>
+            <button
+              type="button"
+              className="jobs-page-button jobs-page-edge"
+              disabled={page >= jobsPage.total_pages}
+              onClick={() => goToPage(page + 1)}
+            >
+              Siguiente ›
+            </button>
+          </nav>
         )}
       </section>
 

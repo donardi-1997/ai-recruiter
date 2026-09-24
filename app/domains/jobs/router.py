@@ -1,5 +1,7 @@
 """Jobs router."""
 
+from typing import Literal
+
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
@@ -36,6 +38,40 @@ def list_jobs(
         presenter.job_payload(job, candidate_count=candidate_count)
         for job, candidate_count in service.list_jobs(db, _user["sub"])
     ]
+
+
+@router.get("/page")
+def list_jobs_page(
+    db: Session = Depends(get_db),
+    _user: dict = Depends(get_current_user),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(12, ge=1, le=100),
+    sort: Literal[
+        "created_desc",
+        "created_asc",
+        "candidates_desc",
+        "candidates_asc",
+    ] = Query("created_desc"),
+    q: str = Query("", max_length=120),
+):
+    rows, total = service.list_jobs_page(
+        db,
+        owner_sub=_user["sub"],
+        page=page,
+        page_size=page_size,
+        sort=sort,
+        q=q,
+    )
+    return {
+        "items": [
+            presenter.job_payload(job, candidate_count=int(candidate_count or 0))
+            for job, candidate_count in rows
+        ],
+        "page": page,
+        "page_size": page_size,
+        "total": total,
+        "total_pages": (total + page_size - 1) // page_size if total else 0,
+    }
 
 
 @router.post("/enrich")
