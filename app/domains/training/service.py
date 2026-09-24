@@ -1208,6 +1208,36 @@ def assign_course(
     return assignment
 
 
+def assign_published_onboarding_courses(
+    db: Session,
+    *,
+    employee_id: str,
+    assigned_by_sub: str,
+) -> list[TrainingAssignment]:
+    """Assign every currently published onboarding course to an employee."""
+
+    courses = (
+        db.query(TrainingCourse)
+        .filter(
+            TrainingCourse.is_onboarding.is_(True),
+            TrainingCourse.status == "PUBLISHED",
+        )
+        .order_by(TrainingCourse.created_at.asc())
+        .all()
+    )
+    assignments = []
+    for course in courses:
+        assignments.append(
+            assign_course(
+                db,
+                course_id=course.id,
+                employee_id=employee_id,
+                assigned_by_sub=assigned_by_sub,
+            )
+        )
+    return assignments
+
+
 def _completed_ids(db: Session, assignment_id: str) -> set[str]:
     return {
         lesson_id
