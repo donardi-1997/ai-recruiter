@@ -99,9 +99,10 @@ def list_employees(
 
 
 def _cognito_sub_from_user(user: dict) -> str:
+    raw_attrs = user.get("Attributes") or user.get("UserAttributes") or []
     attrs = {
         item.get("Name"): item.get("Value")
-        for item in user.get("Attributes", [])
+        for item in raw_attrs
         if item.get("Name")
     }
     return str(attrs.get("sub") or "").strip()
