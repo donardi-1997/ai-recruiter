@@ -85,6 +85,7 @@ function Training() {
   const [quizResult, setQuizResult] = useState(null);
   const [activeLessonId, setActiveLessonId] = useState("");
   const [creatingPreset, setCreatingPreset] = useState(false);
+  const [checklistSavingLessonId, setChecklistSavingLessonId] = useState("");
 
   const loadHome = useCallback(async () => {
     setLoading(true);
@@ -342,6 +343,7 @@ function Training() {
       content_type: "VIDEO",
       external_url: "",
       estimated_minutes: "",
+      checklist_items: "",
       is_optional: false,
     };
   }
@@ -385,6 +387,12 @@ function Training() {
         content_type: form.content_type,
         external_url: form.external_url.trim() || null,
         estimated_minutes: Number.isInteger(estimatedMinutes) ? estimatedMinutes : null,
+        checklist_items: form.content_type === "CHECKLIST"
+          ? form.checklist_items
+              .split("\n")
+              .map((item) => item.trim())
+              .filter(Boolean)
+          : [],
         is_optional: Boolean(form.is_optional),
       });
       setSelectedCourse(data);
@@ -504,6 +512,41 @@ function Training() {
       setError(err.response?.data?.detail || "No fue posible guardar el avance.");
     } finally {
       setSaving(false);
+    }
+  }
+
+  async function updateChecklistItem(lesson, index, checked) {
+    if (!lesson?.id) return;
+    const current = new Set(lesson.checklist_completed_items || []);
+    if (checked) current.add(index);
+    else current.delete(index);
+    const completedItems = Array.from(current).sort((a, b) => a - b);
+    const willComplete = completedItems.length === (lesson.checklist_items || []).length;
+    const currentIndex = journeyLessons.findIndex((item) => item.id === lesson.id);
+    const nextId = currentIndex >= 0
+      ? journeyLessons[currentIndex + 1]?.id || ""
+      : "";
+
+    setChecklistSavingLessonId(lesson.id);
+    setError("");
+    try {
+      const { data } = await api.put(
+        `/training/me/lessons/${lesson.id}/checklist`,
+        { completed_items: completedItems },
+      );
+      setEmployeeCourse(data);
+      await Promise.all([
+        loadHome(),
+        loadEmployeeCourse(data.course.id),
+      ]);
+      if (willComplete && nextId) setActiveLessonId(nextId);
+    } catch (err) {
+      setError(
+        err.response?.data?.detail ||
+        "No fue posible guardar el avance del checklist.",
+      );
+    } finally {
+      setChecklistSavingLessonId("");
     }
   }
 
@@ -737,6 +780,9 @@ function Training() {
                                   </small>
                                 )}
                                 {lesson.external_url && <small>Recurso externo configurado</small>}
+                            {lesson.content_type === "CHECKLIST" && lesson.checklist_items?.length > 0 && (
+                              <small>{lesson.checklist_items.length} puntos de checklist</small>
+                            )}
                                 {lesson.video_size_bytes ? (
                                   <small>{Math.max(1, Math.round(lesson.video_size_bytes / (1024 * 1024)))} MB</small>
                                 ) : null}
@@ -831,6 +877,15 @@ function Training() {
                                 value={lessonForm(module.id).external_url}
                                 onChange={(event) => updateLessonForm(module.id, { external_url: event.target.value })}
                                 required
+                              />
+                            )}
+                            {lessonForm(module.id).content_type === "CHECKLIST" && (
+                              <textarea
+                                aria-label={`Puntos de checklist para ${module.title}`}
+                                placeholder={"Un punto por línea\nEj. Tengo acceso al correo\nSé quién es mi líder"}
+                                value={lessonForm(module.id).checklist_items}
+                                onChange={(event) => updateLessonForm(module.id, { checklist_items: event.target.value })}
+                                rows="5"
                               />
                             )}
                             <label className="training-optional-toggle">
@@ -1276,10 +1331,45 @@ function Training() {
                           )}
 
                           {activeJourneyLesson.content_type === "CHECKLIST" && (
-                            <div className="training-checklist-card">
-                              <strong>Antes de continuar</strong>
-                              <span>Confirma que revisaste los puntos de esta actividad con tu líder o responsable.</span>
-                            </div>
+                            activeJourneyLesson.checklist_items?.length > 0 ? (
+                              <div className="training-checklist-card training-checklist-items">
+                                <div className="training-checklist-heading">
+                                  <strong>Tus primeros pasos</strong>
+                                  <span>
+                                    {(activeJourneyLesson.checklist_completed_items || []).length}
+                                    /{activeJourneyLesson.checklist_items.length}
+                                  </span>
+                                </div>
+                                {activeJourneyLesson.checklist_items.map((item, index) => {
+                                  const checked = (activeJourneyLesson.checklist_completed_items || []).includes(index);
+                                  return (
+                                    <label className={checked ? "is-checked" : ""} key={item}>
+                                      <input
+                                        type="checkbox"
+                                        checked={checked}
+                                        disabled={activeJourneyLesson.completed || checklistSavingLessonId === activeJourneyLesson.id}
+                                        onChange={(event) => {
+                                          void updateChecklistItem(
+                                            activeJourneyLesson,
+                                            index,
+                                            event.target.checked,
+                                          );
+                                        }}
+                                      />
+                                      <span>{item}</span>
+                                    </label>
+                                  );
+                                })}
+                                <small>
+                                  El avance se guarda automáticamente. Puedes salir y continuar después.
+                                </small>
+                              </div>
+                            ) : (
+                              <div className="training-checklist-card">
+                                <strong>Antes de continuar</strong>
+                                <span>Confirma que revisaste los puntos de esta actividad con tu líder o responsable.</span>
+                              </div>
+                            )
                           )}
 
                           <div className="training-journey-actions">
@@ -1294,6 +1384,13 @@ function Training() {
                             <div>
                               {activeJourneyLesson.completed ? (
                                 <span className="status-pill"><i /> Completada</span>
+                              ) : (
+                                activeJourneyLesson.content_type === "CHECKLIST"
+                                && activeJourneyLesson.checklist_items?.length > 0
+                              ) ? (
+                                <span className="training-checklist-progress-label">
+                                  Completa todos los puntos para continuar
+                                </span>
                               ) : (
                                 <button
                                   className="btn btn-primary"
