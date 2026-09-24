@@ -47,6 +47,38 @@ def list_candidates_page(
     return items, total
 
 
+def count_candidates(
+    db: Session,
+    *,
+    owner_sub: str,
+    include_banned: bool = False,
+) -> int:
+    query = db.query(Candidate).filter(Candidate.owner_sub == owner_sub)
+    if not include_banned:
+        query = query.filter(Candidate.is_banned.is_(False))
+    return int(query.count() or 0)
+
+
+def count_candidates_for_job(
+    db: Session,
+    *,
+    job_id: str,
+    owner_sub: str,
+    include_banned: bool = False,
+) -> int:
+    query = (
+        db.query(Candidate)
+        .join(JobCandidate, JobCandidate.candidate_id == Candidate.id)
+        .filter(
+            JobCandidate.job_id == job_id,
+            Candidate.owner_sub == owner_sub,
+        )
+    )
+    if not include_banned:
+        query = query.filter(Candidate.is_banned.is_(False))
+    return int(query.count() or 0)
+
+
 def create_candidate(
     db: Session,
     *,
