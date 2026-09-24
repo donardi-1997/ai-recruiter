@@ -55,6 +55,7 @@ def test_new_authenticated_user_gets_employee_role_only(db):
     assert "training.consume" in principal["permissions"]
     assert "training.quiz.take" in principal["permissions"]
     assert "employees.create" not in principal["permissions"]
+    assert "candidates.restrict" not in principal["permissions"]
     assert "employee_scores.read" not in principal["permissions"]
 
 
@@ -75,6 +76,7 @@ def test_admin_can_manage_employees_but_cannot_read_private_scores(db):
     assert ADMIN in principal["roles"]
     assert "employees.create" in principal["permissions"]
     assert "training.manage" in principal["permissions"]
+    assert "candidates.restrict" in principal["permissions"]
     assert "employee_scores.read" not in principal["permissions"]
     assert "employee_scores.create" not in principal["permissions"]
 
@@ -94,6 +96,7 @@ def test_super_admin_receives_private_director_permissions(db):
     )
 
     assert SUPER_ADMIN in principal["roles"]
+    assert "candidates.restrict" in principal["permissions"]
     assert "employee_scores.read" in principal["permissions"]
     assert "employee_scores.create" in principal["permissions"]
     assert "employee_scores.correct" in principal["permissions"]
