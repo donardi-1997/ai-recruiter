@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useMemo, useState } from "react";
+import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
 
 import api, {
   clearAccessToken,
@@ -12,7 +12,7 @@ export function SessionProvider({ children }) {
   const [principal, setPrincipal] = useState(null);
   const [status, setStatus] = useState("loading");
 
-  async function loadSession() {
+  const loadSession = useCallback(async () => {
     try {
       let token = getAccessToken();
       if (!token) {
@@ -29,17 +29,17 @@ export function SessionProvider({ children }) {
       setStatus("anonymous");
       return null;
     }
-  }
+  }, []);
 
-  function clearSession() {
+  const clearSession = useCallback(() => {
     clearAccessToken();
     setPrincipal(null);
     setStatus("anonymous");
-  }
+  }, []);
 
   useEffect(() => {
     loadSession();
-  }, []);
+  }, [loadSession]);
 
   const value = useMemo(() => ({
     principal,
@@ -48,7 +48,7 @@ export function SessionProvider({ children }) {
     clearSession,
     hasRole: (role) => Boolean(principal?.roles?.includes(role)),
     hasPermission: (permission) => Boolean(principal?.permissions?.includes(permission)),
-  }), [principal, status]);
+  }), [clearSession, loadSession, principal, status]);
 
   return (
     <SessionContext.Provider value={value}>
