@@ -201,8 +201,47 @@ def run_ui(*, worker, api, browser) -> None:
         background=[("pressed", "#EAECF0"), ("active", "#F2F4F7")],
     )
 
-    shell = ttk.Frame(root, style="App.TFrame", padding=18)
-    shell.pack(fill="both", expand=True)
+    viewport = ttk.Frame(root, style="App.TFrame")
+    viewport.pack(fill="both", expand=True)
+
+    canvas = tk.Canvas(
+        viewport,
+        background=_UI["bg"],
+        highlightthickness=0,
+        bd=0,
+        relief="flat",
+        yscrollincrement=16,
+    )
+    scrollbar = ttk.Scrollbar(viewport, orient="vertical", command=canvas.yview)
+    canvas.configure(yscrollcommand=scrollbar.set)
+    scrollbar.pack(side="right", fill="y")
+    canvas.pack(side="left", fill="both", expand=True)
+
+    shell = ttk.Frame(canvas, style="App.TFrame", padding=18)
+    shell_window = canvas.create_window((0, 0), window=shell, anchor="nw")
+
+    def sync_scrollregion(event=None) -> None:
+        bounds = canvas.bbox("all")
+        if bounds is not None:
+            canvas.configure(scrollregion=bounds)
+
+    def fit_shell_to_canvas(event) -> None:
+        canvas.itemconfigure(shell_window, width=max(1, event.width))
+        sync_scrollregion()
+
+    def on_mousewheel(event):
+        bounds = canvas.bbox("all")
+        if bounds is None or bounds[3] <= canvas.winfo_height():
+            return None
+        units = int(-event.delta / 120)
+        if units == 0:
+            units = -1 if event.delta > 0 else 1
+        canvas.yview_scroll(units * 3, "units")
+        return "break"
+
+    shell.bind("<Configure>", sync_scrollregion, add="+")
+    canvas.bind("<Configure>", fit_shell_to_canvas, add="+")
+    root.bind("<MouseWheel>", on_mousewheel, add="+")
 
     header = ttk.Frame(shell, style="App.TFrame")
     header.pack(fill="x")
