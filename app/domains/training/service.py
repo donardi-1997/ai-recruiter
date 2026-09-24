@@ -96,11 +96,14 @@ def _applicable_modules(
     course: TrainingCourse,
     employee: UserProfile | None = None,
 ) -> list[TrainingModule]:
-    return [
+    modules = [
         module
         for module in sorted(course.modules, key=lambda item: item.position)
         if _module_applies(module, employee)
     ]
+    if employee is not None:
+        modules = [module for module in modules if module.lessons]
+    return modules
 
 
 def _lesson_minutes(lesson: TrainingLesson) -> int:
@@ -416,8 +419,8 @@ def create_asiati_onboarding_template(
         course_id=course.id,
         title="Así trabajamos",
         description=(
-            "Carga aquí los videos corporativos del onboarding. Recomendación: "
-            "segmentos de 4–6 minutos por lección."
+            "Conoce los procesos, herramientas y formas de trabajo que usamos "
+            "en ASIATI. Los administradores pueden cargar aquí los videos corporativos."
         ),
     )
     role_module = add_module(
@@ -425,8 +428,8 @@ def create_asiati_onboarding_template(
         course_id=course.id,
         title="Tu cargo en ASIATI",
         description=(
-            "Crea aquí módulos específicos por cargo o área usando la segmentación "
-            "de audiencia."
+            "Conoce el alcance de tu rol, responsabilidades, herramientas y "
+            "objetivos de tus primeros días."
         ),
     )
     add_lesson(
@@ -442,11 +445,12 @@ def create_asiati_onboarding_template(
         content_type="CHECKLIST",
         estimated_minutes=5,
     )
-    add_module(
+    create_quiz(
         db,
         course_id=course.id,
         title="Evaluación final",
-        description="Añade un quiz de 5–8 preguntas antes de publicar la ruta.",
+        passing_score=70,
+        created_by_sub=created_by_sub,
     )
 
     return require_course(db, course.id)
