@@ -1196,6 +1196,25 @@ function Training() {
                           </div>
                         </section>
                       ))}
+                      {employeeCourse.course.has_quiz && (
+                        <button
+                          type="button"
+                          className={`training-journey-quiz-step ${selectedAssignment?.quiz_result?.passed ? "is-complete" : ""}`}
+                          onClick={() => document.getElementById("training-final-quiz")?.scrollIntoView({ behavior: "smooth", block: "start" })}
+                        >
+                          <span>{selectedAssignment?.quiz_result?.passed ? "✓" : "?"}</span>
+                          <div>
+                            <strong>Evaluación final</strong>
+                            <small>
+                              {employeeCourse.course.completed_lessons < employeeCourse.course.lesson_count
+                                ? "Se habilita al completar la ruta"
+                                : selectedAssignment?.quiz_result?.passed
+                                  ? "Aprobada"
+                                  : "Lista para presentar"}
+                            </small>
+                          </div>
+                        </button>
+                      )}
                     </aside>
 
                     <article className="training-journey-focus">
@@ -1300,7 +1319,7 @@ function Training() {
                   </div>
 
                   {employeeCourse.course.has_quiz && (
-                    <section className="training-quiz-employee">
+                    <section className="training-quiz-employee" id="training-final-quiz">
                       <div className="training-quiz-employee-heading">
                         <div>
                           <span className="eyebrow">Evaluación final</span>
