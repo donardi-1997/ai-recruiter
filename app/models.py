@@ -868,6 +868,8 @@ class TrainingModule(Base):
     )
     title = Column(Text, nullable=False)
     description = Column(Text, nullable=True)
+    audience_job_title = Column(Text, nullable=True)
+    audience_department = Column(Text, nullable=True)
     position = Column(Integer, nullable=False, default=1)
     created_at = Column(
         DateTime(timezone=True),
@@ -907,6 +909,10 @@ class TrainingLesson(Base):
     video_content_type = Column(Text, nullable=True)
     video_size_bytes = Column(Integer, nullable=True)
     duration_seconds = Column(Integer, nullable=True)
+    content_type = Column(Text, nullable=False, default="VIDEO")
+    external_url = Column(Text, nullable=True)
+    estimated_minutes = Column(Integer, nullable=True)
+    is_optional = Column(Boolean, nullable=False, default=False)
     position = Column(Integer, nullable=False, default=1)
     created_at = Column(
         DateTime(timezone=True),
