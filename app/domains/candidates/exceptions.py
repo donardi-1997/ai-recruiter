@@ -20,3 +20,8 @@ class InvalidApplicationStatus(Exception):
 
 class CandidateRetentionProtected(Exception):
     """Operational hard-delete is disabled for retained candidates."""
+
+
+
+class CandidateBanned(Exception):
+    """The candidate is retained but excluded from new evaluation activity."""
