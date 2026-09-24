@@ -72,6 +72,57 @@ def require_employee(db: Session, employee_id: str) -> UserProfile:
     return employee
 
 
+def _normalize_scope(value: str | None) -> str:
+    return " ".join(str(value or "").strip().casefold().split())
+
+
+def _module_applies(
+    module: TrainingModule,
+    employee: UserProfile | None,
+) -> bool:
+    if employee is None:
+        return True
+
+    job_target = _normalize_scope(module.audience_job_title)
+    department_target = _normalize_scope(module.audience_department)
+    if job_target and job_target != _normalize_scope(employee.job_title):
+        return False
+    if department_target and department_target != _normalize_scope(employee.department):
+        return False
+    return True
+
+
+def _applicable_modules(
+    course: TrainingCourse,
+    employee: UserProfile | None = None,
+) -> list[TrainingModule]:
+    return [
+        module
+        for module in sorted(course.modules, key=lambda item: item.position)
+        if _module_applies(module, employee)
+    ]
+
+
+def _lesson_minutes(lesson: TrainingLesson) -> int:
+    if lesson.estimated_minutes:
+        return int(lesson.estimated_minutes)
+    if lesson.duration_seconds:
+        return max(1, (int(lesson.duration_seconds) + 59) // 60)
+    return 1
+
+
+def _required_lessons(
+    course: TrainingCourse,
+    employee: UserProfile | None = None,
+) -> list[TrainingLesson]:
+    return [
+        lesson
+        for module in _applicable_modules(course, employee)
+        for lesson in sorted(module.lessons, key=lambda item: item.position)
+        if not lesson.is_optional
+    ]
+
+
 def lesson_payload(lesson: TrainingLesson, *, completed: bool = False) -> dict:
     video_url = lesson.video_url
     video_source = "external" if lesson.video_url else None
@@ -90,19 +141,52 @@ def lesson_payload(lesson: TrainingLesson, *, completed: bool = False) -> dict:
         "video_content_type": lesson.video_content_type,
         "video_size_bytes": lesson.video_size_bytes,
         "duration_seconds": lesson.duration_seconds,
+        "content_type": lesson.content_type or "VIDEO",
+        "external_url": lesson.external_url,
+        "estimated_minutes": _lesson_minutes(lesson),
+        "is_optional": bool(lesson.is_optional),
         "position": lesson.position,
         "completed": completed,
     }
 
 
-def module_payload(module: TrainingModule, *, completed_lesson_ids: set[str] | None = None) -> dict:
+def module_payload(
+    module: TrainingModule,
+    *,
+    completed_lesson_ids: set[str] | None = None,
+) -> dict:
     completed_lesson_ids = completed_lesson_ids or set()
     lessons = sorted(module.lessons, key=lambda lesson: lesson.position)
+    required = [lesson for lesson in lessons if not lesson.is_optional]
+    completed_required = [
+        lesson for lesson in required if lesson.id in completed_lesson_ids
+    ]
+    estimated_minutes = sum(_lesson_minutes(lesson) for lesson in required)
+    remaining_minutes = sum(
+        _lesson_minutes(lesson)
+        for lesson in required
+        if lesson.id not in completed_lesson_ids
+    )
+    lesson_count = len(required)
+    completed_count = len(completed_required)
     return {
         "id": module.id,
         "title": module.title,
         "description": module.description,
+        "audience_job_title": module.audience_job_title,
+        "audience_department": module.audience_department,
         "position": module.position,
+        "lesson_count": lesson_count,
+        "content_item_count": len(lessons),
+        "completed_lessons": completed_count,
+        "progress_percent": (
+            round((completed_count / lesson_count) * 100)
+            if lesson_count
+            else 100
+        ),
+        "is_complete": completed_count >= lesson_count if lesson_count else True,
+        "estimated_minutes": estimated_minutes,
+        "remaining_minutes": remaining_minutes,
         "lessons": [
             lesson_payload(
                 lesson,
@@ -113,9 +197,12 @@ def module_payload(module: TrainingModule, *, completed_lesson_ids: set[str] | N
     }
 
 
-def _course_counts(course: TrainingCourse) -> tuple[int, int]:
-    modules = list(course.modules)
-    return len(modules), sum(len(module.lessons) for module in modules)
+def _course_counts(
+    course: TrainingCourse,
+    employee: UserProfile | None = None,
+) -> tuple[int, int]:
+    modules = _applicable_modules(course, employee)
+    return len(modules), len(_required_lessons(course, employee))
 
 
 def course_payload(
@@ -123,11 +210,31 @@ def course_payload(
     *,
     completed_lesson_ids: set[str] | None = None,
     include_structure: bool = False,
+    employee: UserProfile | None = None,
 ) -> dict:
     completed_lesson_ids = completed_lesson_ids or set()
-    module_count, lesson_count = _course_counts(course)
-    completed_count = min(len(completed_lesson_ids), lesson_count)
+    modules = _applicable_modules(course, employee)
+    required_lessons = _required_lessons(course, employee)
+    required_ids = {lesson.id for lesson in required_lessons}
+    completed_required_ids = required_ids & completed_lesson_ids
+    module_count = len(modules)
+    lesson_count = len(required_lessons)
+    completed_count = len(completed_required_ids)
     progress_percent = round((completed_count / lesson_count) * 100) if lesson_count else 0
+    estimated_minutes = sum(_lesson_minutes(lesson) for lesson in required_lessons)
+    remaining_minutes = sum(
+        _lesson_minutes(lesson)
+        for lesson in required_lessons
+        if lesson.id not in completed_required_ids
+    )
+    next_lesson = next(
+        (
+            lesson
+            for lesson in required_lessons
+            if lesson.id not in completed_required_ids
+        ),
+        None,
+    )
 
     payload = {
         "id": course.id,
@@ -137,8 +244,12 @@ def course_payload(
         "is_onboarding": bool(course.is_onboarding),
         "module_count": module_count,
         "lesson_count": lesson_count,
+        "content_item_count": sum(len(module.lessons) for module in modules),
         "completed_lessons": completed_count,
         "progress_percent": progress_percent,
+        "estimated_minutes": estimated_minutes,
+        "remaining_minutes": remaining_minutes,
+        "next_lesson_id": next_lesson.id if next_lesson else None,
         "has_quiz": course.quiz is not None,
         "created_at": course.created_at.isoformat() if course.created_at else None,
         "updated_at": course.updated_at.isoformat() if course.updated_at else None,
@@ -149,10 +260,9 @@ def course_payload(
                 module,
                 completed_lesson_ids=completed_lesson_ids,
             )
-            for module in sorted(course.modules, key=lambda item: item.position)
+            for module in modules
         ]
     return payload
-
 
 def list_courses(db: Session) -> list[dict]:
     courses = db.query(TrainingCourse).order_by(TrainingCourse.created_at.desc()).all()
