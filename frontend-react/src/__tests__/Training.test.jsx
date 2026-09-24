@@ -949,7 +949,7 @@ describe("Onboarding quality preview", () => {
         { params: { employee_id: "employee-quality" } },
       );
     });
-    expect(await screen.findByText("Laura Pérez")).toBeInTheDocument();
+    expect((await screen.findAllByText("Laura Pérez")).length).toBeGreaterThan(1);
     expect(screen.queryByText("Desarrollo")).not.toBeInTheDocument();
     expect(screen.getByText("Bienvenida")).toBeInTheDocument();
   });
