@@ -792,6 +792,12 @@ class TrainingCourse(Base):
         back_populates="course",
         cascade="all, delete-orphan",
     )
+    quiz = relationship(
+        "TrainingQuiz",
+        back_populates="course",
+        cascade="all, delete-orphan",
+        uselist=False,
+    )
 
 
 class TrainingModule(Base):
@@ -905,6 +911,11 @@ class TrainingAssignment(Base):
         back_populates="assignment",
         cascade="all, delete-orphan",
     )
+    quiz_attempts = relationship(
+        "TrainingQuizAttempt",
+        back_populates="assignment",
+        cascade="all, delete-orphan",
+    )
 
 
 class TrainingLessonProgress(Base):
@@ -948,4 +959,111 @@ class TrainingLessonProgress(Base):
         "TrainingLesson",
         back_populates="progress_entries",
     )
+
+
+class TrainingQuiz(Base):
+    __tablename__ = "training_quizzes"
+    __table_args__ = (
+        UniqueConstraint("course_id", name="uq_training_quizzes_course"),
+    )
+
+    id = Column(Text, primary_key=True, default=lambda: str(uuid.uuid4()))
+    course_id = Column(
+        Text,
+        ForeignKey("training_courses.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    title = Column(Text, nullable=False)
+    passing_score = Column(Integer, nullable=False, default=70)
+    created_by_sub = Column(Text, nullable=False)
+    created_at = Column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=lambda: datetime.now(timezone.utc),
+    )
+
+    course = relationship("TrainingCourse", back_populates="quiz")
+    questions = relationship(
+        "TrainingQuizQuestion",
+        back_populates="quiz",
+        cascade="all, delete-orphan",
+        order_by="TrainingQuizQuestion.position",
+    )
+    attempts = relationship(
+        "TrainingQuizAttempt",
+        back_populates="quiz",
+        cascade="all, delete-orphan",
+    )
+
+
+class TrainingQuizQuestion(Base):
+    __tablename__ = "training_quiz_questions"
+    __table_args__ = (
+        UniqueConstraint(
+            "quiz_id",
+            "position",
+            name="uq_training_quiz_questions_quiz_position",
+        ),
+    )
+
+    id = Column(Text, primary_key=True, default=lambda: str(uuid.uuid4()))
+    quiz_id = Column(
+        Text,
+        ForeignKey("training_quizzes.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    prompt = Column(Text, nullable=False)
+    options = Column(JSON, nullable=False, default=list)
+    correct_option = Column(Integer, nullable=False)
+    position = Column(Integer, nullable=False, default=1)
+    created_at = Column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=lambda: datetime.now(timezone.utc),
+    )
+
+    quiz = relationship("TrainingQuiz", back_populates="questions")
+
+
+class TrainingQuizAttempt(Base):
+    __tablename__ = "training_quiz_attempts"
+    __table_args__ = (
+        UniqueConstraint(
+            "assignment_id",
+            "attempt_number",
+            name="uq_training_quiz_attempts_assignment_number",
+        ),
+        Index(
+            "idx_training_quiz_attempts_assignment_submitted",
+            "assignment_id",
+            "submitted_at",
+        ),
+    )
+
+    id = Column(Text, primary_key=True, default=lambda: str(uuid.uuid4()))
+    assignment_id = Column(
+        Text,
+        ForeignKey("training_assignments.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    quiz_id = Column(
+        Text,
+        ForeignKey("training_quizzes.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    answers = Column(JSON, nullable=False, default=dict)
+    score_percent = Column(Integer, nullable=False)
+    passed = Column(Boolean, nullable=False, default=False)
+    attempt_number = Column(Integer, nullable=False)
+    submitted_at = Column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=lambda: datetime.now(timezone.utc),
+    )
+
+    assignment = relationship(
+        "TrainingAssignment",
+        back_populates="quiz_attempts",
+    )
+    quiz = relationship("TrainingQuiz", back_populates="attempts")
 
