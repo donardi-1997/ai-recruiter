@@ -811,6 +811,7 @@ def add_lesson(
     content_type: str = "VIDEO",
     external_url: str | None = None,
     estimated_minutes: int | None = None,
+    checklist_items: list[str] | None = None,
     is_optional: bool = False,
 ) -> TrainingLesson:
     module = require_module(db, module_id)
@@ -831,6 +832,7 @@ def add_lesson(
         content_type=(content_type or "VIDEO").strip().upper(),
         external_url=(external_url or "").strip() or None,
         estimated_minutes=estimated_minutes,
+        checklist_items=list(checklist_items or []),
         is_optional=bool(is_optional),
         position=position,
     )
