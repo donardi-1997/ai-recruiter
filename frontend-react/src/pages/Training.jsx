@@ -1149,6 +1149,9 @@ function Training() {
                         {employeeCourse.course.remaining_minutes
                           ? ` · ~${employeeCourse.course.remaining_minutes} min restantes`
                           : ""}
+                        {employeeCourse.course.has_unknown_remaining_duration
+                          ? " + contenido con duración por confirmar"
+                          : ""}
                       </small>
                     </div>
                     <div className="training-journey-progress-bar">
@@ -1168,7 +1171,10 @@ function Training() {
                             <div>
                               <strong>{module.title}</strong>
                               <small>
-                                {module.completed_lessons}/{module.lesson_count} · ~{module.estimated_minutes} min
+                                {module.completed_lessons}/{module.lesson_count}
+                                {module.has_unknown_duration
+                                  ? ` · ~${module.estimated_minutes} min + contenido por confirmar`
+                                  : ` · ~${module.estimated_minutes} min`}
                               </small>
                             </div>
                           </div>
@@ -1184,7 +1190,10 @@ function Training() {
                                 <div>
                                   <strong>{lesson.title}</strong>
                                   <small>
-                                    {lessonTypeLabel(lesson.content_type)} · ~{lesson.estimated_minutes} min
+                                    {lessonTypeLabel(lesson.content_type)}
+                                    {lesson.estimated_minutes
+                                      ? ` · ~${lesson.estimated_minutes} min`
+                                      : " · duración por confirmar"}
                                     {lesson.is_optional ? " · opcional" : ""}
                                   </small>
                                 </div>
@@ -1219,7 +1228,12 @@ function Training() {
                         <>
                           <div className="training-journey-focus-meta">
                             <span>{activeJourneyLesson.module.title}</span>
-                            <b>{lessonTypeLabel(activeJourneyLesson.content_type)} · ~{activeJourneyLesson.estimated_minutes} min</b>
+                            <b>
+                              {lessonTypeLabel(activeJourneyLesson.content_type)}
+                              {activeJourneyLesson.estimated_minutes
+                                ? ` · ~${activeJourneyLesson.estimated_minutes} min`
+                                : " · duración por confirmar"}
+                            </b>
                           </div>
                           <h3>{activeJourneyLesson.title}</h3>
                           {activeJourneyLesson.description && (
