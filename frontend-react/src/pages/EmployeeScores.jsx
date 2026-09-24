@@ -68,7 +68,10 @@ function EmployeeScores() {
   }, [loadEmployees]);
 
   useEffect(() => {
-    void loadDetail(selectedId);
+    const timeoutId = window.setTimeout(() => {
+      void loadDetail(selectedId);
+    }, 0);
+    return () => window.clearTimeout(timeoutId);
   }, [loadDetail, selectedId]);
 
   const selectedEmployee = useMemo(
@@ -78,7 +81,7 @@ function EmployeeScores() {
 
   async function createEvent(event) {
     event.preventDefault();
-    const numericPoints = Number.parseInt(points, 10);
+    const numericPoints = Number(points);
     if (!Number.isInteger(numericPoints) || numericPoints === 0) {
       setError("Ingresa una cantidad de puntos distinta de cero.");
       return;
