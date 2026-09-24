@@ -1306,3 +1306,150 @@ def test_asiati_onboarding_template_scaffolds_short_journey(db):
     assert all(lesson["video_url"] is None for lesson in split_lessons)
     assert all(lesson["estimated_minutes"] is None for lesson in split_lessons)
     assert all(lesson["duration_known"] is False for lesson in split_lessons)
+
+
+def test_onboarding_quality_report_flags_heavy_or_incomplete_content(db):
+    course = service.create_course(
+        db,
+        title="Onboarding pesado",
+        description=None,
+        created_by_sub="admin-sub",
+        is_onboarding=True,
+    )
+    module = service.add_module(
+        db,
+        course_id=course.id,
+        title="Contenido",
+        description=None,
+    )
+    service.add_lesson(
+        db,
+        module_id=module.id,
+        title="Lectura extensa",
+        description=None,
+        video_url=None,
+        duration_seconds=None,
+        content_type="ARTICLE",
+        estimated_minutes=9,
+    )
+    service.add_lesson(
+        db,
+        module_id=module.id,
+        title="Video pendiente",
+        description=None,
+        video_url=None,
+        duration_seconds=None,
+        content_type="VIDEO",
+        estimated_minutes=None,
+    )
+    quiz = service.create_quiz(
+        db,
+        course_id=course.id,
+        title="Evaluación final",
+        passing_score=70,
+        created_by_sub="admin-sub",
+    )
+    for index in range(2):
+        service.add_quiz_question(
+            db,
+            quiz_id=quiz.id,
+            prompt=f"Pregunta {index + 1}",
+            options=["A", "B"],
+            correct_option=0,
+        )
+
+    report = service.course_quality_report(course)
+    codes = {issue["code"] for issue in report["issues"]}
+
+    assert report["required_activity_count"] == 2
+    assert report["known_minutes"] == 9
+    assert report["quiz_question_count"] == 2
+    assert {
+        "LONG_ACTIVITY",
+        "UNKNOWN_DURATION",
+        "MISSING_VIDEO",
+        "QUIZ_TOO_SHORT",
+    }.issubset(codes)
+
+
+def test_course_preview_respects_employee_role_and_department(db):
+    employee = _employee(db)
+    employee.first_name = "Laura"
+    employee.job_title = "Comercial"
+    employee.department = "Ventas"
+    db.commit()
+
+    course = service.create_course(
+        db,
+        title="Ruta segmentada",
+        description=None,
+        created_by_sub="admin-sub",
+        is_onboarding=True,
+    )
+    common = service.add_module(
+        db,
+        course_id=course.id,
+        title="Común",
+        description=None,
+    )
+    service.add_lesson(
+        db,
+        module_id=common.id,
+        title="General",
+        description=None,
+        video_url=None,
+        duration_seconds=None,
+        content_type="ARTICLE",
+        estimated_minutes=2,
+    )
+    sales = service.add_module(
+        db,
+        course_id=course.id,
+        title="Ventas",
+        description=None,
+        audience_job_title="Comercial",
+        audience_department="Ventas",
+    )
+    service.add_lesson(
+        db,
+        module_id=sales.id,
+        title="CRM",
+        description=None,
+        video_url=None,
+        duration_seconds=None,
+        content_type="CHECKLIST",
+        estimated_minutes=3,
+    )
+    dev = service.add_module(
+        db,
+        course_id=course.id,
+        title="Desarrollo",
+        description=None,
+        audience_job_title="Desarrollador",
+    )
+    service.add_lesson(
+        db,
+        module_id=dev.id,
+        title="Git",
+        description=None,
+        video_url=None,
+        duration_seconds=None,
+        content_type="ARTICLE",
+        estimated_minutes=3,
+    )
+
+    preview = service.get_course_preview(
+        db,
+        course.id,
+        employee_id=employee.id,
+    )
+
+    assert [module["title"] for module in preview["modules"]] == [
+        "Común",
+        "Ventas",
+    ]
+    assert preview["preview_employee"]["id"] == employee.id
+    assert preview["preview_employee"]["job_title"] == "Comercial"
+    assert preview["quality"]["required_activity_count"] == 2
+    assert preview["quality"]["known_minutes"] == 5
+
