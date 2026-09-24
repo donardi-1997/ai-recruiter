@@ -104,6 +104,10 @@ describe("Employees administration", () => {
     await screen.findByText("Ana Pérez");
     fireEvent.click(screen.getByRole("button", { name: /crear empleado/i }));
 
-    expect(screen.getByLabelText("Rol inicial")).toBeInTheDocument();
+    const roleSelect = screen.getByLabelText("Rol inicial");
+    expect(roleSelect).toBeInTheDocument();
+    expect(screen.getByRole("option", { name: "Empleado" })).toBeInTheDocument();
+    expect(screen.getByRole("option", { name: "Administrador" })).toBeInTheDocument();
+    expect(screen.getByRole("option", { name: "Super administrador" })).toBeInTheDocument();
   });
 });
