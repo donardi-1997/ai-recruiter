@@ -313,11 +313,36 @@ def _completed_ids(db: Session, assignment_id: str) -> set[str]:
     }
 
 
-def assignment_payload(db: Session, assignment: TrainingAssignment) -> dict:
+def _assignment_course_payload(
+    db: Session,
+    assignment: TrainingAssignment,
+    *,
+    include_structure: bool,
+) -> dict:
     completed = _completed_ids(db, assignment.id)
     course = course_payload(
         assignment.course,
         completed_lesson_ids=completed,
+        include_structure=include_structure,
+    )
+    if assignment.course.quiz is not None:
+        passed_quiz = any(attempt.passed for attempt in assignment.quiz_attempts)
+        lesson_count = course["lesson_count"]
+        total_units = lesson_count + 1
+        completed_units = course["completed_lessons"] + (1 if passed_quiz else 0)
+        course["progress_percent"] = round((completed_units / total_units) * 100)
+        course["quiz_pending"] = (
+            course["completed_lessons"] >= lesson_count and not passed_quiz
+        )
+    else:
+        course["quiz_pending"] = False
+    return course
+
+
+def assignment_payload(db: Session, assignment: TrainingAssignment) -> dict:
+    course = _assignment_course_payload(
+        db,
+        assignment,
         include_structure=False,
     )
     attempts = sorted(
@@ -396,13 +421,12 @@ def get_my_course(db: Session, *, employee_id: str, course_id: str) -> dict:
         employee_id=employee_id,
         course_id=course_id,
     )
-    completed = _completed_ids(db, assignment.id)
     return {
         "assignment_id": assignment.id,
         "assignment_status": assignment.status,
-        "course": course_payload(
-            assignment.course,
-            completed_lesson_ids=completed,
+        "course": _assignment_course_payload(
+            db,
+            assignment,
             include_structure=True,
         ),
     }
