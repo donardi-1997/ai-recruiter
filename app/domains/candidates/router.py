@@ -13,7 +13,10 @@ from app.domains.candidates.exceptions import (
     JobCandidateNotFound,
     JobNotFound,
 )
-from app.domains.candidates.schemas import ApplicationStatusRequest
+from app.domains.candidates.schemas import (
+    ApplicationStatusRequest,
+    CandidateRestrictionRequest,
+)
 from app.domains.jobs.schemas import AssignCandidatesRequest
 from app.infrastructure.imports.documents import MAX_DOCUMENT_BYTES
 
@@ -317,33 +320,80 @@ async def upload_candidates_bulk(
     }
 
 
-@router.delete("")
-def delete_all_candidates(
-    db: Session = Depends(get_db),
-    _user: dict = Depends(require_permission("candidates.read")),
-):
-    try:
-        deleted, failed = service.delete_all_candidates(db, _user["sub"])
-        return {"deleted": deleted, "failed": failed}
-    except Exception as exc:
-        logger.error("Error deleting all candidates: %s", exc)
-        raise HTTPException(status_code=500, detail="Error al eliminar candidatos.")
-
-
-@router.delete("/{candidate_id}")
-def delete_candidate(
+@router.post("/{candidate_id}/ban")
+def ban_candidate(
     candidate_id: str,
+    body: CandidateRestrictionRequest,
     db: Session = Depends(get_db),
-    _user: dict = Depends(require_permission("candidates.read")),
+    _user: dict = Depends(require_permission("candidates.restrict")),
 ):
     try:
-        service.delete_candidate(db, candidate_id, _user["sub"])
-        return {"detail": "Candidato eliminado."}
+        candidate, event, changed = service.set_candidate_ban(
+            db,
+            candidate_id=candidate_id,
+            owner_sub=_user["sub"],
+            reason=body.reason,
+            created_by_sub=_user["sub"],
+            banned=True,
+        )
     except CandidateNotFound:
         raise HTTPException(status_code=404, detail="Candidato no encontrado.")
-    except Exception as exc:
-        logger.error("Error deleting candidate %s: %s", candidate_id, exc)
-        raise HTTPException(status_code=500, detail="Error al eliminar candidato.")
+
+    return {
+        "candidate": presenter.candidate_to_dict(candidate),
+        "event": presenter.restriction_event_to_dict(event) if event else None,
+        "changed": changed,
+    }
+
+
+@router.post("/{candidate_id}/unban")
+def unban_candidate(
+    candidate_id: str,
+    body: CandidateRestrictionRequest,
+    db: Session = Depends(get_db),
+    _user: dict = Depends(require_permission("candidates.restrict")),
+):
+    try:
+        candidate, event, changed = service.set_candidate_ban(
+            db,
+            candidate_id=candidate_id,
+            owner_sub=_user["sub"],
+            reason=body.reason,
+            created_by_sub=_user["sub"],
+            banned=False,
+        )
+    except CandidateNotFound:
+        raise HTTPException(status_code=404, detail="Candidato no encontrado.")
+
+    return {
+        "candidate": presenter.candidate_to_dict(candidate),
+        "event": presenter.restriction_event_to_dict(event) if event else None,
+        "changed": changed,
+    }
+
+
+@router.get("/{candidate_id}/restrictions")
+def get_candidate_restrictions(
+    candidate_id: str,
+    db: Session = Depends(get_db),
+    _user: dict = Depends(require_permission("candidates.restrict")),
+):
+    try:
+        candidate, events = service.get_candidate_restriction_history(
+            db,
+            candidate_id=candidate_id,
+            owner_sub=_user["sub"],
+        )
+    except CandidateNotFound:
+        raise HTTPException(status_code=404, detail="Candidato no encontrado.")
+
+    return {
+        "candidate": presenter.candidate_to_dict(candidate),
+        "events": [
+            presenter.restriction_event_to_dict(event)
+            for event in events
+        ],
+    }
 
 
 @router.get("/{candidate_id}/download")
