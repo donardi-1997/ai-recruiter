@@ -47,6 +47,8 @@ describe("Employees administration", () => {
             last_name: "Pérez",
             job_title: "Comercial",
             department: "Ventas",
+            hire_date: "2026-09-24",
+            onboarding_status: "IN_PROGRESS",
             status: "ACTIVE",
             roles: ["EMPLOYEE"],
           },
@@ -60,6 +62,8 @@ describe("Employees administration", () => {
 
     expect(await screen.findByText("Ana Pérez")).toBeInTheDocument();
     expect(screen.getByText("employee@asiati.com.co")).toBeInTheDocument();
+    expect(screen.getByText("En progreso")).toBeInTheDocument();
+    expect(screen.getByText("Ingreso: 2026-09-24")).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: /crear empleado/i }));
 
@@ -84,6 +88,7 @@ describe("Employees administration", () => {
         email: "luis@asiati.com.co",
         first_name: "Luis",
         last_name: "Gómez",
+        hire_date: expect.any(String),
         role: "EMPLOYEE",
       }));
     });
@@ -99,6 +104,17 @@ describe("Employees administration", () => {
     await screen.findByText("Ana Pérez");
     fireEvent.click(screen.getByRole("button", { name: /crear empleado/i }));
 
-    expect(screen.getByLabelText("Rol inicial")).toBeInTheDocument();
+    const roleSelect = screen.getByLabelText("Rol inicial");
+    expect(roleSelect).toBeInTheDocument();
+    expect(Array.from(roleSelect.options).map((option) => option.value)).toEqual([
+      "EMPLOYEE",
+      "ADMIN",
+      "SUPER_ADMIN",
+    ]);
+    expect(Array.from(roleSelect.options).map((option) => option.textContent)).toEqual([
+      "Empleado",
+      "Administrador",
+      "Super administrador",
+    ]);
   });
 });

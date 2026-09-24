@@ -242,6 +242,7 @@ def ensure_user_profile(
         profile = UserProfile(
             cognito_sub=sub,
             email=email,
+            onboarding_status="NOT_REQUIRED",
             status="ACTIVE",
         )
         db.add(profile)
@@ -298,6 +299,16 @@ def resolve_principal(db: Session, identity: dict) -> dict:
             "last_name": profile.last_name,
             "job_title": profile.job_title,
             "department": profile.department,
+            "hire_date": profile.hire_date.isoformat() if profile.hire_date else None,
+            "onboarding_status": profile.onboarding_status,
+            "onboarding_started_at": (
+                profile.onboarding_started_at.isoformat()
+                if profile.onboarding_started_at else None
+            ),
+            "onboarding_completed_at": (
+                profile.onboarding_completed_at.isoformat()
+                if profile.onboarding_completed_at else None
+            ),
             "status": profile.status,
         },
         "roles": roles,

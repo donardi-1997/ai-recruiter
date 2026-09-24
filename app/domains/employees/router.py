@@ -95,6 +95,14 @@ def list_employees(
     }
 
 
+@router.get("/summary")
+def get_employee_summary(
+    db: Session = Depends(get_db),
+    _principal: dict = Depends(require_permission("employees.read")),
+):
+    return service.employee_summary(db)
+
+
 @router.get("/{employee_id}")
 def get_employee(
     employee_id: str,
@@ -123,6 +131,7 @@ def create_employee(
             last_name=body.last_name,
             job_title=body.job_title,
             department=body.department,
+            hire_date=body.hire_date,
             role_code=body.role,
             created_by_sub=principal.get("sub"),
         )

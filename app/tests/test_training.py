@@ -578,3 +578,180 @@ def test_published_course_rejects_new_video_upload(db):
             content_type="video/mp4",
             size_bytes=100,
         )
+
+
+
+def _published_onboarding_course(db, *, with_quiz=False):
+    course = service.create_course(
+        db,
+        title="Inducción ASIATI",
+        description="Onboarding",
+        created_by_sub="admin-sub",
+        is_onboarding=True,
+    )
+    module = service.add_module(
+        db,
+        course_id=course.id,
+        title="Bienvenida",
+        description=None,
+    )
+    lesson = service.add_lesson(
+        db,
+        module_id=module.id,
+        title="Nuestra empresa",
+        description=None,
+        video_url=None,
+        duration_seconds=None,
+    )
+    question = None
+    if with_quiz:
+        quiz = service.create_quiz(
+            db,
+            course_id=course.id,
+            title="Evaluación",
+            passing_score=70,
+            created_by_sub="admin-sub",
+        )
+        question = service.add_quiz_question(
+            db,
+            quiz_id=quiz.id,
+            prompt="¿Entendiste la inducción?",
+            options=["No", "Sí"],
+            correct_option=1,
+        )
+    service.update_course(db, course.id, status="PUBLISHED")
+    return course, lesson, question
+
+
+def test_onboarding_assignment_moves_employee_to_in_progress(db):
+    employee = _employee(db)
+    assert employee.onboarding_status == "PENDING"
+    course, _, _ = _published_onboarding_course(db)
+
+    service.assign_course(
+        db,
+        course_id=course.id,
+        employee_id=employee.id,
+        assigned_by_sub="admin-sub",
+    )
+
+    db.refresh(employee)
+    assert employee.onboarding_status == "IN_PROGRESS"
+    assert employee.onboarding_started_at is not None
+    assert employee.onboarding_completed_at is None
+
+
+def test_onboarding_without_quiz_completes_with_last_lesson(db):
+    employee = _employee(db)
+    course, lesson, _ = _published_onboarding_course(db)
+    service.assign_course(
+        db,
+        course_id=course.id,
+        employee_id=employee.id,
+        assigned_by_sub="admin-sub",
+    )
+
+    service.complete_lesson(
+        db,
+        employee_id=employee.id,
+        lesson_id=lesson.id,
+    )
+
+    db.refresh(employee)
+    assert employee.onboarding_status == "COMPLETED"
+    assert employee.onboarding_completed_at is not None
+
+
+def test_onboarding_with_quiz_completes_only_after_passing(db):
+    employee = _employee(db)
+    course, lesson, question = _published_onboarding_course(db, with_quiz=True)
+    service.assign_course(
+        db,
+        course_id=course.id,
+        employee_id=employee.id,
+        assigned_by_sub="admin-sub",
+    )
+    service.complete_lesson(
+        db,
+        employee_id=employee.id,
+        lesson_id=lesson.id,
+    )
+
+    db.refresh(employee)
+    assert employee.onboarding_status == "IN_PROGRESS"
+
+    service.submit_quiz_attempt(
+        db,
+        employee_id=employee.id,
+        course_id=course.id,
+        answers={question.id: 0},
+    )
+    db.refresh(employee)
+    assert employee.onboarding_status == "IN_PROGRESS"
+
+    service.submit_quiz_attempt(
+        db,
+        employee_id=employee.id,
+        course_id=course.id,
+        answers={question.id: 1},
+    )
+    db.refresh(employee)
+    assert employee.onboarding_status == "COMPLETED"
+    assert employee.onboarding_completed_at is not None
+
+
+def test_onboarding_waits_for_all_assigned_onboarding_courses(db):
+    employee = _employee(db)
+    first_course, first_lesson, _ = _published_onboarding_course(db)
+
+    second_course = service.create_course(
+        db,
+        title="Seguridad ASIATI",
+        description="Segundo onboarding",
+        created_by_sub="admin-sub",
+        is_onboarding=True,
+    )
+    module = service.add_module(
+        db,
+        course_id=second_course.id,
+        title="Seguridad",
+        description=None,
+    )
+    second_lesson = service.add_lesson(
+        db,
+        module_id=module.id,
+        title="Políticas",
+        description=None,
+        video_url=None,
+        duration_seconds=None,
+    )
+    service.update_course(db, second_course.id, status="PUBLISHED")
+
+    service.assign_course(
+        db,
+        course_id=first_course.id,
+        employee_id=employee.id,
+        assigned_by_sub="admin-sub",
+    )
+    service.assign_course(
+        db,
+        course_id=second_course.id,
+        employee_id=employee.id,
+        assigned_by_sub="admin-sub",
+    )
+
+    service.complete_lesson(db, employee_id=employee.id, lesson_id=first_lesson.id)
+    db.refresh(employee)
+    assert employee.onboarding_status == "IN_PROGRESS"
+
+    service.complete_lesson(db, employee_id=employee.id, lesson_id=second_lesson.id)
+    db.refresh(employee)
+    assert employee.onboarding_status == "COMPLETED"
+
+
+def test_course_payload_exposes_onboarding_classification(db):
+    course, _, _ = _published_onboarding_course(db)
+
+    payload = service.get_course(db, course.id)
+
+    assert payload["is_onboarding"] is True

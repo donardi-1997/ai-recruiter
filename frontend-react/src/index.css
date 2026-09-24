@@ -2163,3 +2163,170 @@ select { appearance: none; padding-right: 42px; background-image: linear-gradien
   }
 }
 
+/* ============================================================
+   EMPLOYEE ONBOARDING
+   ============================================================ */
+
+.onboarding-pill,
+.training-onboarding-badge,
+.training-onboarding-label {
+  display: inline-flex;
+  align-items: center;
+  width: fit-content;
+  border-radius: 999px;
+  font-size: .66rem;
+  font-weight: 800;
+}
+
+.onboarding-pill {
+  min-height: 28px;
+  padding: 5px 9px;
+}
+
+.onboarding-pending {
+  background: var(--warning-bg);
+  color: var(--warning);
+}
+
+.onboarding-in_progress {
+  background: rgba(59, 130, 246, .12);
+  color: var(--blue);
+}
+
+.onboarding-completed {
+  background: var(--success-bg);
+  color: var(--success);
+}
+
+.onboarding-not_required {
+  background: var(--surface-soft);
+  color: var(--ink-faint);
+}
+
+.training-onboarding-badge {
+  margin-top: 10px;
+  padding: 6px 10px;
+  background: rgba(115, 87, 232, .12);
+  color: var(--violet);
+}
+
+.training-onboarding-label {
+  margin-top: 5px;
+  color: var(--violet) !important;
+}
+
+.training-onboarding-toggle {
+  display: flex;
+  align-items: flex-start;
+  gap: 11px;
+  padding: 13px 14px;
+  border: 1px solid var(--border);
+  border-radius: 13px;
+  background: var(--surface-soft);
+  cursor: pointer;
+}
+
+.training-onboarding-toggle input {
+  width: auto;
+  margin-top: 3px;
+  accent-color: var(--blue);
+}
+
+.training-onboarding-toggle strong,
+.training-onboarding-toggle small {
+  display: block;
+}
+
+.training-onboarding-toggle strong {
+  color: var(--ink);
+  font-size: .8rem;
+}
+
+.training-onboarding-toggle small {
+  margin-top: 4px;
+  color: var(--ink-faint);
+  font-size: .7rem;
+  line-height: 1.45;
+}
+
+.onboarding-summary-panel {
+  margin-bottom: 18px;
+}
+
+.onboarding-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr)) minmax(220px, 1.25fr);
+  gap: 12px;
+}
+
+.onboarding-summary-grid > div {
+  min-width: 0;
+  padding: 15px;
+  border: 1px solid var(--border);
+  border-radius: 13px;
+  background: var(--surface-soft);
+}
+
+.onboarding-summary-grid span {
+  display: block;
+  color: var(--ink-faint);
+  font-size: .68rem;
+  font-weight: 700;
+}
+
+.onboarding-summary-grid strong {
+  display: block;
+  margin-top: 7px;
+  color: var(--ink);
+  font-family: "Manrope", sans-serif;
+  font-size: 1.45rem;
+}
+
+.onboarding-summary-progress > div {
+  height: 8px;
+  margin-top: 10px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: var(--border);
+}
+
+.onboarding-summary-progress > div i {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, var(--blue), var(--cyan));
+}
+
+.employee-onboarding-state {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 12px;
+  padding: 7px 10px;
+  border-radius: 999px;
+  background: var(--surface-soft);
+  color: var(--ink-soft);
+  font-size: .72rem;
+  font-weight: 800;
+}
+
+@media (max-width: 1100px) {
+  .onboarding-summary-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .onboarding-summary-progress {
+    grid-column: 1 / -1;
+  }
+}
+
+@media (max-width: 620px) {
+  .onboarding-summary-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .onboarding-summary-progress {
+    grid-column: auto;
+  }
+}
+

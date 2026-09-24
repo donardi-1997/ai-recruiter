@@ -5,14 +5,23 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import api from "../api/client";
 import { useSession } from "../context/SessionContext";
 
-const EMPTY_FORM = {
-  first_name: "",
-  last_name: "",
-  email: "",
-  job_title: "",
-  department: "",
-  role: "EMPLOYEE",
-};
+function todayInputValue() {
+  const now = new Date();
+  const local = new Date(now.getTime() - now.getTimezoneOffset() * 60_000);
+  return local.toISOString().slice(0, 10);
+}
+
+function emptyEmployeeForm() {
+  return {
+    first_name: "",
+    last_name: "",
+    email: "",
+    job_title: "",
+    department: "",
+    hire_date: todayInputValue(),
+    role: "EMPLOYEE",
+  };
+}
 
 function Employees() {
   const { principal, hasRole } = useSession();
@@ -24,7 +33,7 @@ function Employees() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [formOpen, setFormOpen] = useState(false);
-  const [form, setForm] = useState(EMPTY_FORM);
+  const [form, setForm] = useState(() => emptyEmployeeForm());
 
   const loadEmployees = useCallback(async () => {
     setLoading(true);
@@ -61,7 +70,7 @@ function Employees() {
     setError("");
     try {
       await api.post("/employees", form);
-      setForm(EMPTY_FORM);
+      setForm(emptyEmployeeForm());
       setFormOpen(false);
       await loadEmployees();
     } catch (err) {
@@ -166,6 +175,7 @@ function Employees() {
                   <th>Empleado</th>
                   <th>Cargo / área</th>
                   <th>Rol</th>
+                  <th>Onboarding</th>
                   <th>Estado</th>
                   <th aria-label="Acciones" />
                 </tr>
@@ -209,6 +219,18 @@ function Employees() {
                             {role === "SUPER_ADMIN" ? "Super admin" : role === "ADMIN" ? "Administrador" : "Empleado"}
                           </span>
                         )}
+                      </td>
+                      <td>
+                        <span className={`onboarding-pill onboarding-${String(employee.onboarding_status || "NOT_REQUIRED").toLowerCase()}`}>
+                          {employee.onboarding_status === "COMPLETED"
+                            ? "Completado"
+                            : employee.onboarding_status === "IN_PROGRESS"
+                              ? "En progreso"
+                              : employee.onboarding_status === "PENDING"
+                                ? "Pendiente"
+                                : "No requerido"}
+                        </span>
+                        {employee.hire_date && <small>Ingreso: {employee.hire_date}</small>}
                       </td>
                       <td>
                         <span className={`status-pill ${employee.status === "ACTIVE" ? "" : "status-disabled"}`}>
@@ -271,6 +293,15 @@ function Employees() {
                   <label htmlFor="employee-department">Área</label>
                   <input id="employee-department" value={form.department} onChange={(event) => setForm({ ...form, department: event.target.value })} />
                 </div>
+              </div>
+              <div className="form-group">
+                <label htmlFor="employee-hire-date">Fecha de ingreso</label>
+                <input
+                  id="employee-hire-date"
+                  type="date"
+                  value={form.hire_date}
+                  onChange={(event) => setForm({ ...form, hire_date: event.target.value })}
+                />
               </div>
               {isSuperAdmin && (
                 <div className="form-group">

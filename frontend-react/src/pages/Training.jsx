@@ -38,7 +38,11 @@ function Training() {
   const [creatingCourse, setCreatingCourse] = useState(false);
   const [saving, setSaving] = useState(false);
   const [uploadingLessonId, setUploadingLessonId] = useState("");
-  const [courseForm, setCourseForm] = useState({ title: "", description: "" });
+  const [courseForm, setCourseForm] = useState({
+    title: "",
+    description: "",
+    is_onboarding: false,
+  });
   const [moduleForm, setModuleForm] = useState({ title: "", description: "" });
   const [lessonForms, setLessonForms] = useState({});
   const [assignEmployeeId, setAssignEmployeeId] = useState("");
@@ -192,8 +196,9 @@ function Training() {
       const { data } = await api.post("/training/courses", {
         title: courseForm.title.trim(),
         description: courseForm.description.trim() || null,
+        is_onboarding: courseForm.is_onboarding,
       });
-      setCourseForm({ title: "", description: "" });
+      setCourseForm({ title: "", description: "", is_onboarding: false });
       setCreatingCourse(false);
       await loadHome();
       setSelectedCourseId(data.id);
@@ -530,6 +535,7 @@ function Training() {
                     <span>
                       <strong>{course.title}</strong>
                       <small>{course.module_count} módulos · {course.lesson_count} lecciones</small>
+                      {course.is_onboarding && <small className="training-onboarding-label">Inducción</small>}
                     </span>
                     <b className={`training-status training-status-${course.status.toLowerCase()}`}>
                       {course.status === "PUBLISHED" ? "Publicado" : course.status === "ARCHIVED" ? "Archivado" : "Borrador"}
@@ -550,6 +556,9 @@ function Training() {
                     <span className="eyebrow">Editor de curso</span>
                     <h2>{selectedCourse.title}</h2>
                     <p>{selectedCourse.description || "Sin descripción."}</p>
+                    {selectedCourse.is_onboarding && (
+                      <span className="training-onboarding-badge">Curso de inducción</span>
+                    )}
                   </div>
                   <div className="training-course-overview-actions">
                     <span className={`training-status training-status-${selectedCourse.status.toLowerCase()}`}>
@@ -921,6 +930,9 @@ function Training() {
                     </span>
                     <h3>{assignment.course.title}</h3>
                     <p>{assignment.course.description || "Capacitación ASIATI"}</p>
+                    {assignment.course.is_onboarding && (
+                      <small className="training-onboarding-label">Inducción ASIATI</small>
+                    )}
                   </div>
                   <div className="training-progress">
                     <span><strong>{courseProgress(assignment.course)}%</strong> completado</span>
@@ -1126,6 +1138,17 @@ function Training() {
                   placeholder="Objetivo y contexto del curso"
                 />
               </div>
+              <label className="training-onboarding-toggle">
+                <input
+                  type="checkbox"
+                  checked={courseForm.is_onboarding}
+                  onChange={(event) => setCourseForm({ ...courseForm, is_onboarding: event.target.checked })}
+                />
+                <span>
+                  <strong>Curso de inducción</strong>
+                  <small>Al asignarlo, el empleado entrará automáticamente en onboarding.</small>
+                </span>
+              </label>
               <div className="form-actions">
                 <button className="btn btn-secondary" type="button" onClick={() => setCreatingCourse(false)}>Cancelar</button>
                 <button className="btn btn-primary" type="submit" disabled={saving}>{saving ? "Creando…" : "Crear curso"}</button>

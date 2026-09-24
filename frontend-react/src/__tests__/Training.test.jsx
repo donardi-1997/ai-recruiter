@@ -245,7 +245,7 @@ describe("Training platform", () => {
   it("shows course administration to an ADMIN and creates a course", async () => {
     useSession.mockReturnValue({
       principal: {
-        profile: { id: "admin-1", first_name: "Katherine" },
+        profile: { id: "admin-1", first_name: "Admin" },
       },
       hasPermission: (permission) => [
         "training.read",
@@ -338,6 +338,63 @@ describe("Training platform", () => {
       expect(api.post).toHaveBeenCalledWith("/training/courses", {
         title: "Seguridad",
         description: "Curso interno",
+        is_onboarding: false,
+      });
+    });
+  });
+});
+
+
+describe("Training onboarding classification", () => {
+  it("lets any training administrator create an onboarding course", async () => {
+    vi.clearAllMocks();
+    useSession.mockReturnValue({
+      principal: {
+        profile: { id: "admin-2", first_name: "Administrador" },
+      },
+      hasPermission: (permission) => [
+        "training.read",
+        "training.manage",
+        "training.assign",
+        "training.results.read",
+      ].includes(permission),
+    });
+
+    api.get.mockImplementation((url) => {
+      if (url === "/training/me") return Promise.resolve({ data: { items: [] } });
+      if (url === "/training/courses") return Promise.resolve({ data: { items: [] } });
+      if (url === "/employees") return Promise.resolve({ data: { items: [] } });
+      return Promise.reject(new Error(`Unexpected GET ${url}`));
+    });
+
+    api.post.mockResolvedValueOnce({
+      data: {
+        id: "onboarding-course",
+        title: "Inducción ASIATI",
+        description: "Bienvenida",
+        is_onboarding: true,
+        status: "DRAFT",
+        modules: [],
+      },
+    });
+
+    renderPage();
+
+    fireEvent.click(await screen.findByRole("button", { name: "+ Crear curso" }));
+    fireEvent.change(screen.getByLabelText("Título"), {
+      target: { value: "Inducción ASIATI" },
+    });
+    fireEvent.change(screen.getByLabelText("Descripción"), {
+      target: { value: "Bienvenida" },
+    });
+    fireEvent.click(screen.getByRole("checkbox"));
+    fireEvent.click(screen.getByRole("button", { name: "Crear curso" }));
+
+    await waitFor(() => {
+      expect(api.post).toHaveBeenCalledWith("/training/courses", {
+        title: "Inducción ASIATI",
+        description: "Bienvenida",
+        is_onboarding: true,
       });
     });
   });

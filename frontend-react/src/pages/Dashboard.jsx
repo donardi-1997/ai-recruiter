@@ -1,4 +1,5 @@
-import { useEffect, useState } from "react";
+// eslint-disable-next-line no-unused-vars
+import React, { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import api from "../api/client";
 import { useSession } from "../context/SessionContext";
@@ -14,9 +15,11 @@ function getGreeting(date = new Date()) {
 function Dashboard() {
   const { principal, hasPermission } = useSession();
   const canRecruit = hasPermission("jobs.read") && hasPermission("candidates.read");
+  const canManageEmployees = hasPermission("employees.read");
   const [jobs, setJobs] = useState([]);
   const [candidates, setCandidates] = useState([]);
   const [trainingAssignments, setTrainingAssignments] = useState([]);
+  const [employeeSummary, setEmployeeSummary] = useState(null);
   const [loading, setLoading] = useState(true);
   const [greeting, setGreeting] = useState(() => getGreeting());
   const [loadError, setLoadError] = useState("");
@@ -32,14 +35,22 @@ function Dashboard() {
     async function load() {
       try {
         if (canRecruit) {
-          const [jobsResponse, candidatesResponse] = await Promise.all([
+          const requests = [
             api.get("/jobs"),
             api.get("/candidates"),
-          ]);
+          ];
+          if (canManageEmployees) {
+            requests.push(api.get("/employees/summary"));
+          }
+
+          const [jobsResponse, candidatesResponse, employeeSummaryResponse] = await Promise.all(requests);
           const jobsData = jobsResponse.data;
           const candidatesData = candidatesResponse.data;
           setJobs(Array.isArray(jobsData) ? jobsData : jobsData.jobs || []);
           setCandidates(Array.isArray(candidatesData) ? candidatesData : candidatesData.candidates || []);
+          if (canManageEmployees && employeeSummaryResponse) {
+            setEmployeeSummary(employeeSummaryResponse.data);
+          }
         } else {
           const { data } = await api.get("/training/me");
           setTrainingAssignments(Array.isArray(data?.items) ? data.items : []);
@@ -51,7 +62,7 @@ function Dashboard() {
       }
     }
     void load();
-  }, [canRecruit]);
+  }, [canManageEmployees, canRecruit]);
 
   if (loading) {
     return <div className="page"><div className="page-loading"><span /> Preparando tu workspace…</div></div>;
@@ -94,6 +105,17 @@ function Dashboard() {
                 ? `Tienes ${trainingAssignments.length} curso${trainingAssignments.length === 1 ? "" : "s"} asignado${trainingAssignments.length === 1 ? "" : "s"}.`
                 : "Cuando te asignen una capacitación aparecerá aquí automáticamente."}
             </p>
+            <span className="employee-onboarding-state">
+              Onboarding: {
+                principal?.profile?.onboarding_status === "COMPLETED"
+                  ? "Completado"
+                  : principal?.profile?.onboarding_status === "IN_PROGRESS"
+                    ? "En progreso"
+                    : principal?.profile?.onboarding_status === "PENDING"
+                      ? "Pendiente"
+                      : "No requerido"
+              }
+            </span>
             <Link className="btn btn-primary" to="/training">Ir a capacitación</Link>
           </div>
           <div className="employee-progress-preview" aria-label="Progreso de capacitación">
@@ -135,6 +157,42 @@ function Dashboard() {
         <MetricCard icon="◎" label="Talento disponible" value={candidates.length} detail="Perfiles centralizados" tone="cyan" />
         <MetricCard icon="↗" label="Cobertura estimada" value={`${coverage}%`} detail="Candidatos por vacante" tone="violet" />
       </section>
+
+      {canManageEmployees && employeeSummary && (
+        <section className="panel onboarding-summary-panel">
+          <div className="panel-heading">
+            <div>
+              <span className="eyebrow">Talento Humano</span>
+              <h2>Onboarding del equipo</h2>
+            </div>
+            <Link to="/employees">Ver empleados <span aria-hidden="true">→</span></Link>
+          </div>
+
+          <div className="onboarding-summary-grid">
+            <div>
+              <span>Empleados activos</span>
+              <strong>{employeeSummary.active}</strong>
+            </div>
+            <div>
+              <span>Pendientes</span>
+              <strong>{employeeSummary.onboarding.pending}</strong>
+            </div>
+            <div>
+              <span>En progreso</span>
+              <strong>{employeeSummary.onboarding.in_progress}</strong>
+            </div>
+            <div>
+              <span>Completados</span>
+              <strong>{employeeSummary.onboarding.completed}</strong>
+            </div>
+            <div className="onboarding-summary-progress">
+              <span>Finalización onboarding</span>
+              <strong>{employeeSummary.onboarding.completion_percent}%</strong>
+              <div><i style={{ width: `${employeeSummary.onboarding.completion_percent}%` }} /></div>
+            </div>
+          </div>
+        </section>
+      )}
 
       <div className="dashboard-grid">
         <section className="panel recent-jobs-panel">
