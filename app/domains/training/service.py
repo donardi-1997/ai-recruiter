@@ -161,7 +161,12 @@ def _required_lessons(
     ]
 
 
-def lesson_payload(lesson: TrainingLesson, *, completed: bool = False) -> dict:
+def lesson_payload(
+    lesson: TrainingLesson,
+    *,
+    completed: bool = False,
+    progress_details: dict | None = None,
+) -> dict:
     video_url = lesson.video_url
     video_source = "external" if lesson.video_url else None
     if lesson.video_storage_key:
@@ -184,6 +189,10 @@ def lesson_payload(lesson: TrainingLesson, *, completed: bool = False) -> dict:
         "estimated_minutes": _lesson_minutes(lesson),
         "duration_known": _lesson_minutes(lesson) is not None,
         "is_optional": bool(lesson.is_optional),
+        "checklist_items": list(lesson.checklist_items or []),
+        "checklist_completed_items": list(
+            (progress_details or {}).get("completed_items") or []
+        ),
         "position": lesson.position,
         "completed": completed,
     }
@@ -193,9 +202,11 @@ def module_payload(
     module: TrainingModule,
     *,
     completed_lesson_ids: set[str] | None = None,
+    progress_details_by_lesson: dict[str, dict] | None = None,
     employee: UserProfile | None = None,
 ) -> dict:
     completed_lesson_ids = completed_lesson_ids or set()
+    progress_details_by_lesson = progress_details_by_lesson or {}
     lessons = _module_lessons(module, employee)
     required = [lesson for lesson in lessons if not lesson.is_optional]
     completed_required = [
@@ -247,6 +258,7 @@ def module_payload(
             lesson_payload(
                 lesson,
                 completed=lesson.id in completed_lesson_ids,
+                progress_details=progress_details_by_lesson.get(lesson.id),
             )
             for lesson in lessons
         ],
@@ -265,10 +277,12 @@ def course_payload(
     course: TrainingCourse,
     *,
     completed_lesson_ids: set[str] | None = None,
+    progress_details_by_lesson: dict[str, dict] | None = None,
     include_structure: bool = False,
     employee: UserProfile | None = None,
 ) -> dict:
     completed_lesson_ids = completed_lesson_ids or set()
+    progress_details_by_lesson = progress_details_by_lesson or {}
     modules = _applicable_modules(course, employee)
     required_lessons = _required_lessons(course, employee)
     required_ids = {lesson.id for lesson in required_lessons}
@@ -337,6 +351,7 @@ def course_payload(
             module_payload(
                 module,
                 completed_lesson_ids=completed_lesson_ids,
+                progress_details_by_lesson=progress_details_by_lesson,
                 employee=employee,
             )
             for module in modules
