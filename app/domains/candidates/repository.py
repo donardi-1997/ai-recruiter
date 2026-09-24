@@ -4,7 +4,14 @@ from datetime import datetime, timezone
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from app.models import Candidate, Evaluation, JobCandidate, RankingItem
+from app.domains.candidates.exceptions import CandidateRetentionProtected
+from app.models import (
+    Candidate,
+    CandidateRestrictionEvent,
+    Evaluation,
+    JobCandidate,
+    RankingItem,
+)
 
 
 def get_candidate(db: Session, candidate_id: str, owner_sub: str | None = None) -> Candidate | None:
@@ -165,34 +172,62 @@ def set_job_candidate_status(
 
 
 def delete_candidate(db: Session, candidate_id: str) -> bool:
-    candidate = get_candidate(db, candidate_id)
-    if not candidate:
-        return False
-    db.query(JobCandidate).filter(JobCandidate.candidate_id == candidate_id).delete()
-    db.query(Evaluation).filter(Evaluation.candidate_id == candidate_id).delete()
-    db.query(RankingItem).filter(RankingItem.candidate_id == candidate_id).delete()
-    db.delete(candidate)
-    db.commit()
-    return True
+    raise CandidateRetentionProtected(
+        "Candidate hard-delete is disabled by retention policy."
+    )
 
 
 def delete_all_candidates(db: Session, owner_sub: str | None = None) -> tuple[int, int]:
-    query = db.query(Candidate)
-    if owner_sub is not None:
-        query = query.filter(Candidate.owner_sub == owner_sub)
+    raise CandidateRetentionProtected(
+        "Bulk candidate hard-delete is disabled by retention policy."
+    )
 
-    candidate_ids = [candidate_id for (candidate_id,) in query.with_entities(Candidate.id).all()]
-    count = len(candidate_ids)
 
-    if not candidate_ids:
-        return 0, 0
+def set_candidate_restriction(
+    db: Session,
+    candidate: Candidate,
+    *,
+    is_banned: bool,
+    reason: str,
+    created_by_sub: str,
+) -> tuple[Candidate, CandidateRestrictionEvent | None, bool]:
+    if bool(candidate.is_banned) == bool(is_banned):
+        return candidate, None, False
 
-    db.query(JobCandidate).filter(JobCandidate.candidate_id.in_(candidate_ids)).delete(synchronize_session=False)
-    db.query(Evaluation).filter(Evaluation.candidate_id.in_(candidate_ids)).delete(synchronize_session=False)
-    db.query(RankingItem).filter(RankingItem.candidate_id.in_(candidate_ids)).delete(synchronize_session=False)
-    db.query(Candidate).filter(Candidate.id.in_(candidate_ids)).delete(synchronize_session=False)
+    now = datetime.now(timezone.utc)
+    candidate.is_banned = bool(is_banned)
+    candidate.banned_at = now if is_banned else None
+    candidate.banned_by_sub = created_by_sub if is_banned else None
+    candidate.banned_reason = reason if is_banned else None
+
+    event = CandidateRestrictionEvent(
+        candidate_id=candidate.id,
+        action="BANNED" if is_banned else "UNBANNED",
+        reason=reason,
+        created_by_sub=created_by_sub,
+        created_at=now,
+    )
+    db.add(event)
     db.commit()
-    return count, 0
+    db.refresh(candidate)
+    db.refresh(event)
+    return candidate, event, True
+
+
+def list_candidate_restriction_events(
+    db: Session,
+    *,
+    candidate_id: str,
+) -> list[CandidateRestrictionEvent]:
+    return (
+        db.query(CandidateRestrictionEvent)
+        .filter(CandidateRestrictionEvent.candidate_id == candidate_id)
+        .order_by(
+            CandidateRestrictionEvent.created_at.desc(),
+            CandidateRestrictionEvent.id.desc(),
+        )
+        .all()
+    )
 
 
 def list_candidates_for_job(
@@ -225,6 +260,7 @@ def assign_candidates_to_job(
     if owner_sub is not None:
         candidate_query = candidate_query.filter(Candidate.owner_sub == owner_sub)
 
+    candidate_query = candidate_query.filter(Candidate.is_banned.is_(False))
     allowed_ids = {candidate_id for (candidate_id,) in candidate_query.all()}
 
     for cid in candidate_ids:
