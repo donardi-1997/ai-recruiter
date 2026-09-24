@@ -22,6 +22,13 @@ function renderRanking() {
   );
 }
 
+async function confirmRecalculation() {
+  await confirmRecalculation();
+  expect(await screen.findByRole("heading", { name: "Evaluación masiva" })).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("checkbox"));
+  fireEvent.click(screen.getByRole("button", { name: "Iniciar evaluación" }));
+}
+
 const EMPTY_RANKING = {
   data: {
     candidates: [],
@@ -96,6 +103,30 @@ const ALL_CANDIDATES_RANKING = {
   },
 };
 
+const COST_ESTIMATE = {
+  data: {
+    mode: "exhaustive",
+    candidate_count: 5,
+    deep_candidate_count: 5,
+    shallow_candidate_count: 0,
+    input_tokens_estimated: 22500,
+    output_tokens_estimated: 3000,
+    estimated_cost_usd: 0.0143,
+    estimated_cost_with_margin_usd: 0.0179,
+    margin_percent: 25,
+    nova_input_usd_per_million: 0.30,
+    nova_output_usd_per_million: 2.50,
+    input_tokens_per_deep_candidate: 4500,
+    output_tokens_per_deep_candidate: 600,
+    max_deep_requests_per_minute: 2000,
+    theoretical_min_seconds: 1,
+    target_seconds: null,
+    available_candidate_count: 5,
+    excluded_banned_count: 0,
+    disclaimer: "Esta es una estimación de planeación.",
+  },
+};
+
 const PAGINATED_RANKING = {
   data: {
     candidates: Array.from({ length: 10 }, (_, i) => ({
@@ -129,6 +160,7 @@ describe("Ranking page", () => {
     vi.stubGlobal("alert", vi.fn());
     vi.stubGlobal("confirm", vi.fn(() => true));
     api.get.mockImplementation((url) => {
+      if (url.includes("/cost-estimate")) return Promise.resolve(COST_ESTIMATE);
       if (url === "/jobs") {
         return Promise.resolve({ data: [{ job_id: "job-1", title: "Dev Python" }] });
       }
@@ -179,6 +211,7 @@ describe("Ranking page", () => {
 
   it("Evaluar candidatos uses the selected rankingScope", async () => {
     api.get.mockImplementation((url) => {
+      if (url.includes("/cost-estimate")) return Promise.resolve(COST_ESTIMATE);
       if (url === "/jobs") return Promise.resolve({ data: [{ job_id: "job-1", title: "Dev Python" }] });
       if (url.includes("/ranking")) return Promise.resolve({ data: { candidates: [], ranking_generated_at: null, ranking_version: null, ranking_scope: "all", ranking_total: 0, total: 0, total_pages: 0, page: 1, page_size: 10, pending_candidates: 0 } });
       return Promise.resolve({ data: [] });
@@ -225,6 +258,7 @@ describe("Ranking page", () => {
 
   it("Actualizar ranking uses rankingScope for the GET", async () => {
     api.get.mockImplementation((url) => {
+      if (url.includes("/cost-estimate")) return Promise.resolve(COST_ESTIMATE);
       if (url === "/jobs") return Promise.resolve({ data: [{ job_id: "job-1", title: "Dev Python" }] });
       if (url.includes("/ranking")) return Promise.resolve({ data: { candidates: [], ranking_generated_at: null, ranking_version: null, ranking_scope: "all", ranking_total: 0, total: 0, total_pages: 0, page: 1, page_size: 10, pending_candidates: 0 } });
       return Promise.resolve({ data: [] });
@@ -252,11 +286,13 @@ describe("Ranking page", () => {
   // TEST 6 — RECALCULAR CANCELADO
   // ============================================================
 
-  it("Recalcular ranking cancelled via window.confirm", async () => {
-    window.confirm = vi.fn(() => false);
+  it("Recalcular ranking can be cancelled from the cost disclaimer", async () => {
     renderRanking();
     await waitFor(() => { expect(screen.getByRole("button", { name: "Recalcular ranking" })).not.toBeDisabled(); });
     fireEvent.click(screen.getByRole("button", { name: "Recalcular ranking" }));
+    expect(await screen.findByRole("heading", { name: "Evaluación masiva" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Cancelar" }));
+    expect(screen.queryByRole("heading", { name: "Evaluación masiva" })).not.toBeInTheDocument();
     expect(api.post).not.toHaveBeenCalled();
   });
 
@@ -265,11 +301,10 @@ describe("Ranking page", () => {
   // ============================================================
 
   it("sends correct POST when confirming Recalcular ranking", async () => {
-    window.confirm = vi.fn(() => true);
     api.post.mockResolvedValueOnce({ data: { total_candidates: 1, evaluated: 1, failed: 0 } });
     renderRanking();
     await waitFor(() => { expect(screen.getByRole("button", { name: "Recalcular ranking" })).not.toBeDisabled(); });
-    fireEvent.click(screen.getByRole("button", { name: "Recalcular ranking" }));
+    await confirmRecalculation();
     await waitFor(() => {
       expect(api.post).toHaveBeenCalledWith(
         "/jobs/job-1/ranking/recalculate",
@@ -284,8 +319,8 @@ describe("Ranking page", () => {
   // ============================================================
 
   it("Recalcular ranking uses the selected rankingScope", async () => {
-    window.confirm = vi.fn(() => true);
     api.get.mockImplementation((url) => {
+      if (url.includes("/cost-estimate")) return Promise.resolve(COST_ESTIMATE);
       if (url === "/jobs") return Promise.resolve({ data: [{ job_id: "job-1", title: "Dev Python" }] });
       if (url.includes("/ranking")) return Promise.resolve({ data: { candidates: [], ranking_generated_at: null, ranking_version: null, ranking_scope: "all", ranking_total: 0, total: 0, total_pages: 0, page: 1, page_size: 10, pending_candidates: 0 } });
       return Promise.resolve({ data: [] });
@@ -295,7 +330,7 @@ describe("Ranking page", () => {
     await waitFor(() => { expect(screen.getByRole("button", { name: "Recalcular ranking" })).not.toBeDisabled(); });
     fireEvent.change(screen.getByDisplayValue("Solo esta vacante"), { target: { value: "all" } });
     await waitFor(() => { expect(screen.getByDisplayValue("Todos mis candidatos")).toBeInTheDocument(); });
-    fireEvent.click(screen.getByRole("button", { name: "Recalcular ranking" }));
+    await confirmRecalculation();
     await waitFor(() => {
       expect(api.post).toHaveBeenCalledWith(
         "/jobs/job-1/ranking/recalculate",
@@ -313,6 +348,7 @@ describe("Ranking page", () => {
     let resolvePost;
     api.post.mockImplementation(() => new Promise((resolve) => { resolvePost = resolve; }));
     api.get.mockImplementation((url) => {
+      if (url.includes("/cost-estimate")) return Promise.resolve(COST_ESTIMATE);
       if (url === "/jobs") return Promise.resolve({ data: [{ job_id: "job-1", title: "Dev Python" }] });
       if (url.includes("/ranking")) return Promise.resolve(EMPTY_RANKING);
       return Promise.resolve({ data: [] });
@@ -340,6 +376,7 @@ describe("Ranking page", () => {
     let resolveGet;
     let rankingCount = 0;
     api.get.mockImplementation((url) => {
+      if (url.includes("/cost-estimate")) return Promise.resolve(COST_ESTIMATE);
       if (url === "/jobs") return Promise.resolve({ data: [{ job_id: "job-1", title: "Dev Python" }] });
       if (url.includes("/ranking")) {
         rankingCount += 1;
@@ -369,10 +406,10 @@ describe("Ranking page", () => {
   // ============================================================
 
   it("Recalcular ranking shows loading and disables all buttons", async () => {
-    window.confirm = vi.fn(() => true);
     let resolvePost;
     api.post.mockImplementation(() => new Promise((resolve) => { resolvePost = resolve; }));
     api.get.mockImplementation((url) => {
+      if (url.includes("/cost-estimate")) return Promise.resolve(COST_ESTIMATE);
       if (url === "/jobs") return Promise.resolve({ data: [{ job_id: "job-1", title: "Dev Python" }] });
       if (url.includes("/ranking")) return Promise.resolve(EMPTY_RANKING);
       return Promise.resolve({ data: [] });
@@ -399,6 +436,7 @@ describe("Ranking page", () => {
   it("Evaluar candidatos refreshes ranking with page=1 after success", async () => {
     let rankingCalls = 0;
     api.get.mockImplementation((url) => {
+      if (url.includes("/cost-estimate")) return Promise.resolve(COST_ESTIMATE);
       if (url === "/jobs") return Promise.resolve({ data: [{ job_id: "job-1", title: "Dev Python" }] });
       if (url.includes("/ranking")) {
         rankingCalls += 1;
@@ -423,9 +461,9 @@ describe("Ranking page", () => {
   // ============================================================
 
   it("Recalcular ranking refreshes ranking with page=1 after success", async () => {
-    window.confirm = vi.fn(() => true);
     let rankingCalls = 0;
     api.get.mockImplementation((url) => {
+      if (url.includes("/cost-estimate")) return Promise.resolve(COST_ESTIMATE);
       if (url === "/jobs") return Promise.resolve({ data: [{ job_id: "job-1", title: "Dev Python" }] });
       if (url.includes("/ranking")) {
         rankingCalls += 1;
@@ -437,7 +475,7 @@ describe("Ranking page", () => {
     api.post.mockResolvedValueOnce({ data: { total_candidates: 1, evaluated: 1, failed: 0 } });
     renderRanking();
     await waitFor(() => { expect(screen.getByRole("button", { name: "Recalcular ranking" })).not.toBeDisabled(); });
-    fireEvent.click(screen.getByRole("button", { name: "Recalcular ranking" }));
+    await confirmRecalculation();
     await waitFor(() => {
       const rankingCall = api.get.mock.calls.find(([url]) => url === "/jobs/job-1/ranking");
       expect(rankingCall).toBeDefined();
@@ -450,7 +488,6 @@ describe("Ranking page", () => {
   // ============================================================
 
   it("does not show mode modal after clicking Actualizar or Recalcular", async () => {
-    window.confirm = vi.fn(() => true);
     api.post.mockResolvedValueOnce({ data: { total_candidates: 1, evaluated: 1, failed: 0 } });
     renderRanking();
     await waitFor(() => { expect(screen.getByRole("button", { name: "Actualizar ranking" })).not.toBeDisabled(); });
@@ -459,8 +496,7 @@ describe("Ranking page", () => {
     expect(screen.queryByText("Solo nuevos candidatos")).not.toBeInTheDocument();
     expect(screen.queryByText("Recalcular todo")).not.toBeInTheDocument();
     expect(screen.queryByText("¿Cómo quieres actualizar el ranking?")).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Recalcular ranking" }));
-    expect(window.confirm).toHaveBeenCalled();
+    await confirmRecalculation();
     expect(screen.queryByText("¿Cómo quieres actualizar el ranking?")).not.toBeInTheDocument();
   });
 
@@ -471,6 +507,7 @@ describe("Ranking page", () => {
   it("shows correct feedback messages for each action", async () => {
     let rankingCalls = 0;
     api.get.mockImplementation((url) => {
+      if (url.includes("/cost-estimate")) return Promise.resolve(COST_ESTIMATE);
       if (url === "/jobs") return Promise.resolve({ data: [{ job_id: "job-1", title: "Dev Python" }] });
       if (url.includes("/ranking")) {
         rankingCalls += 1;
@@ -488,14 +525,14 @@ describe("Ranking page", () => {
     fireEvent.click(screen.getByRole("button", { name: "Actualizar ranking" }));
     await waitFor(() => { expect(screen.getByText("Ranking actualizado.")).toBeInTheDocument(); });
 
-    window.confirm = vi.fn(() => true);
     api.post.mockResolvedValueOnce({ data: { total_candidates: 1, evaluated: 1, failed: 0 } });
-    fireEvent.click(screen.getByRole("button", { name: "Recalcular ranking" }));
+    await confirmRecalculation();
     await waitFor(() => { expect(screen.getByText("Ranking recalculado correctamente.")).toBeInTheDocument(); });
   });
 
   it("shows useful feedback when persisted ranking scope does not match", async () => {
     api.get.mockImplementation((url, config) => {
+      if (url.includes("/cost-estimate")) return Promise.resolve(COST_ESTIMATE);
       if (url === "/jobs") {
         return Promise.resolve({
           data: [{ job_id: "job-1", title: "Dev Python" }],
@@ -542,8 +579,8 @@ describe("Ranking page", () => {
 
   // TEST 1: scope=all + Recalcular
   it("Recalcular ranking with scope=all sends correct POST", async () => {
-    window.confirm = vi.fn(() => true);
     api.get.mockImplementation((url) => {
+      if (url.includes("/cost-estimate")) return Promise.resolve(COST_ESTIMATE);
       if (url === "/jobs") return Promise.resolve({ data: [{ job_id: "job-1", title: "Dev Python" }] });
       if (url.includes("/ranking")) return Promise.resolve(ALL_CANDIDATES_RANKING);
       return Promise.resolve({ data: [] });
@@ -553,7 +590,7 @@ describe("Ranking page", () => {
     await waitFor(() => { expect(screen.getByRole("button", { name: "Recalcular ranking" })).not.toBeDisabled(); });
     fireEvent.change(screen.getByDisplayValue("Solo esta vacante"), { target: { value: "all" } });
     await waitFor(() => { expect(screen.getByDisplayValue("Todos mis candidatos")).toBeInTheDocument(); });
-    fireEvent.click(screen.getByRole("button", { name: "Recalcular ranking" }));
+    await confirmRecalculation();
     await waitFor(() => {
       expect(api.post).toHaveBeenCalledWith(
         "/jobs/job-1/ranking/recalculate",
@@ -566,6 +603,7 @@ describe("Ranking page", () => {
   // TEST 2: scope=all + Evaluar
   it("Evaluar candidatos with scope=all sends correct POST", async () => {
     api.get.mockImplementation((url) => {
+      if (url.includes("/cost-estimate")) return Promise.resolve(COST_ESTIMATE);
       if (url === "/jobs") return Promise.resolve({ data: [{ job_id: "job-1", title: "Dev Python" }] });
       if (url.includes("/ranking")) return Promise.resolve(ALL_CANDIDATES_RANKING);
       return Promise.resolve({ data: [] });
@@ -587,9 +625,9 @@ describe("Ranking page", () => {
 
   // TEST 3: POST success + GET success = success message
   it("shows success when POST and GET both succeed with candidates", async () => {
-    window.confirm = vi.fn(() => true);
     let rankingCalls = 0;
     api.get.mockImplementation((url) => {
+      if (url.includes("/cost-estimate")) return Promise.resolve(COST_ESTIMATE);
       if (url === "/jobs") return Promise.resolve({ data: [{ job_id: "job-1", title: "Dev Python" }] });
       if (url.includes("/ranking")) {
         rankingCalls += 1;
@@ -601,15 +639,15 @@ describe("Ranking page", () => {
     api.post.mockResolvedValueOnce({ data: { total_candidates: 5, evaluated: 5, failed: 0 } });
     renderRanking();
     await waitFor(() => { expect(screen.getByRole("button", { name: "Recalcular ranking" })).not.toBeDisabled(); });
-    fireEvent.click(screen.getByRole("button", { name: "Recalcular ranking" }));
+    await confirmRecalculation();
     await waitFor(() => { expect(screen.getByText("Ranking recalculado correctamente.")).toBeInTheDocument(); });
   });
 
   // TEST 4: POST success + GET scope_mismatch = NO success message
   it("does NOT show success when POST succeeds but GET returns scope_mismatch", async () => {
-    window.confirm = vi.fn(() => true);
     let rankingCalls = 0;
     api.get.mockImplementation((url) => {
+      if (url.includes("/cost-estimate")) return Promise.resolve(COST_ESTIMATE);
       if (url === "/jobs") return Promise.resolve({ data: [{ job_id: "job-1", title: "Dev Python" }] });
       if (url.includes("/ranking")) {
         rankingCalls += 1;
@@ -624,7 +662,7 @@ describe("Ranking page", () => {
     // Change scope to "all" to trigger scope_mismatch (ranking was generated for "assigned")
     fireEvent.change(screen.getByDisplayValue("Solo esta vacante"), { target: { value: "all" } });
     await waitFor(() => { expect(screen.getByDisplayValue("Todos mis candidatos")).toBeInTheDocument(); });
-    fireEvent.click(screen.getByRole("button", { name: "Recalcular ranking" }));
+    await confirmRecalculation();
     await waitFor(() => {
       expect(screen.queryByText("Ranking recalculado correctamente.")).not.toBeInTheDocument();
       const messages = screen.getAllByText(/El ranking actual fue generado solo para los candidatos asignados/i);
@@ -634,7 +672,6 @@ describe("Ranking page", () => {
 
   // TEST 5: POST reports candidates but GET returns empty ranking_total
   it("shows error when POST reports candidates but GET returns empty ranking", async () => {
-    window.confirm = vi.fn(() => true);
     let rankingCalls = 0;
     const EMPTY_GET_RANKING = {
       data: {
@@ -652,6 +689,7 @@ describe("Ranking page", () => {
       },
     };
     api.get.mockImplementation((url) => {
+      if (url.includes("/cost-estimate")) return Promise.resolve(COST_ESTIMATE);
       if (url === "/jobs") return Promise.resolve({ data: [{ job_id: "job-1", title: "Dev Python" }] });
       if (url.includes("/ranking")) {
         rankingCalls += 1;
@@ -663,7 +701,7 @@ describe("Ranking page", () => {
     api.post.mockResolvedValueOnce({ data: { total_candidates: 5, evaluated: 5, failed: 0 } });
     renderRanking();
     await waitFor(() => { expect(screen.getByRole("button", { name: "Recalcular ranking" })).not.toBeDisabled(); });
-    fireEvent.click(screen.getByRole("button", { name: "Recalcular ranking" }));
+    await confirmRecalculation();
     await waitFor(() => {
       expect(screen.queryByText("Ranking recalculado correctamente.")).not.toBeInTheDocument();
       expect(screen.getByText(/El ranking se procesó, pero no fue posible cargar los resultados/i)).toBeInTheDocument();
@@ -672,9 +710,9 @@ describe("Ranking page", () => {
 
   // TEST 6: POST scope=all with total_candidates=0
   it("shows correct message when POST scope=all returns total_candidates=0", async () => {
-    window.confirm = vi.fn(() => true);
     let rankingCalls = 0;
     api.get.mockImplementation((url) => {
+      if (url.includes("/cost-estimate")) return Promise.resolve(COST_ESTIMATE);
       if (url === "/jobs") return Promise.resolve({ data: [{ job_id: "job-1", title: "Dev Python" }] });
       if (url.includes("/ranking")) {
         rankingCalls += 1;
@@ -688,7 +726,7 @@ describe("Ranking page", () => {
     await waitFor(() => { expect(screen.getByRole("button", { name: "Recalcular ranking" })).not.toBeDisabled(); });
     fireEvent.change(screen.getByDisplayValue("Solo esta vacante"), { target: { value: "all" } });
     await waitFor(() => { expect(screen.getByDisplayValue("Todos mis candidatos")).toBeInTheDocument(); });
-    fireEvent.click(screen.getByRole("button", { name: "Recalcular ranking" }));
+    await confirmRecalculation();
     await waitFor(() => {
       expect(screen.getByText("No hay candidatos registrados en tu cuenta.")).toBeInTheDocument();
     });
@@ -696,9 +734,9 @@ describe("Ranking page", () => {
 
   // TEST 7: POST scope=assigned with total_candidates=0
   it("shows correct message when POST scope=assigned returns total_candidates=0", async () => {
-    window.confirm = vi.fn(() => true);
     let rankingCalls = 0;
     api.get.mockImplementation((url) => {
+      if (url.includes("/cost-estimate")) return Promise.resolve(COST_ESTIMATE);
       if (url === "/jobs") return Promise.resolve({ data: [{ job_id: "job-1", title: "Dev Python" }] });
       if (url.includes("/ranking")) {
         rankingCalls += 1;
@@ -710,7 +748,7 @@ describe("Ranking page", () => {
     api.post.mockResolvedValueOnce({ data: { total_candidates: 0, evaluated: 0, failed: 0 } });
     renderRanking();
     await waitFor(() => { expect(screen.getByRole("button", { name: "Recalcular ranking" })).not.toBeDisabled(); });
-    fireEvent.click(screen.getByRole("button", { name: "Recalcular ranking" }));
+    await confirmRecalculation();
     await waitFor(() => {
       expect(screen.getByText("No hay candidatos asignados a esta vacante.")).toBeInTheDocument();
     });
@@ -719,6 +757,7 @@ describe("Ranking page", () => {
   // TEST 8: Refresh ranking with scope_mismatch = NO "Ranking actualizado"
   it("does NOT show 'Ranking actualizado' when refresh returns scope_mismatch", async () => {
     api.get.mockImplementation((url, config) => {
+      if (url.includes("/cost-estimate")) return Promise.resolve(COST_ESTIMATE);
       if (url === "/jobs") return Promise.resolve({ data: [{ job_id: "job-1", title: "Dev Python" }] });
       if (url.includes("/ranking")) {
         const scope = config?.params?.scope || "assigned";
@@ -743,6 +782,7 @@ describe("Ranking page", () => {
   it("shows 'Ranking actualizado' when refresh returns valid data", async () => {
     let rankingCalls = 0;
     api.get.mockImplementation((url) => {
+      if (url.includes("/cost-estimate")) return Promise.resolve(COST_ESTIMATE);
       if (url === "/jobs") return Promise.resolve({ data: [{ job_id: "job-1", title: "Dev Python" }] });
       if (url.includes("/ranking")) {
         rankingCalls += 1;
@@ -759,9 +799,9 @@ describe("Ranking page", () => {
 
   // TEST 10: Pagination - ranking_total=25, candidates.length=10 = valid
   it("considers paginated GET with ranking_total > candidates.length as valid", async () => {
-    window.confirm = vi.fn(() => true);
     let rankingCalls = 0;
     api.get.mockImplementation((url) => {
+      if (url.includes("/cost-estimate")) return Promise.resolve(COST_ESTIMATE);
       if (url === "/jobs") return Promise.resolve({ data: [{ job_id: "job-1", title: "Dev Python" }] });
       if (url.includes("/ranking")) {
         rankingCalls += 1;
@@ -773,7 +813,7 @@ describe("Ranking page", () => {
     api.post.mockResolvedValueOnce({ data: { total_candidates: 25, evaluated: 25, failed: 0 } });
     renderRanking();
     await waitFor(() => { expect(screen.getByRole("button", { name: "Recalcular ranking" })).not.toBeDisabled(); });
-    fireEvent.click(screen.getByRole("button", { name: "Recalcular ranking" }));
+    await confirmRecalculation();
     await waitFor(() => { expect(screen.getByText("Ranking recalculado correctamente.")).toBeInTheDocument(); });
   });
 
