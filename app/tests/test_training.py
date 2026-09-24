@@ -190,7 +190,7 @@ def test_employee_cannot_open_unassigned_course(db):
     employee = _employee(db)
     course, _, _ = _published_course(db)
 
-    with pytest.raises(service.TrainingAssignmentError):
+    with pytest.raises(service.TrainingNotFound):
         service.get_my_course(
             db,
             employee_id=employee.id,
@@ -202,3 +202,40 @@ def test_training_tables_are_registered_in_orm():
     assert TrainingCourse.__tablename__ in Base.metadata.tables
     assert TrainingModule.__tablename__ in Base.metadata.tables
     assert TrainingLesson.__tablename__ in Base.metadata.tables
+
+
+def test_published_course_content_is_frozen(db):
+    course, module, _ = _published_course(db)
+
+    with pytest.raises(service.TrainingStateError):
+        service.add_module(
+            db,
+            course_id=course.id,
+            title="Cambio tardío",
+            description=None,
+        )
+
+    with pytest.raises(service.TrainingStateError):
+        service.add_lesson(
+            db,
+            module_id=module.id,
+            title="Cambio tardío",
+            description=None,
+            video_url=None,
+            duration_seconds=None,
+        )
+
+
+def test_disabled_employee_cannot_receive_new_assignment(db):
+    employee = _employee(db)
+    employee.status = "DISABLED"
+    db.commit()
+    course, _, _ = _published_course(db)
+
+    with pytest.raises(service.TrainingAssignmentError):
+        service.assign_course(
+            db,
+            course_id=course.id,
+            employee_id=employee.id,
+            assigned_by_sub="admin-sub",
+        )
