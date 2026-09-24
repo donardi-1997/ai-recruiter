@@ -1811,3 +1811,66 @@ select { appearance: none; padding-right: 42px; background-image: linear-gradien
   }
 }
 
+.training-results-list {
+  display: grid;
+  gap: 8px;
+  margin-top: 18px;
+  padding-top: 18px;
+  border-top: 1px solid var(--border);
+}
+
+.training-result-row {
+  display: grid;
+  grid-template-columns: minmax(180px, 1fr) minmax(150px, .8fr) auto;
+  gap: 14px;
+  align-items: center;
+  padding: 12px 0;
+}
+
+.training-result-row + .training-result-row {
+  border-top: 1px solid var(--border);
+}
+
+.training-result-row strong,
+.training-result-row small {
+  display: block;
+}
+
+.training-result-row strong {
+  color: var(--ink);
+  font-size: .8rem;
+}
+
+.training-result-row small {
+  margin-top: 3px;
+  color: var(--ink-faint);
+  font-size: .68rem;
+}
+
+.training-result-progress > span {
+  color: var(--ink-soft);
+  font-size: .7rem;
+  font-weight: 800;
+}
+
+.training-result-progress > div {
+  height: 7px;
+  margin-top: 6px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: var(--border);
+}
+
+.training-result-progress > div i {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, var(--blue), var(--cyan));
+}
+
+@media (max-width: 620px) {
+  .training-result-row {
+    grid-template-columns: 1fr;
+  }
+}
+
