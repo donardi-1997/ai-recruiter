@@ -131,6 +131,8 @@ def build_ranking_response(
                 "candidate_id": item.candidate_id,
                 "match_score": evaluation.match_score,
                 "candidate_name": candidate_name,
+                "is_banned": bool(item.candidate.is_banned) if item.candidate else False,
+                "banned_reason": item.candidate.banned_reason if item.candidate else None,
                 "recommendation": evaluation.recommendation,
                 "status": "COMPLETED",
                 "strengths": evaluation.strengths or [],
@@ -143,6 +145,8 @@ def build_ranking_response(
                 "candidate_id": item.candidate_id,
                 "match_score": None,
                 "candidate_name": candidate_name,
+                "is_banned": bool(item.candidate.is_banned) if item.candidate else False,
+                "banned_reason": item.candidate.banned_reason if item.candidate else None,
                 "recommendation": "EVALUATION_FAILED",
                 "status": "FAILED",
                 "strengths": [],
@@ -155,6 +159,8 @@ def build_ranking_response(
                 "candidate_id": item.candidate_id,
                 "match_score": None,
                 "candidate_name": candidate_name,
+                "is_banned": bool(item.candidate.is_banned) if item.candidate else False,
+                "banned_reason": item.candidate.banned_reason if item.candidate else None,
                 "recommendation": "PENDING",
                 "status": "PENDING",
                 "strengths": [],
@@ -168,6 +174,7 @@ def build_ranking_response(
         score = candidate.get("match_score")
         numeric_score = float(score) if score is not None else -1.0
         return (
+            1 if candidate.get("is_banned") else 0,
             status_order.get(candidate.get("status"), 99),
             -numeric_score,
             (candidate.get("candidate_name") or "").lower(),
