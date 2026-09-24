@@ -574,3 +574,132 @@ class IndeedDispositionEvent(Base):
     created_at = Column(DateTime(timezone=True), nullable=False, default=lambda: datetime.now(timezone.utc))
 
     candidate_link = relationship("IndeedCandidateLink", back_populates="disposition_events")
+
+
+class UserProfile(Base):
+    """Internal employee profile linked to one Cognito identity."""
+
+    __tablename__ = "user_profiles"
+    __table_args__ = (
+        UniqueConstraint("cognito_sub", name="uq_user_profiles_cognito_sub"),
+        UniqueConstraint("email", name="uq_user_profiles_email"),
+        Index("idx_user_profiles_status", "status"),
+    )
+
+    id = Column(Text, primary_key=True, default=lambda: str(uuid.uuid4()))
+    cognito_sub = Column(Text, nullable=False)
+    email = Column(Text, nullable=False)
+    first_name = Column(Text, nullable=True)
+    last_name = Column(Text, nullable=True)
+    job_title = Column(Text, nullable=True)
+    department = Column(Text, nullable=True)
+    status = Column(Text, nullable=False, default="ACTIVE")
+    created_by_sub = Column(Text, nullable=True)
+    created_at = Column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=lambda: datetime.now(timezone.utc),
+    )
+    updated_at = Column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
+    )
+
+    role_assignments = relationship(
+        "UserRole",
+        back_populates="user",
+        cascade="all, delete-orphan",
+    )
+
+
+class Role(Base):
+    """Named RBAC role used to group permissions."""
+
+    __tablename__ = "roles"
+
+    code = Column(Text, primary_key=True)
+    name = Column(Text, nullable=False)
+    description = Column(Text, nullable=True)
+
+    user_assignments = relationship(
+        "UserRole",
+        back_populates="role",
+        cascade="all, delete-orphan",
+    )
+    permission_assignments = relationship(
+        "RolePermission",
+        back_populates="role",
+        cascade="all, delete-orphan",
+    )
+
+
+class Permission(Base):
+    """Granular capability enforced by backend authorization dependencies."""
+
+    __tablename__ = "permissions"
+
+    code = Column(Text, primary_key=True)
+    description = Column(Text, nullable=True)
+
+    role_assignments = relationship(
+        "RolePermission",
+        back_populates="permission",
+        cascade="all, delete-orphan",
+    )
+
+
+class UserRole(Base):
+    __tablename__ = "user_roles"
+    __table_args__ = (
+        UniqueConstraint("user_id", "role_code", name="uq_user_roles_user_role"),
+        Index("idx_user_roles_role_code", "role_code"),
+    )
+
+    user_id = Column(
+        Text,
+        ForeignKey("user_profiles.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    role_code = Column(
+        Text,
+        ForeignKey("roles.code", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    assigned_by_sub = Column(Text, nullable=True)
+    assigned_at = Column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=lambda: datetime.now(timezone.utc),
+    )
+
+    user = relationship("UserProfile", back_populates="role_assignments")
+    role = relationship("Role", back_populates="user_assignments")
+
+
+class RolePermission(Base):
+    __tablename__ = "role_permissions"
+    __table_args__ = (
+        UniqueConstraint(
+            "role_code",
+            "permission_code",
+            name="uq_role_permissions_role_permission",
+        ),
+        Index("idx_role_permissions_permission_code", "permission_code"),
+    )
+
+    role_code = Column(
+        Text,
+        ForeignKey("roles.code", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    permission_code = Column(
+        Text,
+        ForeignKey("permissions.code", ondelete="CASCADE"),
+        primary_key=True,
+    )
+
+    role = relationship("Role", back_populates="permission_assignments")
+    permission = relationship("Permission", back_populates="role_assignments")
+
