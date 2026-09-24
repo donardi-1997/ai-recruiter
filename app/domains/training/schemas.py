@@ -108,3 +108,26 @@ class CreateQuizQuestionRequest(BaseModel):
 
 class SubmitQuizAttemptRequest(BaseModel):
     answers: dict[str, int]
+
+
+
+class CreateLessonVideoUploadRequest(BaseModel):
+    filename: str = Field(min_length=1, max_length=255)
+    content_type: str = Field(min_length=1, max_length=100)
+    size_bytes: int = Field(ge=1, le=1_073_741_824)
+
+    @field_validator("filename", "content_type")
+    @classmethod
+    def normalize_video_manifest_text(cls, value: str) -> str:
+        return value.strip()
+
+
+class FinalizeLessonVideoUploadRequest(BaseModel):
+    key: str = Field(min_length=1, max_length=2000)
+    content_type: str = Field(min_length=1, max_length=100)
+    size_bytes: int = Field(ge=1, le=1_073_741_824)
+
+    @field_validator("key", "content_type")
+    @classmethod
+    def normalize_video_finalize_text(cls, value: str) -> str:
+        return value.strip()

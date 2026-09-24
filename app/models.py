@@ -853,6 +853,9 @@ class TrainingLesson(Base):
     title = Column(Text, nullable=False)
     description = Column(Text, nullable=True)
     video_url = Column(Text, nullable=True)
+    video_storage_key = Column(Text, nullable=True)
+    video_content_type = Column(Text, nullable=True)
+    video_size_bytes = Column(Integer, nullable=True)
     duration_seconds = Column(Integer, nullable=True)
     position = Column(Integer, nullable=False, default=1)
     created_at = Column(

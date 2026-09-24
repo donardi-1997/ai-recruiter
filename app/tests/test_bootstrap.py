@@ -41,6 +41,8 @@ def test_create_app_exposes_critical_routes():
     assert "/api/training/quizzes/{quiz_id}/questions" in paths
     assert "/api/training/me/courses/{course_id}/quiz" in paths
     assert "/api/training/me/courses/{course_id}/quiz/attempts" in paths
+    assert "/api/training/lessons/{lesson_id}/video/upload" in paths
+    assert "/api/training/lessons/{lesson_id}/video/complete" in paths
 
 
 def test_main_app_uses_same_public_contract():

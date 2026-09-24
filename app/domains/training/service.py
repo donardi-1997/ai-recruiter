@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+import logging
 
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
+from app.infrastructure.storage import training_media
 from app.models import (
     TrainingAssignment,
     TrainingCourse,
@@ -30,6 +32,9 @@ class TrainingStateError(Exception):
 
 class TrainingAssignmentError(Exception):
     pass
+
+
+logger = logging.getLogger(__name__)
 
 
 def require_course(db: Session, course_id: str) -> TrainingCourse:
@@ -68,11 +73,22 @@ def require_employee(db: Session, employee_id: str) -> UserProfile:
 
 
 def lesson_payload(lesson: TrainingLesson, *, completed: bool = False) -> dict:
+    video_url = lesson.video_url
+    video_source = "external" if lesson.video_url else None
+    if lesson.video_storage_key:
+        video_url = training_media.create_video_playback_url(
+            lesson.video_storage_key,
+        )
+        video_source = "managed"
+
     return {
         "id": lesson.id,
         "title": lesson.title,
         "description": lesson.description,
-        "video_url": lesson.video_url,
+        "video_url": video_url,
+        "video_source": video_source,
+        "video_content_type": lesson.video_content_type,
+        "video_size_bytes": lesson.video_size_bytes,
         "duration_seconds": lesson.duration_seconds,
         "position": lesson.position,
         "completed": completed,
@@ -259,6 +275,65 @@ def add_lesson(
     db.add(lesson)
     db.commit()
     db.refresh(lesson)
+    return lesson
+
+
+def create_lesson_video_upload(
+    db: Session,
+    *,
+    lesson_id: str,
+    filename: str,
+    content_type: str,
+    size_bytes: int,
+) -> dict:
+    lesson = require_lesson(db, lesson_id)
+    if lesson.module.course.status != "DRAFT":
+        raise TrainingStateError("Only draft courses can change their videos.")
+    return training_media.create_video_upload(
+        lesson_id=lesson.id,
+        filename=filename,
+        content_type=content_type,
+        size_bytes=size_bytes,
+    )
+
+
+def finalize_lesson_video_upload(
+    db: Session,
+    *,
+    lesson_id: str,
+    key: str,
+    content_type: str,
+    size_bytes: int,
+) -> TrainingLesson:
+    lesson = require_lesson(db, lesson_id)
+    if lesson.module.course.status != "DRAFT":
+        raise TrainingStateError("Only draft courses can change their videos.")
+
+    verified = training_media.verify_video_object(
+        lesson_id=lesson.id,
+        key=key,
+        expected_content_type=content_type,
+        expected_size_bytes=size_bytes,
+    )
+    previous_key = lesson.video_storage_key
+
+    lesson.video_storage_key = verified["key"]
+    lesson.video_content_type = verified["content_type"]
+    lesson.video_size_bytes = verified["size_bytes"]
+    lesson.video_url = None
+    db.commit()
+    db.refresh(lesson)
+
+    if previous_key and previous_key != lesson.video_storage_key:
+        try:
+            training_media.delete_video_object(previous_key)
+        except Exception:
+            logger.warning(
+                "Could not delete superseded training media %s",
+                previous_key,
+                exc_info=True,
+            )
+
     return lesson
 
 
