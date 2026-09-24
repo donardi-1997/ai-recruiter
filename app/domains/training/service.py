@@ -72,6 +72,57 @@ def require_employee(db: Session, employee_id: str) -> UserProfile:
     return employee
 
 
+def _normalize_scope(value: str | None) -> str:
+    return " ".join(str(value or "").strip().casefold().split())
+
+
+def _module_applies(
+    module: TrainingModule,
+    employee: UserProfile | None,
+) -> bool:
+    if employee is None:
+        return True
+
+    job_target = _normalize_scope(module.audience_job_title)
+    department_target = _normalize_scope(module.audience_department)
+    if job_target and job_target != _normalize_scope(employee.job_title):
+        return False
+    if department_target and department_target != _normalize_scope(employee.department):
+        return False
+    return True
+
+
+def _applicable_modules(
+    course: TrainingCourse,
+    employee: UserProfile | None = None,
+) -> list[TrainingModule]:
+    return [
+        module
+        for module in sorted(course.modules, key=lambda item: item.position)
+        if _module_applies(module, employee)
+    ]
+
+
+def _lesson_minutes(lesson: TrainingLesson) -> int:
+    if lesson.estimated_minutes:
+        return int(lesson.estimated_minutes)
+    if lesson.duration_seconds:
+        return max(1, (int(lesson.duration_seconds) + 59) // 60)
+    return 1
+
+
+def _required_lessons(
+    course: TrainingCourse,
+    employee: UserProfile | None = None,
+) -> list[TrainingLesson]:
+    return [
+        lesson
+        for module in _applicable_modules(course, employee)
+        for lesson in sorted(module.lessons, key=lambda item: item.position)
+        if not lesson.is_optional
+    ]
+
+
 def lesson_payload(lesson: TrainingLesson, *, completed: bool = False) -> dict:
     video_url = lesson.video_url
     video_source = "external" if lesson.video_url else None
@@ -90,19 +141,52 @@ def lesson_payload(lesson: TrainingLesson, *, completed: bool = False) -> dict:
         "video_content_type": lesson.video_content_type,
         "video_size_bytes": lesson.video_size_bytes,
         "duration_seconds": lesson.duration_seconds,
+        "content_type": lesson.content_type or "VIDEO",
+        "external_url": lesson.external_url,
+        "estimated_minutes": _lesson_minutes(lesson),
+        "is_optional": bool(lesson.is_optional),
         "position": lesson.position,
         "completed": completed,
     }
 
 
-def module_payload(module: TrainingModule, *, completed_lesson_ids: set[str] | None = None) -> dict:
+def module_payload(
+    module: TrainingModule,
+    *,
+    completed_lesson_ids: set[str] | None = None,
+) -> dict:
     completed_lesson_ids = completed_lesson_ids or set()
     lessons = sorted(module.lessons, key=lambda lesson: lesson.position)
+    required = [lesson for lesson in lessons if not lesson.is_optional]
+    completed_required = [
+        lesson for lesson in required if lesson.id in completed_lesson_ids
+    ]
+    estimated_minutes = sum(_lesson_minutes(lesson) for lesson in required)
+    remaining_minutes = sum(
+        _lesson_minutes(lesson)
+        for lesson in required
+        if lesson.id not in completed_lesson_ids
+    )
+    lesson_count = len(required)
+    completed_count = len(completed_required)
     return {
         "id": module.id,
         "title": module.title,
         "description": module.description,
+        "audience_job_title": module.audience_job_title,
+        "audience_department": module.audience_department,
         "position": module.position,
+        "lesson_count": lesson_count,
+        "content_item_count": len(lessons),
+        "completed_lessons": completed_count,
+        "progress_percent": (
+            round((completed_count / lesson_count) * 100)
+            if lesson_count
+            else 100
+        ),
+        "is_complete": completed_count >= lesson_count if lesson_count else True,
+        "estimated_minutes": estimated_minutes,
+        "remaining_minutes": remaining_minutes,
         "lessons": [
             lesson_payload(
                 lesson,
@@ -113,9 +197,12 @@ def module_payload(module: TrainingModule, *, completed_lesson_ids: set[str] | N
     }
 
 
-def _course_counts(course: TrainingCourse) -> tuple[int, int]:
-    modules = list(course.modules)
-    return len(modules), sum(len(module.lessons) for module in modules)
+def _course_counts(
+    course: TrainingCourse,
+    employee: UserProfile | None = None,
+) -> tuple[int, int]:
+    modules = _applicable_modules(course, employee)
+    return len(modules), len(_required_lessons(course, employee))
 
 
 def course_payload(
@@ -123,11 +210,31 @@ def course_payload(
     *,
     completed_lesson_ids: set[str] | None = None,
     include_structure: bool = False,
+    employee: UserProfile | None = None,
 ) -> dict:
     completed_lesson_ids = completed_lesson_ids or set()
-    module_count, lesson_count = _course_counts(course)
-    completed_count = min(len(completed_lesson_ids), lesson_count)
+    modules = _applicable_modules(course, employee)
+    required_lessons = _required_lessons(course, employee)
+    required_ids = {lesson.id for lesson in required_lessons}
+    completed_required_ids = required_ids & completed_lesson_ids
+    module_count = len(modules)
+    lesson_count = len(required_lessons)
+    completed_count = len(completed_required_ids)
     progress_percent = round((completed_count / lesson_count) * 100) if lesson_count else 0
+    estimated_minutes = sum(_lesson_minutes(lesson) for lesson in required_lessons)
+    remaining_minutes = sum(
+        _lesson_minutes(lesson)
+        for lesson in required_lessons
+        if lesson.id not in completed_required_ids
+    )
+    next_lesson = next(
+        (
+            lesson
+            for lesson in required_lessons
+            if lesson.id not in completed_required_ids
+        ),
+        None,
+    )
 
     payload = {
         "id": course.id,
@@ -137,8 +244,12 @@ def course_payload(
         "is_onboarding": bool(course.is_onboarding),
         "module_count": module_count,
         "lesson_count": lesson_count,
+        "content_item_count": sum(len(module.lessons) for module in modules),
         "completed_lessons": completed_count,
         "progress_percent": progress_percent,
+        "estimated_minutes": estimated_minutes,
+        "remaining_minutes": remaining_minutes,
+        "next_lesson_id": next_lesson.id if next_lesson else None,
         "has_quiz": course.quiz is not None,
         "created_at": course.created_at.isoformat() if course.created_at else None,
         "updated_at": course.updated_at.isoformat() if course.updated_at else None,
@@ -149,10 +260,9 @@ def course_payload(
                 module,
                 completed_lesson_ids=completed_lesson_ids,
             )
-            for module in sorted(course.modules, key=lambda item: item.position)
+            for module in modules
         ]
     return payload
-
 
 def list_courses(db: Session) -> list[dict]:
     courses = db.query(TrainingCourse).order_by(TrainingCourse.created_at.desc()).all()
@@ -185,6 +295,161 @@ def create_course(
     db.commit()
     db.refresh(course)
     return course
+
+
+def create_asiati_onboarding_template(
+    db: Session,
+    *,
+    created_by_sub: str,
+) -> TrainingCourse:
+    existing = (
+        db.query(TrainingCourse)
+        .filter(
+            TrainingCourse.title == "Onboarding ASIATI",
+            TrainingCourse.is_onboarding.is_(True),
+            TrainingCourse.status == "DRAFT",
+        )
+        .order_by(TrainingCourse.created_at.desc())
+        .first()
+    )
+    if existing is not None:
+        return existing
+
+    course = create_course(
+        db,
+        title="Onboarding ASIATI",
+        description=(
+            "Ruta de inducción corporativa en bloques cortos: ASIATI, ecosistema, "
+            "forma de trabajo, rol y evaluación final."
+        ),
+        created_by_sub=created_by_sub,
+        is_onboarding=True,
+    )
+
+    welcome = add_module(
+        db,
+        course_id=course.id,
+        title="Bienvenida",
+        description="Empieza aquí. Esta ruta está diseñada para completarse por etapas.",
+    )
+    add_lesson(
+        db,
+        module_id=welcome.id,
+        title="Tu ruta de inducción",
+        description=(
+            "Conocerás ASIATI, sus marcas, nuestra forma de trabajo y el alcance "
+            "de tu rol. Puedes detenerte y continuar después."
+        ),
+        video_url=None,
+        duration_seconds=None,
+        content_type="ARTICLE",
+        estimated_minutes=2,
+    )
+
+    asiati = add_module(
+        db,
+        course_id=course.id,
+        title="Conoce ASIATI",
+        description="Contexto corporativo, propósito y presencia oficial.",
+    )
+    for title, url, minutes, optional in [
+        ("Presentación ASIATI I", "https://canva.link/ub9ggivhfxawuoh", 5, False),
+        ("Presentación ASIATI II", "https://canva.link/kma1whh1rya59td", 5, False),
+        ("Página oficial de ASIATI Corp", "https://www.asiaticorp.com/", 3, True),
+    ]:
+        add_lesson(
+            db,
+            module_id=asiati.id,
+            title=title,
+            description="Recurso corporativo oficial.",
+            video_url=None,
+            duration_seconds=None,
+            content_type="RESOURCE",
+            external_url=url,
+            estimated_minutes=minutes,
+            is_optional=optional,
+        )
+
+    ecosystem = add_module(
+        db,
+        course_id=course.id,
+        title="Nuestro ecosistema",
+        description="Conoce las marcas y proyectos que forman parte de ASIATI.",
+    )
+    add_lesson(
+        db,
+        module_id=ecosystem.id,
+        title="Mapa del ecosistema ASIATI",
+        description=(
+            "ASIATI Corp integra iniciativas de comercio, logística, marcas de "
+            "consumo y contenido. Revisa las tarjetas de cada marca como material "
+            "complementario."
+        ),
+        video_url=None,
+        duration_seconds=None,
+        content_type="ARTICLE",
+        estimated_minutes=3,
+    )
+    for title, url in [
+        ("ASIATI Corp", "https://www.instagram.com/asiati_corp/?hl=es"),
+        ("ASIATI Commerce", "https://www.instagram.com/asiati_ecommerce/?hl=es"),
+        ("Wiilog", "https://www.instagram.com/wiilog_logistica/?hl=es"),
+        ("Origen Vital", "https://www.instagram.com/origen_vital_col/"),
+        ("Chin Chin", "https://www.instagram.com/chin_chin_bodega/?hl=es-la"),
+        ("El Retrovisor", "https://www.youtube.com/@Elretrovisor.podcast"),
+    ]:
+        add_lesson(
+            db,
+            module_id=ecosystem.id,
+            title=title,
+            description="Material complementario para conocer esta marca.",
+            video_url=None,
+            duration_seconds=None,
+            content_type="RESOURCE",
+            external_url=url,
+            estimated_minutes=2,
+            is_optional=True,
+        )
+
+    add_module(
+        db,
+        course_id=course.id,
+        title="Así trabajamos",
+        description=(
+            "Carga aquí los videos corporativos del onboarding. Recomendación: "
+            "segmentos de 4–6 minutos por lección."
+        ),
+    )
+    role_module = add_module(
+        db,
+        course_id=course.id,
+        title="Tu cargo en ASIATI",
+        description=(
+            "Crea aquí módulos específicos por cargo o área usando la segmentación "
+            "de audiencia."
+        ),
+    )
+    add_lesson(
+        db,
+        module_id=role_module.id,
+        title="Tu rol y tus primeros días",
+        description=(
+            "Revisa con tu líder el alcance de tu cargo, responsabilidades, "
+            "herramientas y objetivos de la primera semana."
+        ),
+        video_url=None,
+        duration_seconds=None,
+        content_type="CHECKLIST",
+        estimated_minutes=5,
+    )
+    add_module(
+        db,
+        course_id=course.id,
+        title="Evaluación final",
+        description="Añade un quiz de 5–8 preguntas antes de publicar la ruta.",
+    )
+
+    return require_course(db, course.id)
 
 
 def update_course(
@@ -232,6 +497,8 @@ def add_module(
     course_id: str,
     title: str,
     description: str | None,
+    audience_job_title: str | None = None,
+    audience_department: str | None = None,
 ) -> TrainingModule:
     course = require_course(db, course_id)
     if course.status != "DRAFT":
@@ -246,6 +513,8 @@ def add_module(
         course_id=course_id,
         title=title.strip(),
         description=(description or "").strip() or None,
+        audience_job_title=(audience_job_title or "").strip() or None,
+        audience_department=(audience_department or "").strip() or None,
         position=position,
     )
     db.add(module)
@@ -262,6 +531,10 @@ def add_lesson(
     description: str | None,
     video_url: str | None,
     duration_seconds: int | None,
+    content_type: str = "VIDEO",
+    external_url: str | None = None,
+    estimated_minutes: int | None = None,
+    is_optional: bool = False,
 ) -> TrainingLesson:
     module = require_module(db, module_id)
     if module.course.status != "DRAFT":
@@ -278,6 +551,10 @@ def add_lesson(
         description=(description or "").strip() or None,
         video_url=(video_url or "").strip() or None,
         duration_seconds=duration_seconds,
+        content_type=(content_type or "VIDEO").strip().upper(),
+        external_url=(external_url or "").strip() or None,
+        estimated_minutes=estimated_minutes,
+        is_optional=bool(is_optional),
         position=position,
     )
     db.add(lesson)
@@ -446,6 +723,7 @@ def _assignment_course_payload(
         assignment.course,
         completed_lesson_ids=completed,
         include_structure=include_structure,
+        employee=assignment.employee,
     )
     if assignment.course.quiz is not None:
         passed_quiz = any(attempt.passed for attempt in assignment.quiz_attempts)
@@ -569,6 +847,8 @@ def complete_lesson(
     )
     if course.status != "PUBLISHED":
         raise TrainingStateError("This course is not available.")
+    if not _module_applies(lesson.module, assignment.employee):
+        raise TrainingStateError("This lesson is not assigned to your profile.")
 
     existing = (
         db.query(TrainingLessonProgress)
@@ -588,15 +868,11 @@ def complete_lesson(
         )
         db.flush()
 
-    total_lessons = sum(len(module.lessons) for module in course.modules)
-    completed_count = (
-        db.query(TrainingLessonProgress)
-        .filter(
-            TrainingLessonProgress.assignment_id == assignment.id,
-            TrainingLessonProgress.status == "COMPLETED",
-        )
-        .count()
-    )
+    required_lessons = _required_lessons(course, assignment.employee)
+    required_ids = {item.id for item in required_lessons}
+    completed_ids = _completed_ids(db, assignment.id)
+    completed_count = len(required_ids & completed_ids)
+    total_lessons = len(required_lessons)
     if (
         total_lessons
         and completed_count >= total_lessons
@@ -724,18 +1000,15 @@ def add_quiz_question(
 
 
 def _all_lessons_completed(db: Session, assignment: TrainingAssignment) -> bool:
-    total_lessons = sum(len(module.lessons) for module in assignment.course.modules)
-    if total_lessons == 0:
-        return False
-    completed_count = (
-        db.query(TrainingLessonProgress)
-        .filter(
-            TrainingLessonProgress.assignment_id == assignment.id,
-            TrainingLessonProgress.status == "COMPLETED",
-        )
-        .count()
+    required_lessons = _required_lessons(
+        assignment.course,
+        assignment.employee,
     )
-    return completed_count >= total_lessons
+    if not required_lessons:
+        return False
+    required_ids = {lesson.id for lesson in required_lessons}
+    completed_ids = _completed_ids(db, assignment.id)
+    return required_ids.issubset(completed_ids)
 
 
 def get_my_quiz(db: Session, *, employee_id: str, course_id: str) -> dict:

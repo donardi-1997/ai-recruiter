@@ -296,6 +296,15 @@ def test_alembic_head_builds_current_postgres_schema():
         }
         assert "is_onboarding" in training_course_columns
 
+        training_module_columns = {
+            column["name"]
+            for column in inspector.get_columns("training_modules")
+        }
+        assert {
+            "audience_job_title",
+            "audience_department",
+        }.issubset(training_module_columns)
+
         training_lesson_columns = {
             column["name"]
             for column in inspector.get_columns("training_lessons")
@@ -304,9 +313,13 @@ def test_alembic_head_builds_current_postgres_schema():
             "video_storage_key",
             "video_content_type",
             "video_size_bytes",
+            "content_type",
+            "external_url",
+            "estimated_minutes",
+            "is_optional",
         }.issubset(training_lesson_columns)
 
         assert admin_score_grants == 0
-        assert revision == "022"
+        assert revision == "023"
     finally:
         engine.dispose()
