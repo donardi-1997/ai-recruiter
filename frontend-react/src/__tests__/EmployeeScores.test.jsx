@@ -87,7 +87,7 @@ describe("Direction employee scoring", () => {
   it("shows total and auditable history", async () => {
     renderPage();
 
-    expect(await screen.findByText("Ana Pérez")).toBeInTheDocument();
+    expect((await screen.findAllByText("Ana Pérez")).length).toBeGreaterThan(0);
     expect(await screen.findByText("Completó el proyecto.")).toBeInTheDocument();
     expect(screen.getByText("Ausencia registrada.")).toBeInTheDocument();
     expect(screen.getByText("+25")).toBeInTheDocument();
@@ -97,7 +97,7 @@ describe("Direction employee scoring", () => {
     api.post.mockResolvedValueOnce({ data: {} });
     renderPage();
 
-    await screen.findByText("Ana Pérez");
+    await screen.findAllByText("Ana Pérez");
 
     fireEvent.change(screen.getByLabelText("Puntos"), {
       target: { value: "30" },
@@ -124,7 +124,7 @@ describe("Direction employee scoring", () => {
     api.post.mockResolvedValueOnce({ data: {} });
     renderPage();
 
-    await screen.findByText("Ana Pérez");
+    await screen.findAllByText("Ana Pérez");
 
     fireEvent.change(screen.getByLabelText("Puntos"), {
       target: { value: "-5" },
