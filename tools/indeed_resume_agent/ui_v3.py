@@ -201,8 +201,47 @@ def run_ui(*, worker, api, browser) -> None:
         background=[("pressed", "#EAECF0"), ("active", "#F2F4F7")],
     )
 
-    shell = ttk.Frame(root, style="App.TFrame", padding=18)
-    shell.pack(fill="both", expand=True)
+    viewport = ttk.Frame(root, style="App.TFrame")
+    viewport.pack(fill="both", expand=True)
+
+    canvas = tk.Canvas(
+        viewport,
+        background=_UI["bg"],
+        highlightthickness=0,
+        bd=0,
+        relief="flat",
+        yscrollincrement=16,
+    )
+    scrollbar = ttk.Scrollbar(viewport, orient="vertical", command=canvas.yview)
+    canvas.configure(yscrollcommand=scrollbar.set)
+    scrollbar.pack(side="right", fill="y")
+    canvas.pack(side="left", fill="both", expand=True)
+
+    shell = ttk.Frame(canvas, style="App.TFrame", padding=18)
+    shell_window = canvas.create_window((0, 0), window=shell, anchor="nw")
+
+    def sync_scrollregion(event=None) -> None:
+        bounds = canvas.bbox("all")
+        if bounds is not None:
+            canvas.configure(scrollregion=bounds)
+
+    def fit_shell_to_canvas(event) -> None:
+        canvas.itemconfigure(shell_window, width=max(1, event.width))
+        sync_scrollregion()
+
+    def on_mousewheel(event):
+        bounds = canvas.bbox("all")
+        if bounds is None or bounds[3] <= canvas.winfo_height():
+            return None
+        units = int(-event.delta / 120)
+        if units == 0:
+            units = -1 if event.delta > 0 else 1
+        canvas.yview_scroll(units * 3, "units")
+        return "break"
+
+    shell.bind("<Configure>", sync_scrollregion, add="+")
+    canvas.bind("<Configure>", fit_shell_to_canvas, add="+")
+    root.bind("<MouseWheel>", on_mousewheel, add="+")
 
     header = ttk.Frame(shell, style="App.TFrame")
     header.pack(fill="x")
@@ -337,6 +376,24 @@ def run_ui(*, worker, api, browser) -> None:
     commands: queue.Queue[str] = queue.Queue()
     updates: queue.Queue[UiState] = queue.Queue()
     stop_event = threading.Event()
+    pause_requested = threading.Event()
+    pause_feedback_pending = threading.Event()
+
+    def request_pause() -> None:
+        if pause_requested.is_set():
+            return
+        pause_requested.set()
+        pause_feedback_pending.set()
+        status_var.set("Pausa solicitada · terminando operación actual…")
+        pause_button.configure(state="disabled")
+        commands.put("pause")
+
+    def request_resume() -> None:
+        pause_requested.clear()
+        pause_feedback_pending.clear()
+        status_var.set("Reanudando agente…")
+        pause_button.configure(state="normal")
+        commands.put("resume")
 
     action_card = ttk.LabelFrame(shell, text="Sincronización", style="Section.TLabelframe", padding=9)
     action_card.pack(fill="x", pady=(0, 8))
@@ -366,13 +423,13 @@ def run_ui(*, worker, api, browser) -> None:
         operations,
         text="Pausar",
         style="Secondary.TButton",
-        command=lambda: commands.put("pause"),
+        command=request_pause,
     )
     resume_button = ttk.Button(
         operations,
         text="Continuar",
         style="Secondary.TButton",
-        command=lambda: commands.put("resume"),
+        command=request_resume,
     )
     retry_attention_button = ttk.Button(
         operations,
@@ -518,8 +575,12 @@ def run_ui(*, worker, api, browser) -> None:
                     if command == "pause":
                         worker.pause()
                         diagnostic_snapshot = None
+                        pause_feedback_pending.clear()
+                        publish(worker.snapshot, last_stats)
 
                     elif command == "resume":
+                        pause_requested.clear()
+                        pause_feedback_pending.clear()
                         if browser.diagnostic_active:
                             publish_phase("DIAGNOSTIC_MODE", last_stats)
                             continue
@@ -528,6 +589,7 @@ def run_ui(*, worker, api, browser) -> None:
                             worker.resume()
                         except Exception:
                             pass
+                        publish(worker.snapshot, last_stats)
 
                     elif command == "sync_jobs":
                         if browser.diagnostic_active or worker.snapshot.state == "DOWNLOADING":
@@ -566,7 +628,11 @@ def run_ui(*, worker, api, browser) -> None:
                                 "Vacantes detenidas en etapa técnica: INDEED_JOB_SYNC_FAILED",
                             )
                         publish(diagnostic_snapshot, last_stats)
-                        if not was_paused and diagnostic_snapshot.state == "JOBS_SYNC_COMPLETED":
+                        if (
+                            not was_paused
+                            and not pause_requested.is_set()
+                            and diagnostic_snapshot.state == "JOBS_SYNC_COMPLETED"
+                        ):
                             diagnostic_snapshot = None
                             try:
                                 worker.resume()
@@ -585,7 +651,10 @@ def run_ui(*, worker, api, browser) -> None:
                             full_sync_provider_pending = report.result.reconcile_provider_pending
                             detail = _candidate_summary(report)
                             publish_phase("SYNC_READY", last_stats, detail)
-                            worker.resume()
+                            if pause_requested.is_set():
+                                publish(worker.snapshot, last_stats)
+                            else:
+                                worker.resume()
                         except RuntimeError as exc:
                             full_sync_active = False
                             code = _safe_code(exc, "INDEED_CANDIDATE_SYNC_FAILED")
@@ -616,6 +685,9 @@ def run_ui(*, worker, api, browser) -> None:
                             vacancy_report = run_vacancies(last_stats)
                             last_stats = vacancy_report.stats
                             vacancy_detail = _vacancy_report_summary(vacancy_report)
+                            if pause_requested.is_set():
+                                publish(worker.snapshot, last_stats)
+                                continue
                         except RuntimeError as exc:
                             code = _safe_code(exc, "INDEED_JOB_SYNC_FAILED")
                             if code == "INDEED_AUTH_REQUIRED":
@@ -638,7 +710,10 @@ def run_ui(*, worker, api, browser) -> None:
                             full_sync_provider_pending = candidate_report.result.reconcile_provider_pending
                             detail = f"{vacancy_detail} · {_candidate_summary(candidate_report)}"
                             publish_phase("SYNC_READY", last_stats, detail)
-                            worker.resume()
+                            if pause_requested.is_set():
+                                publish(worker.snapshot, last_stats)
+                            else:
+                                worker.resume()
                         except RuntimeError as exc:
                             full_sync_active = False
                             code = _safe_code(exc, "INDEED_CANDIDATE_SYNC_FAILED")
@@ -834,9 +909,13 @@ def run_ui(*, worker, api, browser) -> None:
                         publish(snapshot, last_stats)
 
                 delay = (
-                    0.5
-                    if snapshot.state not in {"IDLE", "PAUSED", "WAITING_FOR_HUMAN", "JOBS_SYNC_COMPLETED"}
-                    else 2.0
+                    0.0
+                    if pause_feedback_pending.is_set()
+                    else (
+                        0.5
+                        if snapshot.state not in {"IDLE", "PAUSED", "WAITING_FOR_HUMAN", "JOBS_SYNC_COMPLETED"}
+                        else 2.0
+                    )
                 )
                 stop_event.wait(delay)
         finally:
@@ -879,6 +958,12 @@ def run_ui(*, worker, api, browser) -> None:
                 state = "disabled" if ui.busy else "normal"
                 for button in conflict_buttons:
                     button.configure(state=state)
+
+                pause_button.configure(
+                    state="disabled" if pause_requested.is_set() else "normal"
+                )
+                if pause_feedback_pending.is_set():
+                    status_var.set("Pausa solicitada · terminando operación actual…")
         except queue.Empty:
             pass
         if not stop_event.is_set():
