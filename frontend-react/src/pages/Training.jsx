@@ -16,6 +16,26 @@ function isDirectVideo(url) {
 }
 
 
+function lessonTypeLabel(type) {
+  return {
+    VIDEO: "Video",
+    ARTICLE: "Lectura",
+    RESOURCE: "Recurso",
+    CHECKLIST: "Checklist",
+  }[String(type || "VIDEO").toUpperCase()] || "Contenido";
+}
+
+
+function lessonTypeIcon(type) {
+  return {
+    VIDEO: "▶",
+    ARTICLE: "▤",
+    RESOURCE: "↗",
+    CHECKLIST: "✓",
+  }[String(type || "VIDEO").toUpperCase()] || "•";
+}
+
+
 function Training() {
   const { principal, hasPermission } = useSession();
   const canManage = hasPermission("training.manage");
@@ -154,6 +174,18 @@ function Training() {
     () => journeyLessons.find((lesson) => lesson.id === activeLessonId) || null,
     [activeLessonId, journeyLessons],
   );
+
+  const activeJourneyIndex = useMemo(
+    () => journeyLessons.findIndex((lesson) => lesson.id === activeLessonId),
+    [activeLessonId, journeyLessons],
+  );
+
+  const previousJourneyLesson = activeJourneyIndex > 0
+    ? journeyLessons[activeJourneyIndex - 1]
+    : null;
+  const nextJourneyLesson = activeJourneyIndex >= 0
+    ? journeyLessons[activeJourneyIndex + 1] || null
+    : null;
 
   const loadEmployeeCourse = useCallback(async (courseId) => {
     if (!courseId) {
@@ -307,6 +339,10 @@ function Training() {
       description: "",
       video_url: "",
       duration_seconds: "",
+      content_type: "VIDEO",
+      external_url: "",
+      estimated_minutes: "",
+      is_optional: false,
     };
   }
 
@@ -451,6 +487,10 @@ function Training() {
   }
 
   async function completeLesson(lessonId) {
+    const currentIndex = journeyLessons.findIndex((lesson) => lesson.id === lessonId);
+    const nextId = currentIndex >= 0
+      ? journeyLessons[currentIndex + 1]?.id || ""
+      : "";
     setSaving(true);
     setError("");
     try {
@@ -462,6 +502,7 @@ function Training() {
         loadHome(),
         loadEmployeeCourse(data.course.id),
       ]);
+      if (nextId) setActiveLessonId(nextId);
     } catch (err) {
       setError(err.response?.data?.detail || "No fue posible guardar el avance.");
     } finally {
@@ -562,13 +603,23 @@ function Training() {
           <p>Hola, {firstName}. Cursos, videos y progreso en un solo lugar.</p>
         </div>
         {canManage && (
-          <button
-            className="btn btn-primary"
-            type="button"
-            onClick={() => setCreatingCourse(true)}
-          >
-            + Crear curso
-          </button>
+          <div className="training-header-actions">
+            <button
+              className="btn btn-secondary"
+              type="button"
+              onClick={createAsiatiPreset}
+              disabled={creatingPreset}
+            >
+              {creatingPreset ? "Preparando…" : "Crear ruta ASIATI"}
+            </button>
+            <button
+              className="btn btn-primary"
+              type="button"
+              onClick={() => setCreatingCourse(true)}
+            >
+              + Crear curso
+            </button>
+          </div>
         )}
       </header>
 
@@ -660,6 +711,12 @@ function Training() {
                             <span>Módulo {module.position}</span>
                             <h3>{module.title}</h3>
                             {module.description && <p>{module.description}</p>}
+                            {(module.audience_job_title || module.audience_department) && (
+                              <small className="training-audience-badge">
+                                Solo para: {module.audience_job_title || "cualquier cargo"}
+                                {module.audience_department ? ` · ${module.audience_department}` : ""}
+                              </small>
+                            )}
                           </div>
                           <strong>{module.lessons?.length || 0} lecciones</strong>
                         </div>
@@ -667,17 +724,22 @@ function Training() {
                         <div className="training-lesson-list">
                           {module.lessons?.map((lesson) => (
                             <div className="training-lesson-row training-lesson-admin-row" key={lesson.id}>
-                              <span className="training-play" aria-hidden="true">▶</span>
+                              <span className="training-play" aria-hidden="true">{lessonTypeIcon(lesson.content_type)}</span>
                               <div className="training-lesson-admin-copy">
                                 <strong>{lesson.title}</strong>
                                 <small>
-                                  {lesson.video_url
-                                    ? lesson.video_source === "managed"
-                                      ? "Video privado en S3"
-                                      : "Video por URL externa"
-                                    : "Sin video"}
-                                  {lesson.duration_seconds ? ` · ${Math.ceil(lesson.duration_seconds / 60)} min` : ""}
+                                  {lessonTypeLabel(lesson.content_type)}
+                                  {lesson.estimated_minutes ? ` · ~${lesson.estimated_minutes} min` : ""}
+                                  {lesson.is_optional ? " · opcional" : ""}
                                 </small>
+                                {lesson.video_url && (
+                                  <small>
+                                    {lesson.video_source === "managed"
+                                      ? "Video privado en S3"
+                                      : "Video por URL externa"}
+                                  </small>
+                                )}
+                                {lesson.external_url && <small>Recurso externo configurado</small>}
                                 {lesson.video_size_bytes ? (
                                   <small>{Math.max(1, Math.round(lesson.video_size_bytes / (1024 * 1024)))} MB</small>
                                 ) : null}
@@ -724,23 +786,64 @@ function Training() {
                               onChange={(event) => updateLessonForm(module.id, { description: event.target.value })}
                               rows="2"
                             />
-                            <div className="training-inline-grid">
+                            <div className="training-inline-grid training-content-type-grid">
+                              <select
+                                aria-label={`Tipo de contenido para ${module.title}`}
+                                value={lessonForm(module.id).content_type}
+                                onChange={(event) => updateLessonForm(module.id, { content_type: event.target.value })}
+                              >
+                                <option value="VIDEO">Video</option>
+                                <option value="ARTICLE">Lectura</option>
+                                <option value="RESOURCE">Recurso externo</option>
+                                <option value="CHECKLIST">Checklist</option>
+                              </select>
                               <input
-                                aria-label={`URL de video para ${module.title}`}
-                                type="url"
-                                placeholder="https://.../video.mp4"
-                                value={lessonForm(module.id).video_url}
-                                onChange={(event) => updateLessonForm(module.id, { video_url: event.target.value })}
-                              />
-                              <input
-                                aria-label={`Duración de lección para ${module.title}`}
+                                aria-label={`Tiempo estimado para ${module.title}`}
                                 type="number"
                                 min="1"
-                                placeholder="Duración (segundos)"
-                                value={lessonForm(module.id).duration_seconds}
-                                onChange={(event) => updateLessonForm(module.id, { duration_seconds: event.target.value })}
+                                max="1440"
+                                placeholder="Tiempo estimado (min)"
+                                value={lessonForm(module.id).estimated_minutes}
+                                onChange={(event) => updateLessonForm(module.id, { estimated_minutes: event.target.value })}
                               />
                             </div>
+                            {lessonForm(module.id).content_type === "VIDEO" && (
+                              <div className="training-inline-grid">
+                                <input
+                                  aria-label={`URL de video para ${module.title}`}
+                                  type="url"
+                                  placeholder="https://.../video.mp4"
+                                  value={lessonForm(module.id).video_url}
+                                  onChange={(event) => updateLessonForm(module.id, { video_url: event.target.value })}
+                                />
+                                <input
+                                  aria-label={`Duración de lección para ${module.title}`}
+                                  type="number"
+                                  min="1"
+                                  placeholder="Duración (segundos)"
+                                  value={lessonForm(module.id).duration_seconds}
+                                  onChange={(event) => updateLessonForm(module.id, { duration_seconds: event.target.value })}
+                                />
+                              </div>
+                            )}
+                            {lessonForm(module.id).content_type === "RESOURCE" && (
+                              <input
+                                aria-label={`URL de recurso para ${module.title}`}
+                                type="url"
+                                placeholder="https://..."
+                                value={lessonForm(module.id).external_url}
+                                onChange={(event) => updateLessonForm(module.id, { external_url: event.target.value })}
+                                required
+                              />
+                            )}
+                            <label className="training-optional-toggle">
+                              <input
+                                type="checkbox"
+                                checked={lessonForm(module.id).is_optional}
+                                onChange={(event) => updateLessonForm(module.id, { is_optional: event.target.checked })}
+                              />
+                              <span>Contenido opcional (no bloquea el avance)</span>
+                            </label>
                             <button className="btn btn-secondary" type="submit" disabled={saving}>
                               Agregar lección
                             </button>
@@ -768,6 +871,23 @@ function Training() {
                           onChange={(event) => setModuleForm({ ...moduleForm, description: event.target.value })}
                         />
                       </div>
+                      <div className="training-inline-grid">
+                        <input
+                          aria-label="Cargo objetivo del módulo"
+                          placeholder="Cargo específico (opcional)"
+                          value={moduleForm.audience_job_title}
+                          onChange={(event) => setModuleForm({ ...moduleForm, audience_job_title: event.target.value })}
+                        />
+                        <input
+                          aria-label="Área objetivo del módulo"
+                          placeholder="Área específica (opcional)"
+                          value={moduleForm.audience_department}
+                          onChange={(event) => setModuleForm({ ...moduleForm, audience_department: event.target.value })}
+                        />
+                      </div>
+                      <p className="training-form-note">
+                        Si dejas cargo y área vacíos, el módulo será visible para todos los empleados asignados.
+                      </p>
                       <button className="btn btn-secondary" type="submit" disabled={saving}>
                         + Agregar módulo
                       </button>
@@ -1023,65 +1143,160 @@ function Training() {
                     <strong>{employeeCourse.course.progress_percent}%</strong>
                   </div>
 
-                  <div className="training-module-list">
-                    {employeeCourse.course.modules?.map((module) => (
-                      <article className="training-module-card training-module-consume" key={module.id}>
-                        <div className="training-module-header">
-                          <div>
-                            <span>Módulo {module.position}</span>
-                            <h3>{module.title}</h3>
+                  <div className="training-journey-overview">
+                    <div className="training-journey-progress-copy">
+                      <span>Tu avance</span>
+                      <strong>{employeeCourse.course.progress_percent}%</strong>
+                      <small>
+                        {employeeCourse.course.completed_lessons} de {employeeCourse.course.lesson_count} actividades obligatorias
+                        {employeeCourse.course.remaining_minutes
+                          ? ` · ~${employeeCourse.course.remaining_minutes} min restantes`
+                          : ""}
+                      </small>
+                    </div>
+                    <div className="training-journey-progress-bar">
+                      <i style={{ width: `${employeeCourse.course.progress_percent}%` }} />
+                    </div>
+                  </div>
+
+                  <div className="training-journey-layout">
+                    <aside className="training-journey-steps" aria-label="Ruta del curso">
+                      {employeeCourse.course.modules?.map((module) => (
+                        <section
+                          className={`training-journey-module ${module.is_complete ? "is-complete" : ""}`}
+                          key={module.id}
+                        >
+                          <div className="training-journey-module-heading">
+                            <span>{module.is_complete ? "✓" : module.position}</span>
+                            <div>
+                              <strong>{module.title}</strong>
+                              <small>
+                                {module.completed_lessons}/{module.lesson_count} · ~{module.estimated_minutes} min
+                              </small>
+                            </div>
                           </div>
-                        </div>
-
-                        <div className="training-lesson-consume-list">
-                          {module.lessons?.map((lesson) => (
-                            <article className={`training-consume-lesson ${lesson.completed ? "is-complete" : ""}`} key={lesson.id}>
-                              <div className="training-consume-heading">
+                          <div className="training-journey-lessons">
+                            {module.lessons?.map((lesson) => (
+                              <button
+                                key={lesson.id}
+                                type="button"
+                                className={`training-journey-lesson-button ${lesson.id === activeLessonId ? "active" : ""} ${lesson.completed ? "is-complete" : ""}`}
+                                onClick={() => setActiveLessonId(lesson.id)}
+                              >
+                                <span>{lesson.completed ? "✓" : lessonTypeIcon(lesson.content_type)}</span>
                                 <div>
-                                  <span className="training-play" aria-hidden="true">{lesson.completed ? "✓" : "▶"}</span>
-                                  <div>
-                                    <strong>{lesson.title}</strong>
-                                    {lesson.description && <p>{lesson.description}</p>}
-                                  </div>
+                                  <strong>{lesson.title}</strong>
+                                  <small>
+                                    {lessonTypeLabel(lesson.content_type)} · ~{lesson.estimated_minutes} min
+                                    {lesson.is_optional ? " · opcional" : ""}
+                                  </small>
                                 </div>
-                                {lesson.completed ? (
-                                  <span className="status-pill"><i /> Completada</span>
-                                ) : (
-                                  <button
-                                    className="btn btn-secondary"
-                                    type="button"
-                                    onClick={() => completeLesson(lesson.id)}
-                                    disabled={saving}
-                                  >
-                                    Marcar completada
-                                  </button>
-                                )}
-                              </div>
+                              </button>
+                            ))}
+                          </div>
+                        </section>
+                      ))}
+                    </aside>
 
-                              {lesson.video_url && (
-                                <div className="training-video">
-                                  {isDirectVideo(lesson.video_url) ? (
-                                    <video controls preload="metadata">
-                                      <source src={lesson.video_url} />
-                                      Tu navegador no puede reproducir este video.
-                                    </video>
-                                  ) : (
-                                    <a
-                                      className="btn btn-ghost"
-                                      href={lesson.video_url}
-                                      target="_blank"
-                                      rel="noreferrer"
-                                    >
-                                      Abrir video ↗
-                                    </a>
-                                  )}
-                                </div>
+                    <article className="training-journey-focus">
+                      {activeJourneyLesson ? (
+                        <>
+                          <div className="training-journey-focus-meta">
+                            <span>{activeJourneyLesson.module.title}</span>
+                            <b>{lessonTypeLabel(activeJourneyLesson.content_type)} · ~{activeJourneyLesson.estimated_minutes} min</b>
+                          </div>
+                          <h3>{activeJourneyLesson.title}</h3>
+                          {activeJourneyLesson.description && (
+                            <p className="training-journey-description">{activeJourneyLesson.description}</p>
+                          )}
+
+                          {activeJourneyLesson.video_url && (
+                            <div className="training-video training-journey-video">
+                              {isDirectVideo(activeJourneyLesson.video_url) ? (
+                                <video controls preload="metadata">
+                                  <source src={activeJourneyLesson.video_url} />
+                                  Tu navegador no puede reproducir este video.
+                                </video>
+                              ) : (
+                                <a
+                                  className="btn btn-ghost"
+                                  href={activeJourneyLesson.video_url}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                >
+                                  Abrir video ↗
+                                </a>
                               )}
-                            </article>
-                          ))}
+                            </div>
+                          )}
+
+                          {activeJourneyLesson.external_url && (
+                            <a
+                              className="training-resource-card"
+                              href={activeJourneyLesson.external_url}
+                              target="_blank"
+                              rel="noreferrer"
+                            >
+                              <span>↗</span>
+                              <div>
+                                <strong>Abrir recurso</strong>
+                                <small>Se abrirá en una pestaña nueva.</small>
+                              </div>
+                            </a>
+                          )}
+
+                          {activeJourneyLesson.content_type === "CHECKLIST" && (
+                            <div className="training-checklist-card">
+                              <strong>Antes de continuar</strong>
+                              <span>Confirma que revisaste los puntos de esta actividad con tu líder o responsable.</span>
+                            </div>
+                          )}
+
+                          <div className="training-journey-actions">
+                            <button
+                              className="btn btn-secondary"
+                              type="button"
+                              disabled={!previousJourneyLesson}
+                              onClick={() => previousJourneyLesson && setActiveLessonId(previousJourneyLesson.id)}
+                            >
+                              ← Anterior
+                            </button>
+                            <div>
+                              {activeJourneyLesson.completed ? (
+                                <span className="status-pill"><i /> Completada</span>
+                              ) : (
+                                <button
+                                  className="btn btn-primary"
+                                  type="button"
+                                  onClick={() => completeLesson(activeJourneyLesson.id)}
+                                  disabled={saving}
+                                >
+                                  {saving
+                                    ? "Guardando…"
+                                    : nextJourneyLesson
+                                      ? "Completar y continuar →"
+                                      : "Marcar completada"}
+                                </button>
+                              )}
+                              {activeJourneyLesson.completed && nextJourneyLesson && (
+                                <button
+                                  className="btn btn-primary"
+                                  type="button"
+                                  onClick={() => setActiveLessonId(nextJourneyLesson.id)}
+                                >
+                                  Continuar →
+                                </button>
+                              )}
+                            </div>
+                          </div>
+                        </>
+                      ) : (
+                        <div className="empty-state compact">
+                          <strong>Ruta lista</strong>
+                          <p>No hay más actividades para mostrar.</p>
                         </div>
-                      </article>
-                    ))}
+                      )}
+                    </article>
                   </div>
 
                   {employeeCourse.course.has_quiz && (
