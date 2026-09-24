@@ -469,3 +469,112 @@ def test_quiz_submission_requires_every_question(db):
             course_id=course.id,
             answers={},
         )
+
+
+
+def test_managed_video_finalize_persists_metadata_and_replaces_external_url(
+    db,
+    monkeypatch,
+):
+    course = service.create_course(
+        db,
+        title="Curso video",
+        description=None,
+        created_by_sub="admin-sub",
+    )
+    module = service.add_module(
+        db,
+        course_id=course.id,
+        title="Modulo",
+        description=None,
+    )
+    lesson = service.add_lesson(
+        db,
+        module_id=module.id,
+        title="Video",
+        description=None,
+        video_url="https://example.com/old.mp4",
+        duration_seconds=120,
+    )
+
+    monkeypatch.setattr(
+        service.training_media,
+        "verify_video_object",
+        lambda **kwargs: {
+            "key": kwargs["key"],
+            "content_type": kwargs["expected_content_type"],
+            "size_bytes": kwargs["expected_size_bytes"],
+        },
+    )
+    monkeypatch.setattr(
+        service.training_media,
+        "delete_video_object",
+        lambda key: None,
+    )
+
+    updated = service.finalize_lesson_video_upload(
+        db,
+        lesson_id=lesson.id,
+        key=f"training/lessons/{lesson.id}/video.mp4",
+        content_type="video/mp4",
+        size_bytes=1234,
+    )
+
+    assert updated.video_url is None
+    assert updated.video_storage_key.endswith("/video.mp4")
+    assert updated.video_content_type == "video/mp4"
+    assert updated.video_size_bytes == 1234
+
+
+def test_managed_video_payload_uses_temporary_playback_url(db, monkeypatch):
+    course = service.create_course(
+        db,
+        title="Curso playback",
+        description=None,
+        created_by_sub="admin-sub",
+    )
+    module = service.add_module(
+        db,
+        course_id=course.id,
+        title="Modulo",
+        description=None,
+    )
+    lesson = service.add_lesson(
+        db,
+        module_id=module.id,
+        title="Video",
+        description=None,
+        video_url=None,
+        duration_seconds=60,
+    )
+    lesson.video_storage_key = f"training/lessons/{lesson.id}/video.mp4"
+    lesson.video_content_type = "video/mp4"
+    lesson.video_size_bytes = 4321
+    db.commit()
+    db.refresh(lesson)
+
+    monkeypatch.setattr(
+        service.training_media,
+        "create_video_playback_url",
+        lambda key: f"https://signed.example/{key}",
+    )
+
+    payload = service.lesson_payload(lesson)
+
+    assert payload["video_source"] == "managed"
+    assert payload["video_url"].startswith("https://signed.example/")
+    assert payload["video_content_type"] == "video/mp4"
+    assert payload["video_size_bytes"] == 4321
+
+
+def test_published_course_rejects_new_video_upload(db):
+    course, _, lesson = _published_course(db)
+
+    with pytest.raises(service.TrainingStateError):
+        service.create_lesson_video_upload(
+            db,
+            lesson_id=lesson.id,
+            filename="video.mp4",
+            content_type="video/mp4",
+            size_bytes=100,
+        )
