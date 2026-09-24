@@ -46,6 +46,46 @@ function lessonTypeIcon(type) {
 }
 
 
+function recommendedSession(lessons, nextLessonId) {
+  const requiredPending = lessons.filter(
+    (lesson) => !lesson.is_optional && !lesson.completed,
+  );
+  if (requiredPending.length === 0) {
+    return { items: [], minutes: 0, hasUnknownDuration: false };
+  }
+
+  const startIndex = Math.max(
+    0,
+    requiredPending.findIndex((lesson) => lesson.id === nextLessonId),
+  );
+  const queue = requiredPending.slice(startIndex);
+  const items = [];
+  let minutes = 0;
+  let hasUnknownDuration = false;
+
+  for (const lesson of queue) {
+    if (items.length >= 3) break;
+
+    const lessonMinutes = Number(lesson.estimated_minutes);
+    const hasKnownMinutes = Number.isFinite(lessonMinutes) && lessonMinutes > 0;
+
+    if (items.length > 0 && hasKnownMinutes && minutes + lessonMinutes > 15) {
+      break;
+    }
+
+    items.push(lesson);
+    if (hasKnownMinutes) {
+      minutes += lessonMinutes;
+    } else {
+      hasUnknownDuration = true;
+      break;
+    }
+  }
+
+  return { items, minutes, hasUnknownDuration };
+}
+
+
 function Training() {
   const { principal, hasPermission } = useSession();
   const canManage = hasPermission("training.manage");
@@ -96,6 +136,7 @@ function Training() {
   const [activeLessonId, setActiveLessonId] = useState("");
   const [creatingPreset, setCreatingPreset] = useState(false);
   const [checklistSavingLessonId, setChecklistSavingLessonId] = useState("");
+  const [expandedModuleIds, setExpandedModuleIds] = useState([]);
 
   const loadHome = useCallback(async () => {
     setLoading(true);
@@ -197,6 +238,38 @@ function Training() {
   const nextJourneyLesson = activeJourneyIndex >= 0
     ? journeyLessons[activeJourneyIndex + 1] || null
     : null;
+
+  const nextRequiredJourneyLesson = useMemo(
+    () => journeyLessons.find(
+      (lesson) => lesson.id === employeeCourse?.course?.next_lesson_id,
+    ) || null,
+    [employeeCourse?.course?.next_lesson_id, journeyLessons],
+  );
+
+  const currentRecommendedSession = useMemo(
+    () => recommendedSession(
+      journeyLessons,
+      employeeCourse?.course?.next_lesson_id,
+    ),
+    [employeeCourse?.course?.next_lesson_id, journeyLessons],
+  );
+
+  const activeModuleId = activeJourneyLesson?.module?.id || "";
+
+  function toggleJourneyModule(moduleId) {
+    setExpandedModuleIds((current) => (
+      current.includes(moduleId)
+        ? current.filter((id) => id !== moduleId)
+        : [...current, moduleId]
+    ));
+  }
+
+  function openFinalQuiz() {
+    document.getElementById("training-final-quiz")?.scrollIntoView({
+      behavior: "smooth",
+      block: "start",
+    });
+  }
 
   const loadEmployeeCourse = useCallback(async (courseId) => {
     if (!courseId) {
@@ -1224,6 +1297,67 @@ function Training() {
                     </div>
                   </div>
 
+                  <section className="training-focus-session">
+                    <div className="training-focus-session-copy">
+                      <span className="eyebrow">Sesión recomendada</span>
+                      <h3>
+                        {currentRecommendedSession.items.length > 0
+                          ? `${currentRecommendedSession.items.length} actividad${currentRecommendedSession.items.length === 1 ? "" : "es"} para avanzar`
+                          : employeeCourse.course.has_quiz && !selectedAssignment?.quiz_result?.passed
+                            ? "Ya puedes presentar la evaluación"
+                            : "Ruta de contenido completada"}
+                      </h3>
+                      <p>
+                        {currentRecommendedSession.items.length > 0
+                          ? "Avanza en un bloque corto. Tu progreso queda guardado automáticamente."
+                          : employeeCourse.course.has_quiz && !selectedAssignment?.quiz_result?.passed
+                            ? "Terminaste el contenido obligatorio. Solo falta el quiz final."
+                            : "Completaste las actividades obligatorias de esta ruta."}
+                      </p>
+                    </div>
+
+                    {currentRecommendedSession.items.length > 0 && (
+                      <div className="training-focus-session-items">
+                        {currentRecommendedSession.items.map((lesson) => (
+                          <span key={lesson.id}>
+                            {lessonTypeIcon(lesson.content_type)} {lesson.title}
+                          </span>
+                        ))}
+                      </div>
+                    )}
+
+                    <div className="training-focus-session-actions">
+                      {currentRecommendedSession.items.length > 0 && (
+                        <span className="training-focus-session-time">
+                          {currentRecommendedSession.minutes > 0
+                            ? `~${currentRecommendedSession.minutes} min`
+                            : "Duración por confirmar"}
+                          {currentRecommendedSession.hasUnknownDuration
+                            && currentRecommendedSession.minutes > 0
+                            ? " + contenido por confirmar"
+                            : ""}
+                        </span>
+                      )}
+                      {currentRecommendedSession.items.length > 0 ? (
+                        <button
+                          className="btn btn-primary"
+                          type="button"
+                          onClick={() => setActiveLessonId(currentRecommendedSession.items[0].id)}
+                        >
+                          Continuar ahora →
+                        </button>
+                      ) : employeeCourse.course.has_quiz && !selectedAssignment?.quiz_result?.passed ? (
+                        <button
+                          className="btn btn-primary"
+                          type="button"
+                          onClick={openFinalQuiz}
+                        >
+                          Ir a evaluación final →
+                        </button>
+                      ) : null}
+                    </div>
+                  </section>
+
                   <div className="training-journey-layout">
                     <aside className="training-journey-steps" aria-label="Ruta del curso">
                       {employeeCourse.course.modules?.map((module) => (
@@ -1231,7 +1365,12 @@ function Training() {
                           className={`training-journey-module ${module.is_complete ? "is-complete" : ""}`}
                           key={module.id}
                         >
-                          <div className="training-journey-module-heading">
+                          <button
+                            className="training-journey-module-heading"
+                            type="button"
+                            aria-expanded={expandedModuleIds.includes(module.id) || activeModuleId === module.id}
+                            onClick={() => toggleJourneyModule(module.id)}
+                          >
                             <span>{module.is_complete ? "✓" : module.position}</span>
                             <div>
                               <strong>{module.title}</strong>
@@ -1242,36 +1381,41 @@ function Training() {
                                   : ` · ~${module.estimated_minutes} min`}
                               </small>
                             </div>
-                          </div>
-                          <div className="training-journey-lessons">
-                            {module.lessons?.map((lesson) => (
-                              <button
-                                key={lesson.id}
-                                type="button"
-                                className={`training-journey-lesson-button ${lesson.id === activeLessonId ? "active" : ""} ${lesson.completed ? "is-complete" : ""}`}
-                                onClick={() => setActiveLessonId(lesson.id)}
-                              >
-                                <span>{lesson.completed ? "✓" : lessonTypeIcon(lesson.content_type)}</span>
-                                <div>
-                                  <strong>{lesson.title}</strong>
-                                  <small>
-                                    {lessonTypeLabel(lesson.content_type)}
-                                    {lesson.estimated_minutes
-                                      ? ` · ~${lesson.estimated_minutes} min`
-                                      : " · duración por confirmar"}
-                                    {lesson.is_optional ? " · opcional" : ""}
-                                  </small>
-                                </div>
-                              </button>
-                            ))}
-                          </div>
+                            <i aria-hidden="true">
+                              {expandedModuleIds.includes(module.id) || activeModuleId === module.id ? "−" : "+"}
+                            </i>
+                          </button>
+                          {(expandedModuleIds.includes(module.id) || activeModuleId === module.id) && (
+                            <div className="training-journey-lessons">
+                              {module.lessons?.map((lesson) => (
+                                <button
+                                  key={lesson.id}
+                                  type="button"
+                                  className={`training-journey-lesson-button ${lesson.id === activeLessonId ? "active" : ""} ${lesson.completed ? "is-complete" : ""}`}
+                                  onClick={() => setActiveLessonId(lesson.id)}
+                                >
+                                  <span>{lesson.completed ? "✓" : lessonTypeIcon(lesson.content_type)}</span>
+                                  <div>
+                                    <strong>{lesson.title}</strong>
+                                    <small>
+                                      {lessonTypeLabel(lesson.content_type)}
+                                      {lesson.estimated_minutes
+                                        ? ` · ~${lesson.estimated_minutes} min`
+                                        : " · duración por confirmar"}
+                                      {lesson.is_optional ? " · opcional" : ""}
+                                    </small>
+                                  </div>
+                                </button>
+                              ))}
+                            </div>
+                          )}
                         </section>
                       ))}
                       {employeeCourse.course.has_quiz && (
                         <button
                           type="button"
                           className={`training-journey-quiz-step ${selectedAssignment?.quiz_result?.passed ? "is-complete" : ""}`}
-                          onClick={() => document.getElementById("training-final-quiz")?.scrollIntoView({ behavior: "smooth", block: "start" })}
+                          onClick={openFinalQuiz}
                         >
                           <span>{selectedAssignment?.quiz_result?.passed ? "✓" : "?"}</span>
                           <div>
@@ -1433,15 +1577,27 @@ function Training() {
                                       : "Marcar completada"}
                                 </button>
                               )}
-                              {activeJourneyLesson.completed && nextJourneyLesson && (
+                              {activeJourneyLesson.completed && nextRequiredJourneyLesson && (
                                 <button
                                   className="btn btn-primary"
                                   type="button"
-                                  onClick={() => setActiveLessonId(nextJourneyLesson.id)}
+                                  onClick={() => setActiveLessonId(nextRequiredJourneyLesson.id)}
                                 >
                                   Continuar →
                                 </button>
                               )}
+                              {activeJourneyLesson.completed
+                                && !nextRequiredJourneyLesson
+                                && employeeCourse.course.has_quiz
+                                && !selectedAssignment?.quiz_result?.passed && (
+                                  <button
+                                    className="btn btn-primary"
+                                    type="button"
+                                    onClick={openFinalQuiz}
+                                  >
+                                    Ir a evaluación final →
+                                  </button>
+                                )}
                             </div>
                           </div>
                         </>
