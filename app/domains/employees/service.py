@@ -108,6 +108,63 @@ def _cognito_sub_from_user(user: dict) -> str:
     return str(attrs.get("sub") or "").strip()
 
 
+def ensure_existing_cognito_profile(
+    db: Session,
+    *,
+    email: str,
+    created_by_sub: str | None = None,
+    cognito_client=None,
+) -> UserProfile:
+    """Materialize an existing Cognito user as an internal profile."""
+
+    email = normalize_email(email)
+    existing = db.query(UserProfile).filter(UserProfile.email == email).one_or_none()
+    if existing is not None:
+        return existing
+
+    client = cognito_client or get_admin_cognito_client()
+    try:
+        user = client.admin_get_user(
+            UserPoolId=_user_pool_id(),
+            Username=email,
+        )
+    except ClientError as exc:
+        code = str(exc.response.get("Error", {}).get("Code") or "")
+        raise EmployeeProvisioningError(code or "Cognito error") from exc
+
+    raw_attrs = user.get("UserAttributes") or []
+    attrs = {
+        item.get("Name"): item.get("Value")
+        for item in raw_attrs
+        if item.get("Name")
+    }
+    sub = str(attrs.get("sub") or "").strip()
+    if not sub:
+        raise EmployeeIdentityError("Cognito did not return a stable subject")
+
+    profile = (
+        db.query(UserProfile)
+        .filter(UserProfile.cognito_sub == sub)
+        .one_or_none()
+    )
+    if profile is None:
+        profile = UserProfile(
+            cognito_sub=sub,
+            email=email,
+            first_name=(str(attrs.get("given_name") or "").strip() or None),
+            last_name=(str(attrs.get("family_name") or "").strip() or None),
+            status="ACTIVE",
+            created_by_sub=created_by_sub,
+        )
+        db.add(profile)
+    else:
+        profile.email = email
+
+    db.commit()
+    db.refresh(profile)
+    return profile
+
+
 def create_employee(
     db: Session,
     *,
