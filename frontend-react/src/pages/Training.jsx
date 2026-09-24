@@ -16,6 +16,16 @@ function isDirectVideo(url) {
 }
 
 
+function googleDrivePreviewUrl(url) {
+  const match = String(url || "").match(
+    /^https:\/\/drive\.google\.com\/file\/d\/([^/]+)\//i,
+  );
+  return match
+    ? `https://drive.google.com/file/d/${match[1]}/preview`
+    : "";
+}
+
+
 function lessonTypeLabel(type) {
   return {
     VIDEO: "Video",
@@ -1302,6 +1312,24 @@ function Training() {
                                   <source src={activeJourneyLesson.video_url} />
                                   Tu navegador no puede reproducir este video.
                                 </video>
+                              ) : googleDrivePreviewUrl(activeJourneyLesson.video_url) ? (
+                                <>
+                                  <iframe
+                                    className="training-drive-player"
+                                    src={googleDrivePreviewUrl(activeJourneyLesson.video_url)}
+                                    title={`Video: ${activeJourneyLesson.title}`}
+                                    allow="autoplay; encrypted-media"
+                                    allowFullScreen
+                                  />
+                                  <a
+                                    className="training-drive-fallback"
+                                    href={activeJourneyLesson.video_url}
+                                    target="_blank"
+                                    rel="noreferrer"
+                                  >
+                                    ¿No carga el video? Abrir en Google Drive ↗
+                                  </a>
+                                </>
                               ) : (
                                 <a
                                   className="btn btn-ghost"
