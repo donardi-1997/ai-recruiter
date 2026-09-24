@@ -1,5 +1,7 @@
 """Employee administration tests."""
 
+from datetime import date
+
 import pytest
 from fastapi import HTTPException
 from sqlalchemy import create_engine
@@ -111,13 +113,16 @@ def test_create_employee_provisions_cognito_and_employee_role(db):
         last_name="Employee",
         job_title="Comercial",
         department="Ventas",
+        hire_date=date(2026, 9, 24),
         role_code=EMPLOYEE,
         created_by_sub="admin-sub",
         cognito_client=cognito,
     )
 
     assert profile.email == "new.employee@asiati.com.co"
+    assert profile.onboarding_status == "PENDING"
     assert service.roles_for_profile(db, profile.id) == [EMPLOYEE]
+    assert profile.hire_date == date(2026, 9, 24)
     assert cognito.created[0]["UserPoolId"] == "pool-test"
     assert cognito.created[0]["DesiredDeliveryMediums"] == ["EMAIL"]
     assert cognito.deleted == []
@@ -206,6 +211,7 @@ def test_existing_cognito_user_can_be_materialized_for_role_bootstrap(db):
 
     assert profile.email == "existing@asiati.com.co"
     assert profile.cognito_sub == "sub-existing@asiati.com.co"
+    assert profile.onboarding_status == "NOT_REQUIRED"
     assert service.roles_for_profile(db, profile.id) == []
 
 
@@ -267,3 +273,44 @@ def test_role_and_status_operations_cannot_target_self():
         _enforce_not_self(principal, "same-id")
 
     assert error.value.status_code == 409
+
+
+
+def test_employee_summary_is_available_to_admin_dashboard(db):
+    pending = _profile(db, email="pending@asiati.com.co", role=EMPLOYEE)
+    pending.onboarding_status = "PENDING"
+
+    in_progress = _profile(db, email="progress@asiati.com.co", role=EMPLOYEE)
+    in_progress.onboarding_status = "IN_PROGRESS"
+
+    completed = _profile(db, email="completed@asiati.com.co", role=EMPLOYEE)
+    completed.onboarding_status = "COMPLETED"
+
+    admin = _profile(db, email="admin@asiati.com.co", role=ADMIN)
+    admin.onboarding_status = "NOT_REQUIRED"
+    db.commit()
+
+    summary = service.employee_summary(db)
+
+    assert summary["employees_total"] == 4
+    assert summary["active"] == 4
+    assert summary["onboarding"] == {
+        "total": 3,
+        "pending": 1,
+        "in_progress": 1,
+        "completed": 1,
+        "completion_percent": 33,
+    }
+
+
+def test_update_employee_can_change_hire_date(db):
+    employee = _profile(db, email="hire-date@asiati.com.co", role=EMPLOYEE)
+
+    updated = service.update_employee(
+        db,
+        employee.id,
+        changes={"hire_date": date(2026, 9, 30)},
+        cognito_client=FakeCognitoClient(),
+    )
+
+    assert updated.hire_date == date(2026, 9, 30)
