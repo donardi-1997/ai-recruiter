@@ -92,6 +92,29 @@ def _module_applies(
     return True
 
 
+def _lesson_visible_to_employee(lesson: TrainingLesson) -> bool:
+    content_type = str(lesson.content_type or "VIDEO").strip().upper()
+    if content_type == "VIDEO":
+        return bool(lesson.video_storage_key or lesson.video_url)
+    if content_type == "RESOURCE":
+        return bool(lesson.external_url)
+    return True
+
+
+def _module_lessons(
+    module: TrainingModule,
+    employee: UserProfile | None = None,
+) -> list[TrainingLesson]:
+    lessons = sorted(module.lessons, key=lambda lesson: lesson.position)
+    if employee is None:
+        return lessons
+    return [
+        lesson
+        for lesson in lessons
+        if _lesson_visible_to_employee(lesson)
+    ]
+
+
 def _applicable_modules(
     course: TrainingCourse,
     employee: UserProfile | None = None,
@@ -102,7 +125,11 @@ def _applicable_modules(
         if _module_applies(module, employee)
     ]
     if employee is not None:
-        modules = [module for module in modules if module.lessons]
+        modules = [
+            module
+            for module in modules
+            if _module_lessons(module, employee)
+        ]
     return modules
 
 
@@ -121,7 +148,7 @@ def _required_lessons(
     return [
         lesson
         for module in _applicable_modules(course, employee)
-        for lesson in sorted(module.lessons, key=lambda item: item.position)
+        for lesson in _module_lessons(module, employee)
         if not lesson.is_optional
     ]
 
@@ -158,9 +185,10 @@ def module_payload(
     module: TrainingModule,
     *,
     completed_lesson_ids: set[str] | None = None,
+    employee: UserProfile | None = None,
 ) -> dict:
     completed_lesson_ids = completed_lesson_ids or set()
-    lessons = sorted(module.lessons, key=lambda lesson: lesson.position)
+    lessons = _module_lessons(module, employee)
     required = [lesson for lesson in lessons if not lesson.is_optional]
     completed_required = [
         lesson for lesson in required if lesson.id in completed_lesson_ids
@@ -281,7 +309,10 @@ def course_payload(
         "is_onboarding": bool(course.is_onboarding),
         "module_count": module_count,
         "lesson_count": lesson_count,
-        "content_item_count": sum(len(module.lessons) for module in modules),
+        "content_item_count": sum(
+            len(_module_lessons(module, employee))
+            for module in modules
+        ),
         "completed_lessons": completed_count,
         "progress_percent": progress_percent,
         "estimated_minutes": estimated_minutes,
@@ -298,6 +329,7 @@ def course_payload(
             module_payload(
                 module,
                 completed_lesson_ids=completed_lesson_ids,
+                employee=employee,
             )
             for module in modules
         ]
