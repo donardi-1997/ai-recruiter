@@ -487,22 +487,19 @@ function Training() {
   }
 
   async function completeLesson(lessonId) {
-    const currentIndex = journeyLessons.findIndex((lesson) => lesson.id === lessonId);
-    const nextId = currentIndex >= 0
-      ? journeyLessons[currentIndex + 1]?.id || ""
-      : "";
     setSaving(true);
     setError("");
     try {
       const { data } = await api.post(
         `/training/me/lessons/${lessonId}/complete`,
       );
+      const nextRequiredId = data.course?.next_lesson_id || "";
       setEmployeeCourse(data);
       await Promise.all([
         loadHome(),
         loadEmployeeCourse(data.course.id),
       ]);
-      if (nextId) setActiveLessonId(nextId);
+      if (nextRequiredId) setActiveLessonId(nextRequiredId);
     } catch (err) {
       setError(err.response?.data?.detail || "No fue posible guardar el avance.");
     } finally {
