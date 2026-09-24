@@ -916,6 +916,84 @@ function Training() {
                       </article>
                     ))}
                   </div>
+
+                  {employeeCourse.course.has_quiz && (
+                    <section className="training-quiz-employee">
+                      <div className="training-quiz-employee-heading">
+                        <div>
+                          <span className="eyebrow">Evaluación final</span>
+                          <h3>{employeeQuiz?.title || "Quiz del curso"}</h3>
+                        </div>
+                        {employeeQuiz && (
+                          <span className="training-status training-status-published">
+                            Mínimo {employeeQuiz.passing_score}%
+                          </span>
+                        )}
+                      </div>
+
+                      {employeeCourse.course.completed_lessons < employeeCourse.course.lesson_count ? (
+                        <div className="training-quiz-lock">
+                          <strong>Completa todas las lecciones para habilitar la evaluación.</strong>
+                        </div>
+                      ) : employeeQuiz ? (
+                        <form className="training-quiz-attempt-form" onSubmit={submitQuiz}>
+                          {employeeQuiz.attempts?.length > 0 && (
+                            <div className="training-quiz-attempt-history">
+                              <span>Intentos anteriores</span>
+                              {employeeQuiz.attempts.map((attempt) => (
+                                <b className={attempt.passed ? "score-positive" : "score-negative"} key={attempt.id}>
+                                  #{attempt.attempt_number}: {attempt.score_percent}% {attempt.passed ? "✓" : ""}
+                                </b>
+                              ))}
+                            </div>
+                          )}
+
+                          {employeeQuiz.questions.map((question, questionIndex) => (
+                            <fieldset className="training-quiz-question" key={question.id}>
+                              <legend>{questionIndex + 1}. {question.prompt}</legend>
+                              {question.options.map((option, optionIndex) => (
+                                <label key={option}>
+                                  <input
+                                    type="radio"
+                                    name={`quiz-${question.id}`}
+                                    value={optionIndex}
+                                    checked={quizAnswers[question.id] === optionIndex}
+                                    onChange={() => setQuizAnswers((current) => ({
+                                      ...current,
+                                      [question.id]: optionIndex,
+                                    }))}
+                                    required
+                                  />
+                                  <span>{option}</span>
+                                </label>
+                              ))}
+                            </fieldset>
+                          ))}
+
+                          {quizResult && (
+                            <div className={`training-quiz-result ${quizResult.attempt.passed ? "is-pass" : "is-fail"}`}>
+                              <strong>{quizResult.attempt.score_percent}%</strong>
+                              <span>
+                                {quizResult.attempt.passed
+                                  ? "Evaluación aprobada. Curso completado."
+                                  : `Aún no alcanzas el ${quizResult.passing_score}%. Puedes intentarlo de nuevo.`}
+                              </span>
+                            </div>
+                          )}
+
+                          <button
+                            className="btn btn-primary"
+                            type="submit"
+                            disabled={saving || Object.keys(quizAnswers).length !== employeeQuiz.question_count}
+                          >
+                            {saving ? "Enviando…" : "Enviar evaluación"}
+                          </button>
+                        </form>
+                      ) : (
+                        <div className="page-loading compact-loading"><span /> Preparando evaluación…</div>
+                      )}
+                    </section>
+                  )}
                 </>
               ) : (
                 <div className="empty-state">
