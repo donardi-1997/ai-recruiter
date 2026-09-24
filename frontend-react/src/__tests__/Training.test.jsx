@@ -159,6 +159,71 @@ describe("Training platform", () => {
     });
   });
 
+  it("embeds Google Drive onboarding videos inside the journey", async () => {
+    useSession.mockReturnValue({
+      principal: {
+        profile: { id: "employee-1", first_name: "Ana" },
+      },
+      hasPermission: (permission) => [
+        "training.read",
+        "training.consume",
+      ].includes(permission),
+    });
+
+    const driveAssignment = {
+      ...assignment,
+      course: {
+        ...assignment.course,
+        next_lesson_id: "drive-lesson",
+      },
+    };
+    const driveDetail = {
+      ...employeeDetail,
+      course: {
+        ...employeeDetail.course,
+        next_lesson_id: "drive-lesson",
+        modules: [
+          {
+            ...employeeDetail.course.modules[0],
+            title: "Así trabajamos",
+            lessons: [
+              {
+                ...employeeDetail.course.modules[0].lessons[0],
+                id: "drive-lesson",
+                title: "Módulo 4 · Permisos y vacaciones",
+                video_url: "https://drive.google.com/file/d/1qklJ9U8raurFmxsQMrEL3az_Ez0zpyKs/view?usp=drivesdk",
+              },
+            ],
+          },
+        ],
+      },
+    };
+
+    api.get.mockImplementation((url) => {
+      if (url === "/training/me") {
+        return Promise.resolve({ data: { items: [driveAssignment] } });
+      }
+      if (url === "/training/me/courses/course-1") {
+        return Promise.resolve({ data: driveDetail });
+      }
+      return Promise.reject(new Error(`Unexpected GET ${url}`));
+    });
+
+    renderPage();
+
+    const player = await screen.findByTitle("Video: Módulo 4 · Permisos y vacaciones");
+    expect(player).toHaveAttribute(
+      "src",
+      "https://drive.google.com/file/d/1qklJ9U8raurFmxsQMrEL3az_Ez0zpyKs/preview",
+    );
+    expect(
+      screen.getByRole("link", { name: /Abrir en Google Drive/i }),
+    ).toHaveAttribute(
+      "href",
+      "https://drive.google.com/file/d/1qklJ9U8raurFmxsQMrEL3az_Ez0zpyKs/view?usp=drivesdk",
+    );
+  });
+
   it("restores and saves onboarding checklist progress", async () => {
     useSession.mockReturnValue({
       principal: {
