@@ -21,6 +21,7 @@ function Training() {
   const canManage = hasPermission("training.manage");
   const canAssign = hasPermission("training.assign");
   const canViewResults = hasPermission("training.results.read");
+  const canTakeQuiz = hasPermission("training.quiz.take");
   const firstName = principal?.profile?.first_name || "equipo";
 
   const [myAssignments, setMyAssignments] = useState([]);
@@ -40,6 +41,18 @@ function Training() {
   const [moduleForm, setModuleForm] = useState({ title: "", description: "" });
   const [lessonForms, setLessonForms] = useState({});
   const [assignEmployeeId, setAssignEmployeeId] = useState("");
+  const [quizForm, setQuizForm] = useState({
+    title: "Evaluación final",
+    passing_score: "70",
+  });
+  const [questionForm, setQuestionForm] = useState({
+    prompt: "",
+    options: ["", "", "", ""],
+    correct_option: "0",
+  });
+  const [employeeQuiz, setEmployeeQuiz] = useState(null);
+  const [quizAnswers, setQuizAnswers] = useState({});
+  const [quizResult, setQuizResult] = useState(null);
 
   const loadHome = useCallback(async () => {
     setLoading(true);
@@ -119,18 +132,32 @@ function Training() {
   const loadEmployeeCourse = useCallback(async (courseId) => {
     if (!courseId) {
       setEmployeeCourse(null);
+      setEmployeeQuiz(null);
       return;
     }
     setDetailLoading(true);
     try {
       const { data } = await api.get(`/training/me/courses/${courseId}`);
       setEmployeeCourse(data);
+      setQuizResult(null);
+      setQuizAnswers({});
+
+      const lessonsComplete = (
+        data.course?.lesson_count > 0
+        && data.course?.completed_lessons >= data.course?.lesson_count
+      );
+      if (canTakeQuiz && data.course?.has_quiz && lessonsComplete) {
+        const quizResponse = await api.get(`/training/me/courses/${courseId}/quiz`);
+        setEmployeeQuiz(quizResponse.data);
+      } else {
+        setEmployeeQuiz(null);
+      }
     } catch (err) {
       setError(err.response?.data?.detail || "No fue posible abrir el curso.");
     } finally {
       setDetailLoading(false);
     }
-  }, []);
+  }, [canTakeQuiz]);
 
   useEffect(() => {
     const timeoutId = window.setTimeout(() => {
@@ -299,9 +326,88 @@ function Training() {
         `/training/me/lessons/${lessonId}/complete`,
       );
       setEmployeeCourse(data);
-      await loadHome();
+      await Promise.all([
+        loadHome(),
+        loadEmployeeCourse(data.course.id),
+      ]);
     } catch (err) {
       setError(err.response?.data?.detail || "No fue posible guardar el avance.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function createQuiz(event) {
+    event.preventDefault();
+    if (!selectedCourseId) return;
+    setSaving(true);
+    setError("");
+    try {
+      await api.post(`/training/courses/${selectedCourseId}/quiz`, {
+        title: quizForm.title.trim(),
+        passing_score: Number.parseInt(quizForm.passing_score, 10),
+      });
+      await loadAdminCourse(selectedCourseId);
+    } catch (err) {
+      setError(err.response?.data?.detail || "No fue posible crear la evaluación.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  function updateQuestionOption(index, value) {
+    setQuestionForm((current) => ({
+      ...current,
+      options: current.options.map((option, optionIndex) => (
+        optionIndex === index ? value : option
+      )),
+    }));
+  }
+
+  async function addQuizQuestion(event) {
+    event.preventDefault();
+    const quizId = selectedCourse?.quiz?.id;
+    if (!quizId) return;
+    setSaving(true);
+    setError("");
+    try {
+      await api.post(`/training/quizzes/${quizId}/questions`, {
+        prompt: questionForm.prompt.trim(),
+        options: questionForm.options.map((option) => option.trim()),
+        correct_option: Number.parseInt(questionForm.correct_option, 10),
+      });
+      setQuestionForm({
+        prompt: "",
+        options: ["", "", "", ""],
+        correct_option: "0",
+      });
+      await loadAdminCourse(selectedCourseId);
+    } catch (err) {
+      setError(err.response?.data?.detail || "No fue posible agregar la pregunta.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function submitQuiz(event) {
+    event.preventDefault();
+    const courseId = employeeCourse?.course?.id;
+    if (!courseId || !employeeQuiz) return;
+    setSaving(true);
+    setError("");
+    try {
+      const { data } = await api.post(
+        `/training/me/courses/${courseId}/quiz/attempts`,
+        { answers: quizAnswers },
+      );
+      setQuizResult(data);
+      await Promise.all([
+        loadHome(),
+        loadEmployeeCourse(courseId),
+      ]);
+      setQuizResult(data);
+    } catch (err) {
+      setError(err.response?.data?.detail || "No fue posible enviar la evaluación.");
     } finally {
       setSaving(false);
     }
