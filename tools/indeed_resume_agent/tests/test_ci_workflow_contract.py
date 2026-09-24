@@ -34,3 +34,12 @@ def test_agent_workflow_builds_windows_onedir_and_uploads_artifact():
     assert "ASIATI-Resume-Agent-Windows" in text
     assert "--self-test" in text
     assert "Execute packaged binary self-test" in text
+
+
+def test_primary_ci_skips_agent_jobs_when_agent_paths_are_unchanged():
+    text = CI_WORKFLOW.read_text(encoding="utf-8")
+    assert "Detect Resume Agent changes" in text
+    assert "resume_agent: ${{ steps.filter.outputs.resume_agent }}" in text
+    assert "if: needs.changes.outputs.resume_agent == 'true'" in text
+    assert "Resume Agent tests (Linux)" in text
+    assert "Resume Agent (Windows + Chrome)" in text
