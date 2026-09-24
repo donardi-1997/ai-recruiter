@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 
 import api from "../api/client";
 import { useSession } from "../context/SessionContext";
@@ -24,7 +24,7 @@ function Employees() {
   const [formOpen, setFormOpen] = useState(false);
   const [form, setForm] = useState(EMPTY_FORM);
 
-  async function loadEmployees() {
+  const loadEmployees = useCallback(async () => {
     setLoading(true);
     setError("");
     try {
@@ -38,12 +38,12 @@ function Employees() {
     } finally {
       setLoading(false);
     }
-  }
+  }, [query, statusFilter]);
 
   useEffect(() => {
     const timeoutId = window.setTimeout(loadEmployees, 250);
     return () => window.clearTimeout(timeoutId);
-  }, [query, statusFilter]);
+  }, [loadEmployees]);
 
   const stats = useMemo(() => {
     const active = employees.filter((employee) => employee.status === "ACTIVE").length;
