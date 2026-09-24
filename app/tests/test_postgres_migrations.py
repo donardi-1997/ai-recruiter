@@ -316,10 +316,17 @@ def test_alembic_head_builds_current_postgres_schema():
             "content_type",
             "external_url",
             "estimated_minutes",
+            "checklist_items",
             "is_optional",
         }.issubset(training_lesson_columns)
 
+        training_progress_columns = {
+            column["name"]
+            for column in inspector.get_columns("training_lesson_progress")
+        }
+        assert "details" in training_progress_columns
+
         assert admin_score_grants == 0
-        assert revision == "023"
+        assert revision == "024"
     finally:
         engine.dispose()
