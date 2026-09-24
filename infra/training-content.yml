@@ -1,0 +1,90 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: Private training media bucket for AI Recruiter.
+
+Parameters:
+  RuntimeRoleArn:
+    Type: String
+    Description: ARN of the existing AiRecruiterBedrockRuntimeRole used by the API.
+
+Resources:
+  TrainingContentBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName:
+        Fn::Sub: "ai-recruiter-training-${AWS::AccountId}-${AWS::Region}"
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        IgnorePublicAcls: true
+        BlockPublicPolicy: true
+        RestrictPublicBuckets: true
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      CorsConfiguration:
+        CorsRules:
+          - AllowedMethods:
+              - POST
+              - GET
+              - HEAD
+            AllowedOrigins:
+              - https://ai.adrianguerra.net
+              - https://air.adrianguerra.net
+              - https://dzcwl3yhv133t.cloudfront.net
+              - http://localhost:5173
+              - http://localhost:5174
+              - http://localhost:5175
+            AllowedHeaders:
+              - "*"
+            ExposedHeaders:
+              - ETag
+            MaxAge: 3600
+      Tags:
+        - Key: Project
+          Value: ai-recruiter
+        - Key: Purpose
+          Value: training-media
+
+  TrainingContentBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket:
+        Ref: TrainingContentBucket
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: RuntimeReadTrainingContent
+            Effect: Allow
+            Principal:
+              AWS:
+                Ref: RuntimeRoleArn
+            Action:
+              - s3:GetObject
+            Resource:
+              Fn::Sub:
+                - "${BucketArn}/training/*"
+                - BucketArn:
+                    Fn::GetAtt:
+                      - TrainingContentBucket
+                      - Arn
+          - Sid: RuntimeManageTrainingContent
+            Effect: Allow
+            Principal:
+              AWS:
+                Ref: RuntimeRoleArn
+            Action:
+              - s3:PutObject
+              - s3:DeleteObject
+            Resource:
+              Fn::Sub:
+                - "${BucketArn}/training/*"
+                - BucketArn:
+                    Fn::GetAtt:
+                      - TrainingContentBucket
+                      - Arn
+
+Outputs:
+  TrainingContentBucket:
+    Description: Private S3 bucket for persistent training media.
+    Value:
+      Ref: TrainingContentBucket
