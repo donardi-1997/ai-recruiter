@@ -14,6 +14,10 @@ class CandidateResponse(BaseModel):
     created_at: datetime | None = None
     metadata: dict[str, Any] | None = None
     filename: str | None = None
+    is_banned: bool = False
+    banned_at: datetime | None = None
+    banned_by_sub: str | None = None
+    banned_reason: str | None = None
 
     model_config = {"from_attributes": True}
 
