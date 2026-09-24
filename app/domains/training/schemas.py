@@ -13,6 +13,14 @@ class CreateCourseRequest(BaseModel):
     def normalize_title(cls, value: str) -> str:
         return value.strip()
 
+    @field_validator("audience_job_title", "audience_department")
+    @classmethod
+    def normalize_optional_scope(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        normalized = value.strip()
+        return normalized or None
+
 
 class UpdateCourseRequest(BaseModel):
     title: str | None = Field(default=None, min_length=2, max_length=200)
@@ -39,6 +47,8 @@ class UpdateCourseRequest(BaseModel):
 class CreateModuleRequest(BaseModel):
     title: str = Field(min_length=2, max_length=200)
     description: str | None = Field(default=None, max_length=4000)
+    audience_job_title: str | None = Field(default=None, max_length=200)
+    audience_department: str | None = Field(default=None, max_length=200)
 
     @field_validator("title")
     @classmethod
@@ -51,13 +61,25 @@ class CreateLessonRequest(BaseModel):
     description: str | None = Field(default=None, max_length=4000)
     video_url: str | None = Field(default=None, max_length=2000)
     duration_seconds: int | None = Field(default=None, ge=1, le=86_400)
+    content_type: str = "VIDEO"
+    external_url: str | None = Field(default=None, max_length=2000)
+    estimated_minutes: int | None = Field(default=None, ge=1, le=1440)
+    is_optional: bool = False
 
     @field_validator("title")
     @classmethod
     def normalize_title(cls, value: str) -> str:
         return value.strip()
 
-    @field_validator("video_url")
+    @field_validator("content_type")
+    @classmethod
+    def validate_content_type(cls, value: str) -> str:
+        normalized = value.strip().upper()
+        if normalized not in {"VIDEO", "ARTICLE", "RESOURCE", "CHECKLIST"}:
+            raise ValueError("unsupported lesson content_type")
+        return normalized
+
+    @field_validator("video_url", "external_url")
     @classmethod
     def validate_video_url(cls, value: str | None) -> str | None:
         if value is None:
