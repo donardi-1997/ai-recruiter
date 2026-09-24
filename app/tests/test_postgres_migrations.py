@@ -255,7 +255,17 @@ def test_alembic_head_builds_current_postgres_schema():
             "void_reason",
         }.issubset(score_event_columns)
 
+        training_lesson_columns = {
+            column["name"]
+            for column in inspector.get_columns("training_lessons")
+        }
+        assert {
+            "video_storage_key",
+            "video_content_type",
+            "video_size_bytes",
+        }.issubset(training_lesson_columns)
+
         assert admin_score_grants == 0
-        assert revision == "019"
+        assert revision == "020"
     finally:
         engine.dispose()
