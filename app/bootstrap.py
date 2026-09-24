@@ -14,6 +14,7 @@ from app.domains.candidate_ingestion.indeed_agent_router import router as indeed
 from app.domains.candidate_ingestion.router import router as candidate_ingestion_router
 from app.domains.candidates.router import assign_router, router as candidates_router
 from app.domains.evaluations.router import router as evaluations_router
+from app.domains.employees.router import router as employees_router
 from app.domains.indeed.router import router as indeed_router
 from app.domains.jobs.router import router as jobs_router
 from app.domains.ranking.router import router as ranking_router
@@ -44,6 +45,7 @@ def create_app() -> FastAPI:
     app.include_router(candidates_router)
     app.include_router(assign_router)
     app.include_router(evaluations_router)
+    app.include_router(employees_router)
     app.include_router(ranking_router)
     app.include_router(candidate_imports_router)
     app.include_router(candidate_ingestion_router)
