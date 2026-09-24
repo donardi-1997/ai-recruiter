@@ -55,7 +55,7 @@ def evaluate_candidate_for_owner(
         candidate_id,
         owner_sub,
     )
-    if candidate.is_banned:
+    if getattr(candidate, "is_banned", False):
         raise CandidateBanned(candidate_id)
 
     job = jobs_repository.get_job(db, job_id, owner_sub=owner_sub)
