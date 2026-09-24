@@ -102,6 +102,11 @@ def get_import_queue_url() -> str:
     return os.environ["IMPORT_QUEUE_URL"]
 
 
+def get_training_content_bucket() -> str:
+    """Return the private bucket used for persistent training media."""
+    return os.environ["TRAINING_CONTENT_BUCKET"]
+
+
 def get_import_evaluation_concurrency() -> int:
     """Return the bounded number of candidate evaluations run concurrently."""
     return int(os.getenv("IMPORT_EVALUATION_CONCURRENCY", "3"))
