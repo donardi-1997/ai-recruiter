@@ -13,14 +13,6 @@ class CreateCourseRequest(BaseModel):
     def normalize_title(cls, value: str) -> str:
         return value.strip()
 
-    @field_validator("audience_job_title", "audience_department")
-    @classmethod
-    def normalize_optional_scope(cls, value: str | None) -> str | None:
-        if value is None:
-            return None
-        normalized = value.strip()
-        return normalized or None
-
 
 class UpdateCourseRequest(BaseModel):
     title: str | None = Field(default=None, min_length=2, max_length=200)
@@ -55,6 +47,14 @@ class CreateModuleRequest(BaseModel):
     def normalize_title(cls, value: str) -> str:
         return value.strip()
 
+    @field_validator("audience_job_title", "audience_department")
+    @classmethod
+    def normalize_optional_scope(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        normalized = value.strip()
+        return normalized or None
+
 
 class CreateLessonRequest(BaseModel):
     title: str = Field(min_length=2, max_length=200)
@@ -88,7 +88,7 @@ class CreateLessonRequest(BaseModel):
         if not normalized:
             return None
         if not normalized.startswith("https://"):
-            raise ValueError("video_url must use https")
+            raise ValueError("URL must use https")
         return normalized
 
 
