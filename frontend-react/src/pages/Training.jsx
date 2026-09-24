@@ -611,6 +611,122 @@ function Training() {
                   )}
                 </section>
 
+                <section className="panel training-quiz-admin">
+                  <div className="panel-heading">
+                    <div>
+                      <span className="eyebrow">Evaluación</span>
+                      <h2>Quiz del curso</h2>
+                    </div>
+                    {selectedCourse.quiz && (
+                      <span className="training-status training-status-published">
+                        Aprueba con {selectedCourse.quiz.passing_score}%
+                      </span>
+                    )}
+                  </div>
+
+                  {!selectedCourse.quiz ? (
+                    selectedCourse.status === "DRAFT" ? (
+                      <form className="training-quiz-create-form" onSubmit={createQuiz}>
+                        <div className="training-inline-grid">
+                          <input
+                            aria-label="Título de la evaluación"
+                            value={quizForm.title}
+                            onChange={(event) => setQuizForm({ ...quizForm, title: event.target.value })}
+                            placeholder="Evaluación final"
+                            required
+                          />
+                          <input
+                            aria-label="Puntaje mínimo para aprobar"
+                            type="number"
+                            min="1"
+                            max="100"
+                            value={quizForm.passing_score}
+                            onChange={(event) => setQuizForm({ ...quizForm, passing_score: event.target.value })}
+                            required
+                          />
+                        </div>
+                        <button className="btn btn-secondary" type="submit" disabled={saving}>
+                          + Crear evaluación
+                        </button>
+                      </form>
+                    ) : (
+                      <div className="empty-state compact">
+                        <strong>Curso sin evaluación</strong>
+                        <p>Este curso se completa únicamente con sus lecciones.</p>
+                      </div>
+                    )
+                  ) : (
+                    <div className="training-quiz-admin-body">
+                      <div className="training-quiz-summary">
+                        <div>
+                          <strong>{selectedCourse.quiz.title}</strong>
+                          <small>{selectedCourse.quiz.question_count} preguntas · mínimo {selectedCourse.quiz.passing_score}%</small>
+                        </div>
+                      </div>
+
+                      {selectedCourse.quiz.questions?.length > 0 && (
+                        <div className="training-quiz-question-list">
+                          {selectedCourse.quiz.questions.map((question) => (
+                            <article className="training-quiz-question-admin" key={question.id}>
+                              <span>{question.position}</span>
+                              <div>
+                                <strong>{question.prompt}</strong>
+                                <ol type="A">
+                                  {question.options.map((option, index) => (
+                                    <li className={index === question.correct_option ? "is-correct" : ""} key={option}>
+                                      {option}
+                                    </li>
+                                  ))}
+                                </ol>
+                              </div>
+                            </article>
+                          ))}
+                        </div>
+                      )}
+
+                      {selectedCourse.status === "DRAFT" && (
+                        <form className="training-quiz-question-form" onSubmit={addQuizQuestion}>
+                          <strong>Nueva pregunta</strong>
+                          <textarea
+                            aria-label="Pregunta de evaluación"
+                            rows="2"
+                            value={questionForm.prompt}
+                            onChange={(event) => setQuestionForm({ ...questionForm, prompt: event.target.value })}
+                            placeholder="Escribe la pregunta"
+                            required
+                          />
+                          <div className="training-quiz-options-grid">
+                            {questionForm.options.map((option, index) => (
+                              <input
+                                key={index}
+                                aria-label={`Opción ${index + 1}`}
+                                value={option}
+                                onChange={(event) => updateQuestionOption(index, event.target.value)}
+                                placeholder={`Opción ${index + 1}`}
+                                required
+                              />
+                            ))}
+                          </div>
+                          <div className="training-quiz-question-actions">
+                            <select
+                              aria-label="Respuesta correcta"
+                              value={questionForm.correct_option}
+                              onChange={(event) => setQuestionForm({ ...questionForm, correct_option: event.target.value })}
+                            >
+                              {questionForm.options.map((_, index) => (
+                                <option key={index} value={String(index)}>Correcta: opción {index + 1}</option>
+                              ))}
+                            </select>
+                            <button className="btn btn-secondary" type="submit" disabled={saving}>
+                              Agregar pregunta
+                            </button>
+                          </div>
+                        </form>
+                      )}
+                    </div>
+                  )}
+                </section>
+
                 {canAssign && (
                   <section className="panel">
                     <div className="panel-heading">
@@ -655,6 +771,12 @@ function Training() {
                                   || assignment.employee.email}
                               </strong>
                               <small>{assignment.employee.job_title || assignment.employee.department || assignment.employee.email}</small>
+                              {assignment.quiz_result && (
+                                <small>
+                                  Quiz: {assignment.quiz_result.latest_score ?? "—"}%
+                                  {assignment.quiz_result.passed ? " · aprobado" : assignment.quiz_result.attempt_count ? " · pendiente" : " · sin intento"}
+                                </small>
+                              )}
                             </div>
                             <div className="training-result-progress">
                               <span>{assignment.course.progress_percent}%</span>
