@@ -5,7 +5,7 @@ import logging
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
-from app.deps import get_current_user, get_db
+from app.deps import get_db, require_permission
 from app.domains.candidate_imports.exceptions import IdentityConflict
 from app.domains.indeed import service
 from app.domains.indeed.exceptions import (
@@ -46,7 +46,7 @@ def _translate(exc: Exception) -> HTTPException:
 
 
 @router.get("/api/integrations/indeed/status")
-def indeed_status(_user: dict = Depends(get_current_user)):
+def indeed_status(_user: dict = Depends(require_permission("integrations.manage"))):
     return service.integration_status()
 
 
@@ -54,7 +54,7 @@ def indeed_status(_user: dict = Depends(get_current_user)):
 def sync_candidates(
     limit: int = Query(25, ge=1, le=100),
     db: Session = Depends(get_db),
-    user: dict = Depends(get_current_user),
+    user: dict = Depends(require_permission("integrations.manage")),
 ):
     try:
         return service.sync_candidates(
@@ -70,7 +70,7 @@ def sync_candidates(
 def sync_dispositions(
     limit: int = Query(25, ge=1, le=25),
     db: Session = Depends(get_db),
-    user: dict = Depends(get_current_user),
+    user: dict = Depends(require_permission("integrations.manage")),
 ):
     try:
         return service.sync_dispositions(
@@ -83,7 +83,7 @@ def sync_dispositions(
 
 
 @router.post("/api/jobs/{job_id}/integrations/indeed/publish")
-def publish(job_id: str, db: Session = Depends(get_db), user: dict = Depends(get_current_user)):
+def publish(job_id: str, db: Session = Depends(get_db), user: dict = Depends(require_permission("integrations.manage"))):
     try:
         return service.publish_job(db, job_id=job_id, owner_sub=user["sub"])
     except Exception as exc:
@@ -91,7 +91,7 @@ def publish(job_id: str, db: Session = Depends(get_db), user: dict = Depends(get
 
 
 @router.get("/api/jobs/{job_id}/integrations/indeed/status")
-def job_status(job_id: str, db: Session = Depends(get_db), user: dict = Depends(get_current_user)):
+def job_status(job_id: str, db: Session = Depends(get_db), user: dict = Depends(require_permission("integrations.manage"))):
     try:
         return service.get_job_status(db, job_id=job_id, owner_sub=user["sub"])
     except Exception as exc:
@@ -99,7 +99,7 @@ def job_status(job_id: str, db: Session = Depends(get_db), user: dict = Depends(
 
 
 @router.post("/api/jobs/{job_id}/integrations/indeed/expire")
-def expire(job_id: str, db: Session = Depends(get_db), user: dict = Depends(get_current_user)):
+def expire(job_id: str, db: Session = Depends(get_db), user: dict = Depends(require_permission("integrations.manage"))):
     try:
         return service.expire_job(db, job_id=job_id, owner_sub=user["sub"])
     except Exception as exc:
@@ -111,7 +111,7 @@ def candidate_details(
     job_id: str,
     candidate_id: str,
     db: Session = Depends(get_db),
-    user: dict = Depends(get_current_user),
+    user: dict = Depends(require_permission("integrations.manage")),
 ):
     try:
         payload = service.get_candidate_details(
@@ -133,7 +133,7 @@ def candidate_resume(
     job_id: str,
     candidate_id: str,
     db: Session = Depends(get_db),
-    user: dict = Depends(get_current_user),
+    user: dict = Depends(require_permission("integrations.manage")),
 ):
     """Return a short-lived canonical CV URL, never the Indeed provider URL."""
     try:
