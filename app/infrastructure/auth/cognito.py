@@ -5,6 +5,7 @@ import logging
 import boto3
 
 from app.config import get_aws_region
+from app.infrastructure.bedrock.session import get_cached_session
 
 logger = logging.getLogger(__name__)
 
@@ -39,3 +40,11 @@ def validate_access_token(token: str) -> dict[str, str | None]:
     except Exception as exc:
         logger.warning("Auth validation failed: %s", type(exc).__name__)
         raise CognitoAuthenticationError() from exc
+
+
+def get_admin_cognito_client():
+    """Return a signed Cognito admin client using the runtime AWS session."""
+    return get_cached_session().client(
+        "cognito-idp",
+        region_name=get_aws_region(),
+    )
