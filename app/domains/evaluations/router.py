@@ -3,7 +3,7 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
-from app.deps import get_current_user, get_db
+from app.deps import get_db, require_permission
 from app.domains.evaluations.presenter import public_evaluation_payload
 from app.domains.evaluations.schemas import EvaluateRequest
 from app.domains.evaluations.service import (
@@ -21,7 +21,7 @@ def evaluate_candidate_endpoint(
     candidate_id: str,
     body: EvaluateRequest,
     db: Session = Depends(get_db),
-    _user: dict = Depends(get_current_user),
+    _user: dict = Depends(require_permission("candidates.evaluate")),
 ):
     try:
         evaluation, _, _ = evaluate_candidate_for_owner(
