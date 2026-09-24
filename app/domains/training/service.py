@@ -1044,6 +1044,8 @@ def complete_lesson(
         raise TrainingStateError("This course is not available.")
     if not _module_applies(lesson.module, assignment.employee):
         raise TrainingStateError("This lesson is not assigned to your profile.")
+    if not _lesson_visible_to_employee(lesson):
+        raise TrainingStateError("This lesson is not available yet.")
 
     existing = (
         db.query(TrainingLessonProgress)
