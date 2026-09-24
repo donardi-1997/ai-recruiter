@@ -92,6 +92,37 @@ def _module_applies(
     return True
 
 
+ASIATI_PENDING_CORPORATE_VIDEO_TITLES = {
+    "Módulo 1 · ASIATI",
+    "Módulo 2 · ASIATI",
+    "Módulo 3 · ASIATI",
+}
+
+
+def _lesson_visible_to_employee(lesson: TrainingLesson) -> bool:
+    if (
+        lesson.title in ASIATI_PENDING_CORPORATE_VIDEO_TITLES
+        and not lesson.video_storage_key
+        and not lesson.video_url
+    ):
+        return False
+    return True
+
+
+def _module_lessons(
+    module: TrainingModule,
+    employee: UserProfile | None = None,
+) -> list[TrainingLesson]:
+    lessons = sorted(module.lessons, key=lambda lesson: lesson.position)
+    if employee is None:
+        return lessons
+    return [
+        lesson
+        for lesson in lessons
+        if _lesson_visible_to_employee(lesson)
+    ]
+
+
 def _applicable_modules(
     course: TrainingCourse,
     employee: UserProfile | None = None,
@@ -102,7 +133,11 @@ def _applicable_modules(
         if _module_applies(module, employee)
     ]
     if employee is not None:
-        modules = [module for module in modules if module.lessons]
+        modules = [
+            module
+            for module in modules
+            if _module_lessons(module, employee)
+        ]
     return modules
 
 
@@ -121,7 +156,7 @@ def _required_lessons(
     return [
         lesson
         for module in _applicable_modules(course, employee)
-        for lesson in sorted(module.lessons, key=lambda item: item.position)
+        for lesson in _module_lessons(module, employee)
         if not lesson.is_optional
     ]
 
@@ -158,9 +193,10 @@ def module_payload(
     module: TrainingModule,
     *,
     completed_lesson_ids: set[str] | None = None,
+    employee: UserProfile | None = None,
 ) -> dict:
     completed_lesson_ids = completed_lesson_ids or set()
-    lessons = sorted(module.lessons, key=lambda lesson: lesson.position)
+    lessons = _module_lessons(module, employee)
     required = [lesson for lesson in lessons if not lesson.is_optional]
     completed_required = [
         lesson for lesson in required if lesson.id in completed_lesson_ids
@@ -281,7 +317,10 @@ def course_payload(
         "is_onboarding": bool(course.is_onboarding),
         "module_count": module_count,
         "lesson_count": lesson_count,
-        "content_item_count": sum(len(module.lessons) for module in modules),
+        "content_item_count": sum(
+            len(_module_lessons(module, employee))
+            for module in modules
+        ),
         "completed_lessons": completed_count,
         "progress_percent": progress_percent,
         "estimated_minutes": estimated_minutes,
@@ -298,6 +337,7 @@ def course_payload(
             module_payload(
                 module,
                 completed_lesson_ids=completed_lesson_ids,
+                employee=employee,
             )
             for module in modules
         ]
@@ -436,6 +476,78 @@ def _ensure_asiati_corporate_video_lessons(
             )
 
 
+ASIATI_ONBOARDING_BASE_QUIZ = [
+    (
+        "¿Cuál es el sitio web corporativo oficial incluido en la inducción?",
+        [
+            "asiaticorp.com",
+            "El Retrovisor",
+            "Wiilog",
+            "Origen Vital",
+        ],
+        0,
+    ),
+    (
+        "¿Cuál de estas iniciativas aparece dentro del ecosistema ASIATI presentado en la ruta?",
+        [
+            "Wiilog",
+            "Coursera",
+            "LinkedIn Learning",
+            "Udemy",
+        ],
+        0,
+    ),
+    (
+        "¿En qué plataforma se presenta El Retrovisor dentro de los recursos del onboarding?",
+        [
+            "YouTube",
+            "Canva",
+            "Portal de vacaciones",
+            "Google Calendar",
+        ],
+        0,
+    ),
+    (
+        "¿Qué debes revisar en la etapa 'Tu cargo en ASIATI'?",
+        [
+            "Alcance, responsabilidades, herramientas y objetivos de tus primeros días",
+            "Únicamente el organigrama",
+            "Solo las redes sociales corporativas",
+            "Únicamente permisos y vacaciones",
+        ],
+        0,
+    ),
+    (
+        "Si necesitas detener la inducción antes de terminar, ¿qué puedes hacer?",
+        [
+            "Retomarla después desde tu avance guardado",
+            "Empezar obligatoriamente desde cero",
+            "Solicitar que eliminen el curso",
+            "Perder el acceso a la ruta",
+        ],
+        0,
+    ),
+]
+
+
+def _ensure_asiati_onboarding_quiz_questions(
+    db: Session,
+    *,
+    quiz: TrainingQuiz,
+) -> None:
+    if quiz.questions:
+        return
+
+    for prompt, options, correct_option in ASIATI_ONBOARDING_BASE_QUIZ:
+        add_quiz_question(
+            db,
+            quiz_id=quiz.id,
+            prompt=prompt,
+            options=options,
+            correct_option=correct_option,
+        )
+
+
 def create_asiati_onboarding_template(
     db: Session,
     *,
@@ -461,15 +573,16 @@ def create_asiati_onboarding_template(
         for module in empty_final_modules:
             db.delete(module)
             changed = True
-        if existing.quiz is None:
-            create_quiz(
+        quiz = existing.quiz
+        if quiz is None:
+            quiz = create_quiz(
                 db,
                 course_id=existing.id,
                 title="Evaluación final",
                 passing_score=70,
                 created_by_sub=created_by_sub,
             )
-            changed = False
+        _ensure_asiati_onboarding_quiz_questions(db, quiz=quiz)
         if changed:
             db.commit()
         refreshed = require_course(db, existing.id)
@@ -603,13 +716,14 @@ def create_asiati_onboarding_template(
         content_type="CHECKLIST",
         estimated_minutes=5,
     )
-    create_quiz(
+    quiz = create_quiz(
         db,
         course_id=course.id,
         title="Evaluación final",
         passing_score=70,
         created_by_sub=created_by_sub,
     )
+    _ensure_asiati_onboarding_quiz_questions(db, quiz=quiz)
     _ensure_asiati_corporate_video_lessons(db, course=require_course(db, course.id))
 
     return require_course(db, course.id)
@@ -1012,6 +1126,8 @@ def complete_lesson(
         raise TrainingStateError("This course is not available.")
     if not _module_applies(lesson.module, assignment.employee):
         raise TrainingStateError("This lesson is not assigned to your profile.")
+    if not _lesson_visible_to_employee(lesson):
+        raise TrainingStateError("This lesson is not available yet.")
 
     existing = (
         db.query(TrainingLessonProgress)
