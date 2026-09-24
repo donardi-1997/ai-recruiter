@@ -95,6 +95,8 @@ class CreateQuizQuestionRequest(BaseModel):
         normalized = [str(option).strip() for option in value]
         if any(not option for option in normalized):
             raise ValueError("quiz options cannot be blank")
+        if len(set(normalized)) != len(normalized):
+            raise ValueError("quiz options must be unique")
         return normalized
 
     @model_validator(mode="after")
