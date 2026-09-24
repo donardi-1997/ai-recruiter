@@ -616,8 +616,8 @@ class UserProfile(Base):
     score_events = relationship(
         "EmployeeScoreEvent",
         back_populates="employee",
-        cascade="all, delete-orphan",
         foreign_keys="EmployeeScoreEvent.employee_id",
+        passive_deletes=True,
     )
 
 
@@ -666,7 +666,7 @@ class UserRole(Base):
 
     user_id = Column(
         Text,
-        ForeignKey("user_profiles.id", ondelete="CASCADE"),
+        ForeignKey("user_profiles.id", ondelete="RESTRICT"),
         primary_key=True,
     )
     role_code = Column(
