@@ -38,6 +38,7 @@ class FakeSession:
 
 
 def test_register_auto_confirms_cognito_user_with_signed_session(monkeypatch):
+    monkeypatch.setenv("ALLOW_PUBLIC_REGISTRATION", "true")
     signup_client = FakeSignupClient()
     admin_client = FakeAdminClient()
     session = FakeSession(admin_client)
@@ -96,7 +97,26 @@ def test_register_contract_keeps_password_out_of_query_parameters():
     assert "Query(" not in source
 
 
+def test_public_registration_is_disabled_by_default(monkeypatch):
+    import pytest
+    from fastapi import HTTPException
+
+    monkeypatch.delenv("ALLOW_PUBLIC_REGISTRATION", raising=False)
+
+    with pytest.raises(HTTPException) as exc_info:
+        auth_routes.register(
+            auth_routes.RegisterRequest(
+                email="employee@example.com",
+                password="StrongPass123",
+            )
+        )
+
+    assert exc_info.value.status_code == 403
+    assert "registro publico" in exc_info.value.detail.casefold()
+
+
 def test_register_normalizes_email_before_provider_call(monkeypatch):
+    monkeypatch.setenv("ALLOW_PUBLIC_REGISTRATION", "true")
     signup_client = FakeSignupClient()
     admin_client = FakeAdminClient()
     session = FakeSession(admin_client)
@@ -116,6 +136,8 @@ def test_register_normalizes_email_before_provider_call(monkeypatch):
 
 
 def test_register_does_not_expose_provider_error_message(monkeypatch):
+    monkeypatch.setenv("ALLOW_PUBLIC_REGISTRATION", "true")
+
     class RejectingSignupClient:
         def sign_up(self, **kwargs):
             raise ClientError(
