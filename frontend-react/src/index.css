@@ -2399,3 +2399,385 @@ select { appearance: none; padding-right: 42px; background-image: linear-gradien
   border-color: rgba(248, 113, 113, .2);
 }
 
+/* ============================================================
+   GUIDED ONBOARDING JOURNEY
+   ============================================================ */
+
+.training-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.training-audience-badge {
+  display: inline-flex;
+  width: fit-content;
+  margin-top: 7px;
+  padding: 5px 8px;
+  border-radius: 999px;
+  background: rgba(115, 87, 232, .1);
+  color: var(--violet);
+  font-size: .66rem;
+  font-weight: 800;
+}
+
+.training-optional-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--ink-soft);
+  font-size: .72rem;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.training-optional-toggle input {
+  width: auto;
+  accent-color: var(--blue);
+}
+
+.training-content-type-grid select {
+  min-height: 42px;
+}
+
+.training-journey-overview {
+  margin: 18px 0 16px;
+  padding: 16px 18px;
+  border: 1px solid var(--border);
+  border-radius: 15px;
+  background: var(--surface-soft);
+}
+
+.training-journey-progress-copy {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: end;
+  gap: 2px 14px;
+}
+
+.training-journey-progress-copy > span {
+  color: var(--ink-faint);
+  font-size: .7rem;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: .05em;
+}
+
+.training-journey-progress-copy > strong {
+  grid-row: 1 / span 2;
+  grid-column: 2;
+  color: var(--ink);
+  font-family: "Manrope", sans-serif;
+  font-size: 1.8rem;
+}
+
+.training-journey-progress-copy > small {
+  color: var(--ink-soft);
+  font-size: .72rem;
+}
+
+.training-journey-progress-bar {
+  height: 8px;
+  margin-top: 12px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: var(--border);
+}
+
+.training-journey-progress-bar i {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, var(--blue), var(--cyan));
+  transition: width .25s ease;
+}
+
+.training-journey-layout {
+  display: grid;
+  grid-template-columns: minmax(230px, .72fr) minmax(0, 1.5fr);
+  gap: 18px;
+  align-items: start;
+}
+
+.training-journey-steps {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.training-journey-module {
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: var(--surface-soft);
+}
+
+.training-journey-module.is-complete {
+  border-color: rgba(22, 163, 74, .2);
+}
+
+.training-journey-module-heading {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.training-journey-module-heading > span {
+  display: grid;
+  flex: 0 0 28px;
+  width: 28px;
+  height: 28px;
+  place-items: center;
+  border-radius: 50%;
+  background: var(--surface);
+  color: var(--ink-soft);
+  font-size: .68rem;
+  font-weight: 900;
+}
+
+.training-journey-module.is-complete .training-journey-module-heading > span {
+  background: var(--success-bg);
+  color: var(--success);
+}
+
+.training-journey-module-heading div {
+  min-width: 0;
+}
+
+.training-journey-module-heading strong,
+.training-journey-module-heading small {
+  display: block;
+}
+
+.training-journey-module-heading strong {
+  color: var(--ink);
+  font-size: .77rem;
+}
+
+.training-journey-module-heading small {
+  margin-top: 3px;
+  color: var(--ink-faint);
+  font-size: .65rem;
+}
+
+.training-journey-lessons {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 10px;
+  padding-left: 38px;
+}
+
+.training-journey-lesson-button {
+  display: flex;
+  width: 100%;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 8px 9px;
+  border: 1px solid transparent;
+  border-radius: 10px;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+}
+
+.training-journey-lesson-button:hover,
+.training-journey-lesson-button.active {
+  border-color: var(--border);
+  background: var(--surface);
+}
+
+.training-journey-lesson-button.active {
+  box-shadow: inset 3px 0 0 var(--blue);
+}
+
+.training-journey-lesson-button > span {
+  display: grid;
+  flex: 0 0 22px;
+  width: 22px;
+  height: 22px;
+  place-items: center;
+  border-radius: 50%;
+  background: var(--surface-soft);
+  color: var(--ink-faint);
+  font-size: .62rem;
+  font-weight: 900;
+}
+
+.training-journey-lesson-button.is-complete > span {
+  background: var(--success-bg);
+  color: var(--success);
+}
+
+.training-journey-lesson-button div {
+  min-width: 0;
+}
+
+.training-journey-lesson-button strong,
+.training-journey-lesson-button small {
+  display: block;
+}
+
+.training-journey-lesson-button strong {
+  color: var(--ink);
+  font-size: .7rem;
+  line-height: 1.35;
+}
+
+.training-journey-lesson-button small {
+  margin-top: 2px;
+  color: var(--ink-faint);
+  font-size: .62rem;
+}
+
+.training-journey-focus {
+  min-height: 360px;
+  padding: 22px;
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  background: var(--surface);
+}
+
+.training-journey-focus-meta {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  color: var(--ink-faint);
+  font-size: .68rem;
+  font-weight: 800;
+}
+
+.training-journey-focus-meta b {
+  color: var(--blue);
+}
+
+.training-journey-focus h3 {
+  margin: 10px 0 0;
+  color: var(--ink);
+  font-family: "Manrope", sans-serif;
+  font-size: 1.3rem;
+}
+
+.training-journey-description {
+  margin: 10px 0 0;
+  color: var(--ink-soft);
+  line-height: 1.65;
+}
+
+.training-journey-video {
+  margin-top: 18px;
+}
+
+.training-resource-card,
+.training-checklist-card {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 18px;
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: 13px;
+  background: var(--surface-soft);
+}
+
+.training-resource-card {
+  color: inherit;
+  text-decoration: none;
+}
+
+.training-resource-card:hover {
+  border-color: var(--blue);
+}
+
+.training-resource-card > span {
+  display: grid;
+  width: 36px;
+  height: 36px;
+  place-items: center;
+  border-radius: 11px;
+  background: rgba(59, 130, 246, .1);
+  color: var(--blue);
+  font-weight: 900;
+}
+
+.training-resource-card strong,
+.training-resource-card small,
+.training-checklist-card strong,
+.training-checklist-card span {
+  display: block;
+}
+
+.training-resource-card small {
+  margin-top: 3px;
+  color: var(--ink-faint);
+  font-size: .68rem;
+}
+
+.training-checklist-card {
+  flex-direction: column;
+  align-items: flex-start;
+}
+
+.training-checklist-card strong {
+  color: var(--ink);
+}
+
+.training-checklist-card span {
+  color: var(--ink-soft);
+  font-size: .76rem;
+  line-height: 1.5;
+}
+
+.training-journey-actions {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 22px;
+  padding-top: 16px;
+  border-top: 1px solid var(--border);
+}
+
+.training-journey-actions > div {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+@media (max-width: 960px) {
+  .training-journey-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .training-journey-steps {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 620px) {
+  .training-header-actions,
+  .training-journey-actions,
+  .training-journey-focus-meta {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .training-journey-steps {
+    grid-template-columns: 1fr;
+  }
+
+  .training-journey-focus {
+    padding: 16px;
+  }
+
+  .training-journey-actions > div {
+    width: 100%;
+    flex-direction: column;
+  }
+
+  .training-journey-actions .btn {
+    width: 100%;
+  }
+}
+
