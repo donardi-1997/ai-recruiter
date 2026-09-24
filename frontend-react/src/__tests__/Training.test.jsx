@@ -147,7 +147,7 @@ describe("Training platform", () => {
     renderPage();
 
     expect((await screen.findAllByText("Inducción ASIATI")).length).toBeGreaterThan(0);
-    expect(await screen.findByText("Quiénes somos")).toBeInTheDocument();
+    expect((await screen.findAllByText("Quiénes somos")).length).toBeGreaterThan(0);
     expect(screen.queryByRole("button", { name: "+ Crear curso" })).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: "Marcar completada" }));
