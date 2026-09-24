@@ -159,6 +159,131 @@ describe("Training platform", () => {
     });
   });
 
+  it("restores and saves onboarding checklist progress", async () => {
+    useSession.mockReturnValue({
+      principal: {
+        profile: { id: "employee-1", first_name: "Ana" },
+      },
+      hasPermission: (permission) => [
+        "training.read",
+        "training.consume",
+      ].includes(permission),
+    });
+
+    const checklistAssignment = {
+      ...assignment,
+      course: {
+        ...assignment.course,
+        title: "Onboarding ASIATI",
+        lesson_count: 1,
+        completed_lessons: 0,
+        progress_percent: 0,
+        next_lesson_id: "checklist-1",
+      },
+    };
+
+    let currentDetail = {
+      assignment_id: "assignment-1",
+      assignment_status: "ASSIGNED",
+      course: {
+        ...employeeDetail.course,
+        title: "Onboarding ASIATI",
+        lesson_count: 1,
+        completed_lessons: 0,
+        progress_percent: 0,
+        next_lesson_id: "checklist-1",
+        modules: [
+          {
+            id: "module-role",
+            title: "Tu cargo en ASIATI",
+            position: 1,
+            lesson_count: 1,
+            completed_lessons: 0,
+            progress_percent: 0,
+            is_complete: false,
+            estimated_minutes: 5,
+            lessons: [
+              {
+                id: "checklist-1",
+                title: "Tu rol y tus primeros días",
+                description: "Checklist inicial.",
+                content_type: "CHECKLIST",
+                checklist_items: [
+                  "Conozco el alcance principal de mi cargo.",
+                  "Sé quién es mi líder o punto de apoyo.",
+                ],
+                checklist_completed_items: [0],
+                estimated_minutes: 5,
+                is_optional: false,
+                completed: false,
+                position: 1,
+              },
+            ],
+          },
+        ],
+      },
+    };
+
+    api.get.mockImplementation((url) => {
+      if (url === "/training/me") {
+        return Promise.resolve({ data: { items: [checklistAssignment] } });
+      }
+      if (url === "/training/me/courses/course-1") {
+        return Promise.resolve({ data: currentDetail });
+      }
+      return Promise.reject(new Error(`Unexpected GET ${url}`));
+    });
+
+    api.put.mockImplementation((url, body) => {
+      if (url !== "/training/me/lessons/checklist-1/checklist") {
+        return Promise.reject(new Error(`Unexpected PUT ${url}`));
+      }
+      currentDetail = {
+        ...currentDetail,
+        assignment_status: "COMPLETED",
+        course: {
+          ...currentDetail.course,
+          completed_lessons: 1,
+          progress_percent: 100,
+          next_lesson_id: null,
+          modules: [
+            {
+              ...currentDetail.course.modules[0],
+              completed_lessons: 1,
+              progress_percent: 100,
+              is_complete: true,
+              lessons: [
+                {
+                  ...currentDetail.course.modules[0].lessons[0],
+                  checklist_completed_items: body.completed_items,
+                  completed: true,
+                },
+              ],
+            },
+          ],
+        },
+      };
+      return Promise.resolve({ data: currentDetail });
+    });
+
+    renderPage();
+
+    const first = await screen.findByLabelText("Conozco el alcance principal de mi cargo.");
+    const second = screen.getByLabelText("Sé quién es mi líder o punto de apoyo.");
+    expect(first).toBeChecked();
+    expect(second).not.toBeChecked();
+
+    fireEvent.click(second);
+
+    await waitFor(() => {
+      expect(api.put).toHaveBeenCalledWith(
+        "/training/me/lessons/checklist-1/checklist",
+        { completed_items: [0, 1] },
+      );
+    });
+    expect(await screen.findByText("2/2")).toBeInTheDocument();
+  });
+
   it("lets an employee submit a course quiz after completing the lessons", async () => {
     useSession.mockReturnValue({
       principal: {

@@ -161,7 +161,12 @@ def _required_lessons(
     ]
 
 
-def lesson_payload(lesson: TrainingLesson, *, completed: bool = False) -> dict:
+def lesson_payload(
+    lesson: TrainingLesson,
+    *,
+    completed: bool = False,
+    progress_details: dict | None = None,
+) -> dict:
     video_url = lesson.video_url
     video_source = "external" if lesson.video_url else None
     if lesson.video_storage_key:
@@ -184,6 +189,10 @@ def lesson_payload(lesson: TrainingLesson, *, completed: bool = False) -> dict:
         "estimated_minutes": _lesson_minutes(lesson),
         "duration_known": _lesson_minutes(lesson) is not None,
         "is_optional": bool(lesson.is_optional),
+        "checklist_items": list(lesson.checklist_items or []),
+        "checklist_completed_items": list(
+            (progress_details or {}).get("completed_items") or []
+        ),
         "position": lesson.position,
         "completed": completed,
     }
@@ -193,9 +202,11 @@ def module_payload(
     module: TrainingModule,
     *,
     completed_lesson_ids: set[str] | None = None,
+    progress_details_by_lesson: dict[str, dict] | None = None,
     employee: UserProfile | None = None,
 ) -> dict:
     completed_lesson_ids = completed_lesson_ids or set()
+    progress_details_by_lesson = progress_details_by_lesson or {}
     lessons = _module_lessons(module, employee)
     required = [lesson for lesson in lessons if not lesson.is_optional]
     completed_required = [
@@ -247,6 +258,7 @@ def module_payload(
             lesson_payload(
                 lesson,
                 completed=lesson.id in completed_lesson_ids,
+                progress_details=progress_details_by_lesson.get(lesson.id),
             )
             for lesson in lessons
         ],
@@ -265,10 +277,12 @@ def course_payload(
     course: TrainingCourse,
     *,
     completed_lesson_ids: set[str] | None = None,
+    progress_details_by_lesson: dict[str, dict] | None = None,
     include_structure: bool = False,
     employee: UserProfile | None = None,
 ) -> dict:
     completed_lesson_ids = completed_lesson_ids or set()
+    progress_details_by_lesson = progress_details_by_lesson or {}
     modules = _applicable_modules(course, employee)
     required_lessons = _required_lessons(course, employee)
     required_ids = {lesson.id for lesson in required_lessons}
@@ -337,6 +351,7 @@ def course_payload(
             module_payload(
                 module,
                 completed_lesson_ids=completed_lesson_ids,
+                progress_details_by_lesson=progress_details_by_lesson,
                 employee=employee,
             )
             for module in modules
@@ -476,6 +491,34 @@ def _ensure_asiati_corporate_video_lessons(
             )
 
 
+ASIATI_ROLE_CHECKLIST_ITEMS = [
+    "Conozco el alcance principal de mi cargo.",
+    "Sé cuáles son mis responsabilidades prioritarias.",
+    "Tengo identificadas las herramientas y accesos que necesito.",
+    "Sé quién es mi líder o punto de apoyo.",
+    "Entiendo los objetivos de mi primera semana.",
+]
+
+
+def _ensure_asiati_role_checklist(
+    db: Session,
+    *,
+    course: TrainingCourse,
+) -> None:
+    changed = False
+    for module in course.modules:
+        for lesson in module.lessons:
+            if (
+                lesson.title == "Tu rol y tus primeros días"
+                and str(lesson.content_type or "").upper() == "CHECKLIST"
+                and not list(lesson.checklist_items or [])
+            ):
+                lesson.checklist_items = list(ASIATI_ROLE_CHECKLIST_ITEMS)
+                changed = True
+    if changed:
+        db.commit()
+
+
 ASIATI_ONBOARDING_BASE_QUIZ = [
     (
         "¿Cuál es el sitio web corporativo oficial incluido en la inducción?",
@@ -587,6 +630,10 @@ def create_asiati_onboarding_template(
             db.commit()
         refreshed = require_course(db, existing.id)
         _ensure_asiati_corporate_video_lessons(db, course=refreshed)
+        _ensure_asiati_role_checklist(
+            db,
+            course=require_course(db, existing.id),
+        )
         return require_course(db, existing.id)
 
     course = create_course(
@@ -715,6 +762,7 @@ def create_asiati_onboarding_template(
         duration_seconds=None,
         content_type="CHECKLIST",
         estimated_minutes=5,
+        checklist_items=ASIATI_ROLE_CHECKLIST_ITEMS,
     )
     quiz = create_quiz(
         db,
@@ -725,6 +773,10 @@ def create_asiati_onboarding_template(
     )
     _ensure_asiati_onboarding_quiz_questions(db, quiz=quiz)
     _ensure_asiati_corporate_video_lessons(db, course=require_course(db, course.id))
+    _ensure_asiati_role_checklist(
+        db,
+        course=require_course(db, course.id),
+    )
 
     return require_course(db, course.id)
 
@@ -811,6 +863,7 @@ def add_lesson(
     content_type: str = "VIDEO",
     external_url: str | None = None,
     estimated_minutes: int | None = None,
+    checklist_items: list[str] | None = None,
     is_optional: bool = False,
 ) -> TrainingLesson:
     module = require_module(db, module_id)
@@ -831,6 +884,7 @@ def add_lesson(
         content_type=(content_type or "VIDEO").strip().upper(),
         external_url=(external_url or "").strip() or None,
         estimated_minutes=estimated_minutes,
+        checklist_items=list(checklist_items or []),
         is_optional=bool(is_optional),
         position=position,
     )
@@ -989,6 +1043,21 @@ def _completed_ids(db: Session, assignment_id: str) -> set[str]:
     }
 
 
+def _progress_details_by_lesson(
+    db: Session,
+    assignment_id: str,
+) -> dict[str, dict]:
+    entries = (
+        db.query(TrainingLessonProgress)
+        .filter(TrainingLessonProgress.assignment_id == assignment_id)
+        .all()
+    )
+    return {
+        entry.lesson_id: dict(entry.details or {})
+        for entry in entries
+    }
+
+
 def _assignment_course_payload(
     db: Session,
     assignment: TrainingAssignment,
@@ -996,9 +1065,11 @@ def _assignment_course_payload(
     include_structure: bool,
 ) -> dict:
     completed = _completed_ids(db, assignment.id)
+    progress_details = _progress_details_by_lesson(db, assignment.id)
     course = course_payload(
         assignment.course,
         completed_lesson_ids=completed,
+        progress_details_by_lesson=progress_details,
         include_structure=include_structure,
         employee=assignment.employee,
     )
@@ -1109,6 +1180,29 @@ def get_my_course(db: Session, *, employee_id: str, course_id: str) -> dict:
     }
 
 
+def _refresh_assignment_completion(
+    db: Session,
+    assignment: TrainingAssignment,
+) -> None:
+    course = assignment.course
+    required_lessons = _required_lessons(course, assignment.employee)
+    required_ids = {item.id for item in required_lessons}
+    completed_ids = _completed_ids(db, assignment.id)
+    all_required_complete = bool(required_ids) and required_ids.issubset(completed_ids)
+
+    if course.quiz is None:
+        if all_required_complete:
+            assignment.status = "COMPLETED"
+            if assignment.completed_at is None:
+                assignment.completed_at = datetime.now(timezone.utc)
+        elif assignment.status == "COMPLETED":
+            assignment.status = "ASSIGNED"
+            assignment.completed_at = None
+
+    if course.is_onboarding:
+        _sync_employee_onboarding(db, assignment.employee_id)
+
+
 def complete_lesson(
     db: Session,
     *,
@@ -1128,6 +1222,13 @@ def complete_lesson(
         raise TrainingStateError("This lesson is not assigned to your profile.")
     if not _lesson_visible_to_employee(lesson):
         raise TrainingStateError("This lesson is not available yet.")
+    if (
+        str(lesson.content_type or "").upper() == "CHECKLIST"
+        and list(lesson.checklist_items or [])
+    ):
+        raise TrainingStateError(
+            "Complete the checklist items before finishing this lesson."
+        )
 
     existing = (
         db.query(TrainingLessonProgress)
@@ -1143,27 +1244,80 @@ def complete_lesson(
                 assignment_id=assignment.id,
                 lesson_id=lesson_id,
                 status="COMPLETED",
+                details={},
+                completed_at=datetime.now(timezone.utc),
             )
         )
         db.flush()
 
-    required_lessons = _required_lessons(course, assignment.employee)
-    required_ids = {item.id for item in required_lessons}
-    completed_ids = _completed_ids(db, assignment.id)
-    completed_count = len(required_ids & completed_ids)
-    total_lessons = len(required_lessons)
-    if (
-        total_lessons
-        and completed_count >= total_lessons
-        and assignment.status != "COMPLETED"
-        and course.quiz is None
-    ):
-        assignment.status = "COMPLETED"
-        assignment.completed_at = datetime.now(timezone.utc)
+    _refresh_assignment_completion(db, assignment)
+    db.commit()
+    return get_my_course(db, employee_id=employee_id, course_id=course.id)
 
-    if course.is_onboarding:
-        _sync_employee_onboarding(db, employee_id)
 
+def update_checklist_progress(
+    db: Session,
+    *,
+    employee_id: str,
+    lesson_id: str,
+    completed_items: list[int],
+) -> dict:
+    lesson = require_lesson(db, lesson_id)
+    course = lesson.module.course
+    assignment = require_my_assignment(
+        db,
+        employee_id=employee_id,
+        course_id=course.id,
+    )
+    if course.status != "PUBLISHED":
+        raise TrainingStateError("This course is not available.")
+    if not _module_applies(lesson.module, assignment.employee):
+        raise TrainingStateError("This lesson is not assigned to your profile.")
+    if not _lesson_visible_to_employee(lesson):
+        raise TrainingStateError("This lesson is not available yet.")
+    if str(lesson.content_type or "").upper() != "CHECKLIST":
+        raise TrainingStateError("This lesson is not a checklist.")
+    if assignment.status == "COMPLETED":
+        return get_my_course(
+            db,
+            employee_id=employee_id,
+            course_id=course.id,
+        )
+
+    items = list(lesson.checklist_items or [])
+    if not items:
+        raise TrainingStateError("This checklist has no configured items.")
+
+    normalized = sorted(set(completed_items))
+    if any(index < 0 or index >= len(items) for index in normalized):
+        raise TrainingStateError("One or more checklist items are invalid.")
+
+    is_complete = len(normalized) == len(items)
+    entry = (
+        db.query(TrainingLessonProgress)
+        .filter(
+            TrainingLessonProgress.assignment_id == assignment.id,
+            TrainingLessonProgress.lesson_id == lesson.id,
+        )
+        .one_or_none()
+    )
+    now = datetime.now(timezone.utc)
+    if entry is None:
+        entry = TrainingLessonProgress(
+            assignment_id=assignment.id,
+            lesson_id=lesson.id,
+            status="COMPLETED" if is_complete else "IN_PROGRESS",
+            details={"completed_items": normalized},
+            completed_at=now if is_complete else None,
+        )
+        db.add(entry)
+    else:
+        entry.status = "COMPLETED" if is_complete else "IN_PROGRESS"
+        entry.details = {"completed_items": normalized}
+        entry.completed_at = now if is_complete else None
+
+    db.flush()
+    _refresh_assignment_completion(db, assignment)
     db.commit()
     return get_my_course(db, employee_id=employee_id, course_id=course.id)
 

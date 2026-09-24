@@ -14,6 +14,7 @@ from app.domains.training.schemas import (
     CreateQuizQuestionRequest,
     CreateQuizRequest,
     SubmitQuizAttemptRequest,
+    UpdateChecklistProgressRequest,
     UpdateCourseRequest,
 )
 
@@ -140,6 +141,7 @@ def create_lesson(
             content_type=body.content_type,
             external_url=body.external_url,
             estimated_minutes=body.estimated_minutes,
+            checklist_items=body.checklist_items,
             is_optional=body.is_optional,
         )
         return service.get_course(db, lesson.module.course_id)
@@ -258,6 +260,24 @@ def complete_lesson(
             db,
             employee_id=principal["profile"]["id"],
             lesson_id=lesson_id,
+        )
+    except Exception as exc:
+        _translate(exc)
+
+
+@router.put("/me/lessons/{lesson_id}/checklist")
+def update_checklist_progress(
+    lesson_id: str,
+    body: UpdateChecklistProgressRequest,
+    db: Session = Depends(get_db),
+    principal: dict = Depends(require_permission("training.consume")),
+):
+    try:
+        return service.update_checklist_progress(
+            db,
+            employee_id=principal["profile"]["id"],
+            lesson_id=lesson_id,
+            completed_items=body.completed_items,
         )
     except Exception as exc:
         _translate(exc)

@@ -38,6 +38,7 @@ def test_create_app_exposes_critical_routes():
     assert "/api/training/me" in paths
     assert "/api/training/me/courses/{course_id}" in paths
     assert "/api/training/me/lessons/{lesson_id}/complete" in paths
+    assert "/api/training/me/lessons/{lesson_id}/checklist" in paths
     assert "/api/training/courses/{course_id}/quiz" in paths
     assert "/api/training/quizzes/{quiz_id}/questions" in paths
     assert "/api/training/me/courses/{course_id}/quiz" in paths

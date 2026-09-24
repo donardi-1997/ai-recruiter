@@ -912,6 +912,7 @@ class TrainingLesson(Base):
     content_type = Column(Text, nullable=False, default="VIDEO")
     external_url = Column(Text, nullable=True)
     estimated_minutes = Column(Integer, nullable=True)
+    checklist_items = Column(JSON, nullable=True, default=list)
     is_optional = Column(Boolean, nullable=False, default=False)
     position = Column(Integer, nullable=False, default=1)
     created_at = Column(
@@ -1004,11 +1005,8 @@ class TrainingLessonProgress(Base):
         nullable=False,
     )
     status = Column(Text, nullable=False, default="COMPLETED")
-    completed_at = Column(
-        DateTime(timezone=True),
-        nullable=False,
-        default=lambda: datetime.now(timezone.utc),
-    )
+    details = Column(JSON, nullable=True, default=dict)
+    completed_at = Column(DateTime(timezone=True), nullable=True)
 
     assignment = relationship(
         "TrainingAssignment",

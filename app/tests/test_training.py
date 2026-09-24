@@ -1000,6 +1000,118 @@ def test_employee_journey_hides_video_placeholders_without_media(db):
         )
 
 
+def test_checklist_progress_is_persisted_and_resumed(db):
+    employee = _employee(db)
+    course = service.create_course(
+        db,
+        title="Primeros días",
+        description=None,
+        created_by_sub="admin-sub",
+    )
+    module = service.add_module(
+        db,
+        course_id=course.id,
+        title="Tu cargo",
+        description=None,
+    )
+    checklist = service.add_lesson(
+        db,
+        module_id=module.id,
+        title="Checklist inicial",
+        description=None,
+        video_url=None,
+        duration_seconds=None,
+        content_type="CHECKLIST",
+        estimated_minutes=3,
+        checklist_items=[
+            "Conozco mi alcance.",
+            "Tengo mis accesos.",
+            "Sé quién es mi líder.",
+        ],
+    )
+    service.update_course(db, course.id, status="PUBLISHED")
+    assignment = service.assign_course(
+        db,
+        course_id=course.id,
+        employee_id=employee.id,
+        assigned_by_sub="admin-sub",
+    )
+
+    partial = service.update_checklist_progress(
+        db,
+        employee_id=employee.id,
+        lesson_id=checklist.id,
+        completed_items=[0, 2],
+    )
+
+    lesson_payload = partial["course"]["modules"][0]["lessons"][0]
+    assert lesson_payload["completed"] is False
+    assert lesson_payload["checklist_completed_items"] == [0, 2]
+    assert partial["course"]["progress_percent"] == 0
+
+    restored = service.get_my_course(
+        db,
+        employee_id=employee.id,
+        course_id=course.id,
+    )
+    restored_lesson = restored["course"]["modules"][0]["lessons"][0]
+    assert restored_lesson["checklist_completed_items"] == [0, 2]
+
+    completed = service.update_checklist_progress(
+        db,
+        employee_id=employee.id,
+        lesson_id=checklist.id,
+        completed_items=[0, 1, 2],
+    )
+
+    db.refresh(assignment)
+    assert assignment.status == "COMPLETED"
+    assert completed["course"]["progress_percent"] == 100
+    assert completed["course"]["completed_lessons"] == 1
+    assert completed["course"]["modules"][0]["lessons"][0]["completed"] is True
+
+
+def test_checklist_progress_rejects_invalid_item_index(db):
+    employee = _employee(db)
+    course = service.create_course(
+        db,
+        title="Checklist inválido",
+        description=None,
+        created_by_sub="admin-sub",
+    )
+    module = service.add_module(
+        db,
+        course_id=course.id,
+        title="Contenido",
+        description=None,
+    )
+    checklist = service.add_lesson(
+        db,
+        module_id=module.id,
+        title="Checklist",
+        description=None,
+        video_url=None,
+        duration_seconds=None,
+        content_type="CHECKLIST",
+        checklist_items=["Uno", "Dos"],
+    )
+    service.update_course(db, course.id, status="PUBLISHED")
+    service.assign_course(
+        db,
+        course_id=course.id,
+        employee_id=employee.id,
+        assigned_by_sub="admin-sub",
+    )
+
+    with pytest.raises(service.TrainingStateError):
+        service.update_checklist_progress(
+            db,
+            employee_id=employee.id,
+            lesson_id=checklist.id,
+            completed_items=[0, 2],
+        )
+
+
 def test_role_targeted_modules_are_filtered_for_employee(db):
     employee = _employee(db)
     employee.job_title = "Comercial"
@@ -1136,6 +1248,15 @@ def test_asiati_onboarding_template_scaffolds_short_journey(db):
     assert payload["quiz"]["questions"][0]["prompt"].startswith(
         "¿Cuál es el sitio web corporativo oficial"
     )
+
+    role_checklist = next(
+        lesson
+        for module in payload["modules"]
+        for lesson in module["lessons"]
+        if lesson["title"] == "Tu rol y tus primeros días"
+    )
+    assert role_checklist["content_type"] == "CHECKLIST"
+    assert role_checklist["checklist_items"] == service.ASIATI_ROLE_CHECKLIST_ITEMS
 
     resources = [
         lesson
