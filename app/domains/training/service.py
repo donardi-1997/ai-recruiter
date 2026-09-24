@@ -134,6 +134,7 @@ def course_payload(
         "title": course.title,
         "description": course.description,
         "status": course.status,
+        "is_onboarding": bool(course.is_onboarding),
         "module_count": module_count,
         "lesson_count": lesson_count,
         "completed_lessons": completed_count,
@@ -170,11 +171,13 @@ def create_course(
     *,
     title: str,
     description: str | None,
+    is_onboarding: bool,
     created_by_sub: str,
 ) -> TrainingCourse:
     course = TrainingCourse(
         title=title.strip(),
         description=(description or "").strip() or None,
+        is_onboarding=is_onboarding,
         status="DRAFT",
         created_by_sub=created_by_sub,
     )
@@ -190,6 +193,7 @@ def update_course(
     *,
     title: str | None = None,
     description: str | None = None,
+    is_onboarding: bool | None = None,
     status: str | None = None,
 ) -> TrainingCourse:
     course = require_course(db, course_id)
@@ -197,6 +201,10 @@ def update_course(
         course.title = title.strip()
     if description is not None:
         course.description = description.strip() or None
+    if is_onboarding is not None:
+        if course.status != "DRAFT":
+            raise TrainingStateError("Only draft courses can change onboarding classification.")
+        course.is_onboarding = is_onboarding
     if status is not None:
         normalized = status.upper()
         allowed_transitions = {
@@ -337,6 +345,38 @@ def finalize_lesson_video_upload(
     return lesson
 
 
+def _sync_employee_onboarding(db: Session, employee_id: str) -> UserProfile:
+    employee = require_employee(db, employee_id)
+    assignments = (
+        db.query(TrainingAssignment)
+        .join(
+            TrainingCourse,
+            TrainingAssignment.course_id == TrainingCourse.id,
+        )
+        .filter(
+            TrainingAssignment.employee_id == employee_id,
+            TrainingCourse.is_onboarding.is_(True),
+        )
+        .all()
+    )
+
+    if not assignments:
+        return employee
+
+    if employee.onboarding_started_at is None:
+        employee.onboarding_started_at = datetime.now(timezone.utc)
+
+    if all(assignment.status == "COMPLETED" for assignment in assignments):
+        employee.onboarding_status = "COMPLETED"
+        if employee.onboarding_completed_at is None:
+            employee.onboarding_completed_at = datetime.now(timezone.utc)
+    else:
+        employee.onboarding_status = "IN_PROGRESS"
+        employee.onboarding_completed_at = None
+
+    return employee
+
+
 def assign_course(
     db: Session,
     *,
@@ -360,6 +400,10 @@ def assign_course(
         .one_or_none()
     )
     if existing is not None:
+        if course.is_onboarding:
+            _sync_employee_onboarding(db, employee_id)
+            db.commit()
+            db.refresh(existing)
         return existing
 
     assignment = TrainingAssignment(
@@ -369,6 +413,9 @@ def assign_course(
         assigned_by_sub=assigned_by_sub,
     )
     db.add(assignment)
+    db.flush()
+    if course.is_onboarding:
+        _sync_employee_onboarding(db, employee_id)
     db.commit()
     db.refresh(assignment)
     return assignment
@@ -558,6 +605,9 @@ def complete_lesson(
     ):
         assignment.status = "COMPLETED"
         assignment.completed_at = datetime.now(timezone.utc)
+
+    if course.is_onboarding:
+        _sync_employee_onboarding(db, employee_id)
 
     db.commit()
     return get_my_course(db, employee_id=employee_id, course_id=course.id)
@@ -767,6 +817,9 @@ def submit_quiz_attempt(
     if passed and assignment.status != "COMPLETED":
         assignment.status = "COMPLETED"
         assignment.completed_at = datetime.now(timezone.utc)
+
+    if course.is_onboarding:
+        _sync_employee_onboarding(db, employee_id)
 
     db.commit()
     db.refresh(attempt)
