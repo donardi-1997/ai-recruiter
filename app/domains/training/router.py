@@ -8,7 +8,9 @@ from app.domains.training import service
 from app.domains.training.schemas import (
     CreateCourseRequest,
     CreateLessonRequest,
+    CreateLessonVideoUploadRequest,
     CreateModuleRequest,
+    FinalizeLessonVideoUploadRequest,
     CreateQuizQuestionRequest,
     CreateQuizRequest,
     SubmitQuizAttemptRequest,
@@ -121,6 +123,49 @@ def create_lesson(
             duration_seconds=body.duration_seconds,
         )
         return service.get_course(db, lesson.module.course_id)
+    except Exception as exc:
+        _translate(exc)
+
+
+@router.post("/lessons/{lesson_id}/video/upload", status_code=201)
+def create_lesson_video_upload(
+    lesson_id: str,
+    body: CreateLessonVideoUploadRequest,
+    db: Session = Depends(get_db),
+    _principal: dict = Depends(require_permission("training.manage")),
+):
+    try:
+        return service.create_lesson_video_upload(
+            db,
+            lesson_id=lesson_id,
+            filename=body.filename,
+            content_type=body.content_type,
+            size_bytes=body.size_bytes,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except Exception as exc:
+        _translate(exc)
+
+
+@router.post("/lessons/{lesson_id}/video/complete")
+def finalize_lesson_video_upload(
+    lesson_id: str,
+    body: FinalizeLessonVideoUploadRequest,
+    db: Session = Depends(get_db),
+    _principal: dict = Depends(require_permission("training.manage")),
+):
+    try:
+        lesson = service.finalize_lesson_video_upload(
+            db,
+            lesson_id=lesson_id,
+            key=body.key,
+            content_type=body.content_type,
+            size_bytes=body.size_bytes,
+        )
+        return service.get_course(db, lesson.module.course_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     except Exception as exc:
         _translate(exc)
 
