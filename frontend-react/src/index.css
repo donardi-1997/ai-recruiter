@@ -2101,3 +2101,65 @@ select { appearance: none; padding-right: 42px; background-image: linear-gradien
   }
 }
 
+/* Managed training video uploads */
+.training-lesson-admin-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+}
+
+.training-lesson-admin-copy {
+  min-width: 0;
+}
+
+.training-video-upload-button {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 36px;
+  padding: 8px 11px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface);
+  color: var(--blue);
+  font-size: .7rem;
+  font-weight: 800;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: border-color .18s, background .18s, opacity .18s;
+}
+
+.training-video-upload-button:hover {
+  border-color: var(--border-strong);
+  background: #eef4ff;
+}
+
+.training-video-upload-button.is-uploading {
+  opacity: .65;
+  cursor: wait;
+}
+
+.training-video-upload-button input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  opacity: 0;
+  pointer-events: none;
+}
+
+[data-theme="dark"] .training-video-upload-button:hover {
+  background: rgba(59, 130, 246, .1);
+}
+
+@media (max-width: 620px) {
+  .training-lesson-admin-row {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .training-video-upload-button {
+    grid-column: 1 / -1;
+    width: 100%;
+  }
+}
+
