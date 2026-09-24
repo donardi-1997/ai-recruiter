@@ -15,6 +15,51 @@ concurrency:
 
 jobs:
   # ─────────────────────────────────────────────────────────
+  # CHANGE DETECTION
+  # Keeps Resume Agent validation out of unrelated PRs while
+  # preserving the same checks whenever agent-related files change.
+  # Manual dispatch intentionally runs the full suite.
+  # ─────────────────────────────────────────────────────────
+  changes:
+    name: Detect Resume Agent changes
+    runs-on: ubuntu-latest
+    outputs:
+      resume_agent: ${{ steps.filter.outputs.resume_agent }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Detect Resume Agent paths
+        id: filter
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+
+          if [[ "$EVENT_NAME" == "workflow_dispatch" ]]; then
+            echo "resume_agent=true" >> "$GITHUB_OUTPUT"
+            echo "Manual dispatch: running Resume Agent validation."
+            exit 0
+          fi
+
+          git diff --name-only "$BASE_SHA" "$HEAD_SHA" > changed-files.txt
+          echo "Changed files:"
+          cat changed-files.txt
+
+          if grep -Eq '^(tools/indeed_resume_agent/|app/domains/candidate_ingestion/indeed_agent_.*\.py$|app/domains/candidate_ingestion/indeed_email_agent_service\.py$|\.github/workflows/ci\.yml$|\.github/workflows/indeed-resume-agent\.yml$)' changed-files.txt; then
+            echo "resume_agent=true" >> "$GITHUB_OUTPUT"
+            echo "Resume Agent-related change detected."
+          else
+            echo "resume_agent=false" >> "$GITHUB_OUTPUT"
+            echo "No Resume Agent-related changes detected; agent jobs will be skipped."
+          fi
+
+  # ─────────────────────────────────────────────────────────
   # BACKEND TESTS
   # ─────────────────────────────────────────────────────────
   backend-tests:
@@ -34,7 +79,6 @@ jobs:
         run: |
           pip install --upgrade pip
           pip install -r requirements.txt
-          pip install -r tools/indeed_resume_agent/requirements.txt
           pip install pytest pytest-xdist alembic psycopg2-binary
 
       - name: Validate Python syntax
@@ -50,6 +94,32 @@ jobs:
         run: |
           python -m pytest app/tests/ -n 2 --dist=loadfile -v --tb=short
 
+  # ─────────────────────────────────────────────────────────
+  # LINUX RESUME AGENT TESTS
+  # Only runs when Resume Agent-related files changed.
+  # ─────────────────────────────────────────────────────────
+  resume-agent-linux:
+    name: Resume Agent tests (Linux)
+    needs: changes
+    if: needs.changes.outputs.resume_agent == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+
+      - name: Install Resume Agent deps
+        run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install -r tools/indeed_resume_agent/requirements.txt
+          pip install pytest
+
       - name: Install Chromium for Resume Agent browser fixtures
         run: python -m playwright install --with-deps chromium
 
@@ -61,9 +131,12 @@ jobs:
   # WINDOWS RESUME AGENT PREFLIGHT
   # Mirrors the production agent's Python/OS and verifies the
   # real Chrome channel + Windows Credential Manager.
+  # Only runs when Resume Agent-related files changed.
   # ─────────────────────────────────────────────────────────
   resume-agent-windows:
     name: Resume Agent (Windows + Chrome)
+    needs: changes
+    if: needs.changes.outputs.resume_agent == 'true'
     runs-on: windows-latest
     timeout-minutes: 15
     steps:
@@ -80,26 +153,26 @@ jobs:
         shell: powershell
         run: |
           python -m venv .agent-venv
-          .\\.agent-venv\\Scripts\\python.exe -m pip install --upgrade pip
-          .\\.agent-venv\\Scripts\\pip.exe install -r .\\tools\\indeed_resume_agent\\requirements.txt
-          .\\.agent-venv\\Scripts\\pip.exe install pytest
+          .\.agent-venv\Scripts\python.exe -m pip install --upgrade pip
+          .\.agent-venv\Scripts\pip.exe install -r .\tools\indeed_resume_agent\requirements.txt
+          .\.agent-venv\Scripts\pip.exe install pytest
 
       - name: Install Chromium for golden browser fixtures
         shell: powershell
-        run: .\\.agent-venv\\Scripts\\python.exe -m playwright install chromium
+        run: .\.agent-venv\Scripts\python.exe -m playwright install chromium
 
       - name: Run full Resume Agent suite on Windows
         shell: powershell
-        run: .\\.agent-venv\\Scripts\\python.exe -m pytest -q tools\\indeed_resume_agent\\tests
+        run: .\.agent-venv\Scripts\python.exe -m pytest -q tools\indeed_resume_agent\tests
 
       - name: Build production Windows onedir
         shell: powershell
-        run: .\\tools\\indeed_resume_agent\\build.ps1
+        run: .\tools\indeed_resume_agent\build.ps1
 
       - name: Execute packaged binary self-test
         shell: powershell
         run: |
-          $Exe = ".\\dist\\ASIATI Resume Agent\\ASIATI Resume Agent.exe"
+          $Exe = ".\dist\ASIATI Resume Agent\ASIATI Resume Agent.exe"
           if (-not (Test-Path $Exe)) { throw "Packaged Resume Agent executable is missing" }
           $Process = Start-Process -FilePath $Exe -ArgumentList "--self-test" -Wait -PassThru
           if ($Process.ExitCode -ne 0) {
