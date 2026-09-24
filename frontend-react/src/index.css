@@ -1874,3 +1874,230 @@ select { appearance: none; padding-right: 42px; background-image: linear-gradien
   }
 }
 
+/* Training quizzes */
+.training-quiz-admin-body {
+  display: grid;
+  gap: 16px;
+}
+
+.training-quiz-create-form,
+.training-quiz-question-form {
+  display: grid;
+  gap: 12px;
+}
+
+.training-quiz-summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: 13px;
+  background: var(--surface-soft);
+}
+
+.training-quiz-summary strong,
+.training-quiz-summary small {
+  display: block;
+}
+
+.training-quiz-summary small {
+  margin-top: 4px;
+  color: var(--ink-faint);
+  font-size: .7rem;
+}
+
+.training-quiz-question-list {
+  display: grid;
+  gap: 9px;
+}
+
+.training-quiz-question-admin {
+  display: grid;
+  grid-template-columns: 32px minmax(0, 1fr);
+  gap: 12px;
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: 13px;
+  background: var(--surface);
+}
+
+.training-quiz-question-admin > span {
+  display: grid;
+  width: 30px;
+  height: 30px;
+  place-items: center;
+  border-radius: 9px;
+  background: #eaf1ff;
+  color: var(--blue);
+  font-size: .72rem;
+  font-weight: 800;
+}
+
+.training-quiz-question-admin strong {
+  display: block;
+  color: var(--ink);
+}
+
+.training-quiz-question-admin ol {
+  margin: 9px 0 0;
+  padding-left: 22px;
+  color: var(--ink-soft);
+  font-size: .76rem;
+  line-height: 1.7;
+}
+
+.training-quiz-question-admin li.is-correct {
+  color: var(--success);
+  font-weight: 800;
+}
+
+.training-quiz-options-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 9px;
+}
+
+.training-quiz-question-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
+.training-quiz-question-actions select {
+  min-width: 190px;
+}
+
+.training-quiz-employee {
+  margin-top: 22px;
+  padding-top: 22px;
+  border-top: 1px solid var(--border);
+}
+
+.training-quiz-employee-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  margin-bottom: 16px;
+}
+
+.training-quiz-lock {
+  padding: 16px;
+  border: 1px dashed var(--border-strong);
+  border-radius: 13px;
+  background: var(--surface-soft);
+  color: var(--ink-soft);
+  font-size: .78rem;
+}
+
+.training-quiz-attempt-form {
+  display: grid;
+  gap: 14px;
+}
+
+.training-quiz-attempt-history {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 14px;
+  border-radius: 12px;
+  background: var(--surface-soft);
+  color: var(--ink-faint);
+  font-size: .7rem;
+}
+
+.training-quiz-attempt-history b {
+  padding: 5px 8px;
+  border-radius: 999px;
+  background: var(--surface);
+  font-size: .68rem;
+}
+
+.training-quiz-question {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 15px;
+  border: 1px solid var(--border);
+  border-radius: 13px;
+  background: var(--surface-soft);
+}
+
+.training-quiz-question legend {
+  padding: 0 4px;
+  color: var(--ink);
+  font-weight: 800;
+  line-height: 1.45;
+}
+
+.training-quiz-question label {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 9px 10px;
+  border-radius: 10px;
+  background: var(--surface);
+  color: var(--ink-soft);
+  cursor: pointer;
+}
+
+.training-quiz-question input {
+  width: auto;
+  accent-color: var(--blue);
+}
+
+.training-quiz-result {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 15px;
+  border-radius: 13px;
+}
+
+.training-quiz-result.is-pass {
+  background: var(--success-bg);
+  color: var(--success);
+}
+
+.training-quiz-result.is-fail {
+  background: var(--warning-bg);
+  color: var(--warning);
+}
+
+.training-quiz-result strong {
+  font-family: "Manrope", sans-serif;
+  font-size: 1.5rem;
+}
+
+.training-quiz-result span {
+  color: currentColor;
+  font-size: .78rem;
+  line-height: 1.45;
+}
+
+[data-theme="dark"] .training-quiz-question-admin > span {
+  background: rgba(59, 130, 246, .13);
+}
+
+@media (max-width: 620px) {
+  .training-quiz-options-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .training-quiz-question-actions,
+  .training-quiz-employee-heading,
+  .training-quiz-result {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .training-quiz-question-actions .btn,
+  .training-quiz-question-actions select {
+    width: 100%;
+  }
+}
+
