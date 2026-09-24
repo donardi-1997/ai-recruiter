@@ -909,9 +909,13 @@ def run_ui(*, worker, api, browser) -> None:
                         publish(snapshot, last_stats)
 
                 delay = (
-                    0.5
-                    if snapshot.state not in {"IDLE", "PAUSED", "WAITING_FOR_HUMAN", "JOBS_SYNC_COMPLETED"}
-                    else 2.0
+                    0.0
+                    if pause_feedback_pending.is_set()
+                    else (
+                        0.5
+                        if snapshot.state not in {"IDLE", "PAUSED", "WAITING_FOR_HUMAN", "JOBS_SYNC_COMPLETED"}
+                        else 2.0
+                    )
                 )
                 stop_event.wait(delay)
         finally:
