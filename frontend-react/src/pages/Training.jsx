@@ -137,10 +137,7 @@ function Training() {
 
   useEffect(() => {
     const courseId = selectedAssignment?.course?.id;
-    if (!courseId) {
-      setEmployeeCourse(null);
-      return undefined;
-    }
+    if (!courseId) return undefined;
     const timeoutId = window.setTimeout(() => {
       void loadEmployeeCourse(courseId);
     }, 0);
@@ -219,7 +216,15 @@ function Training() {
   function updateLessonForm(moduleId, patch) {
     setLessonForms((current) => ({
       ...current,
-      [moduleId]: { ...lessonForm(moduleId), ...patch },
+      [moduleId]: {
+        ...(current[moduleId] || {
+          title: "",
+          description: "",
+          video_url: "",
+          duration_seconds: "",
+        }),
+        ...patch,
+      },
     }));
   }
 
