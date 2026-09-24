@@ -18,6 +18,7 @@ class CreateEmployeeRequest(BaseModel):
     department: str | None = Field(default=None, max_length=160)
     hire_date: date | None = None
     role: RoleCode = "EMPLOYEE"
+    assign_onboarding: bool = True
 
     @field_validator("email")
     @classmethod
