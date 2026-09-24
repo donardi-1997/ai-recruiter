@@ -755,3 +755,250 @@ def test_course_payload_exposes_onboarding_classification(db):
     payload = service.get_course(db, course.id)
 
     assert payload["is_onboarding"] is True
+
+
+
+def test_journey_payload_exposes_next_activity_and_estimated_time(db):
+    employee = _employee(db)
+    course = service.create_course(
+        db,
+        title="Ruta",
+        description=None,
+        created_by_sub="admin-sub",
+        is_onboarding=True,
+    )
+    module = service.add_module(
+        db,
+        course_id=course.id,
+        title="Etapa 1",
+        description=None,
+    )
+    first = service.add_lesson(
+        db,
+        module_id=module.id,
+        title="Lectura",
+        description="Lee esto",
+        video_url=None,
+        duration_seconds=None,
+        content_type="ARTICLE",
+        estimated_minutes=3,
+    )
+    second = service.add_lesson(
+        db,
+        module_id=module.id,
+        title="Video",
+        description=None,
+        video_url="https://cdn.example.com/video.mp4",
+        duration_seconds=240,
+        content_type="VIDEO",
+    )
+    service.update_course(db, course.id, status="PUBLISHED")
+    service.assign_course(
+        db,
+        course_id=course.id,
+        employee_id=employee.id,
+        assigned_by_sub="admin-sub",
+    )
+
+    payload = service.get_my_course(
+        db,
+        employee_id=employee.id,
+        course_id=course.id,
+    )["course"]
+
+    assert payload["estimated_minutes"] == 7
+    assert payload["remaining_minutes"] == 7
+    assert payload["next_lesson_id"] == first.id
+    assert payload["modules"][0]["progress_percent"] == 0
+
+    service.complete_lesson(
+        db,
+        employee_id=employee.id,
+        lesson_id=first.id,
+    )
+    payload = service.get_my_course(
+        db,
+        employee_id=employee.id,
+        course_id=course.id,
+    )["course"]
+
+    assert payload["remaining_minutes"] == 4
+    assert payload["next_lesson_id"] == second.id
+
+
+def test_optional_resources_do_not_block_course_completion(db):
+    employee = _employee(db)
+    course = service.create_course(
+        db,
+        title="Ruta con recursos",
+        description=None,
+        created_by_sub="admin-sub",
+    )
+    module = service.add_module(
+        db,
+        course_id=course.id,
+        title="Contenido",
+        description=None,
+    )
+    required = service.add_lesson(
+        db,
+        module_id=module.id,
+        title="Obligatoria",
+        description=None,
+        video_url=None,
+        duration_seconds=None,
+        content_type="ARTICLE",
+        estimated_minutes=2,
+    )
+    service.add_lesson(
+        db,
+        module_id=module.id,
+        title="Instagram",
+        description=None,
+        video_url=None,
+        duration_seconds=None,
+        content_type="RESOURCE",
+        external_url="https://www.instagram.com/asiati_corp/",
+        estimated_minutes=2,
+        is_optional=True,
+    )
+    service.update_course(db, course.id, status="PUBLISHED")
+    assignment = service.assign_course(
+        db,
+        course_id=course.id,
+        employee_id=employee.id,
+        assigned_by_sub="admin-sub",
+    )
+
+    result = service.complete_lesson(
+        db,
+        employee_id=employee.id,
+        lesson_id=required.id,
+    )
+
+    db.refresh(assignment)
+    assert assignment.status == "COMPLETED"
+    assert result["course"]["lesson_count"] == 1
+    assert result["course"]["content_item_count"] == 2
+    assert result["course"]["progress_percent"] == 100
+
+
+def test_role_targeted_modules_are_filtered_for_employee(db):
+    employee = _employee(db)
+    employee.job_title = "Comercial"
+    employee.department = "Ventas"
+    db.commit()
+
+    course = service.create_course(
+        db,
+        title="Ruta por cargo",
+        description=None,
+        created_by_sub="admin-sub",
+    )
+    common = service.add_module(
+        db,
+        course_id=course.id,
+        title="Común",
+        description=None,
+    )
+    service.add_lesson(
+        db,
+        module_id=common.id,
+        title="General",
+        description=None,
+        video_url=None,
+        duration_seconds=None,
+        content_type="ARTICLE",
+        estimated_minutes=1,
+    )
+    sales = service.add_module(
+        db,
+        course_id=course.id,
+        title="Ventas",
+        description=None,
+        audience_job_title="Comercial",
+        audience_department="Ventas",
+    )
+    service.add_lesson(
+        db,
+        module_id=sales.id,
+        title="CRM",
+        description=None,
+        video_url=None,
+        duration_seconds=None,
+        content_type="CHECKLIST",
+        estimated_minutes=2,
+    )
+    dev = service.add_module(
+        db,
+        course_id=course.id,
+        title="Desarrollo",
+        description=None,
+        audience_job_title="Desarrollador",
+    )
+    service.add_lesson(
+        db,
+        module_id=dev.id,
+        title="Git",
+        description=None,
+        video_url=None,
+        duration_seconds=None,
+        content_type="CHECKLIST",
+        estimated_minutes=2,
+    )
+    service.update_course(db, course.id, status="PUBLISHED")
+    service.assign_course(
+        db,
+        course_id=course.id,
+        employee_id=employee.id,
+        assigned_by_sub="admin-sub",
+    )
+
+    payload = service.get_my_course(
+        db,
+        employee_id=employee.id,
+        course_id=course.id,
+    )["course"]
+
+    assert [module["title"] for module in payload["modules"]] == ["Común", "Ventas"]
+    assert payload["lesson_count"] == 2
+    assert payload["estimated_minutes"] == 3
+
+
+def test_asiati_onboarding_template_scaffolds_short_journey(db):
+    course = service.create_asiati_onboarding_template(
+        db,
+        created_by_sub="admin-sub",
+    )
+
+    payload = service.get_course(db, course.id)
+
+    assert payload["status"] == "DRAFT"
+    assert payload["is_onboarding"] is True
+    assert [module["title"] for module in payload["modules"]] == [
+        "Bienvenida",
+        "Conoce ASIATI",
+        "Nuestro ecosistema",
+        "Así trabajamos",
+        "Tu cargo en ASIATI",
+        "Evaluación final",
+    ]
+
+    resources = [
+        lesson
+        for module in payload["modules"]
+        for lesson in module["lessons"]
+        if lesson["content_type"] == "RESOURCE"
+    ]
+    assert any(
+        lesson["external_url"] == "https://www.asiaticorp.com/"
+        for lesson in resources
+    )
+    assert any(
+        "canva.link" in str(lesson["external_url"])
+        for lesson in resources
+    )
+    assert any(
+        lesson["title"] == "El Retrovisor"
+        for lesson in resources
+    )
