@@ -55,6 +55,16 @@ class RegisterRequest(CredentialsRequest):
     password: str = Field(min_length=8, max_length=256)
 
 
+def public_registration_enabled() -> bool:
+    """Return whether self-service account creation is explicitly enabled."""
+    return os.getenv("ALLOW_PUBLIC_REGISTRATION", "false").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+
+
 @router.post("/login")
 def login(body: LoginRequest):
     try:
@@ -102,6 +112,12 @@ def login(body: LoginRequest):
 
 @router.post("/register")
 def register(body: RegisterRequest):
+    if not public_registration_enabled():
+        raise HTTPException(
+            status_code=403,
+            detail="El registro publico esta deshabilitado. Solicita acceso a un administrador.",
+        )
+
     email = body.email
     password = body.password
     if not COGNITO_USER_POOL_ID:
