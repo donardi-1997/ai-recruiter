@@ -37,6 +37,7 @@ function Training() {
   const [error, setError] = useState("");
   const [creatingCourse, setCreatingCourse] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [uploadingLessonId, setUploadingLessonId] = useState("");
   const [courseForm, setCourseForm] = useState({ title: "", description: "" });
   const [moduleForm, setModuleForm] = useState({ title: "", description: "" });
   const [lessonForms, setLessonForms] = useState({});
@@ -300,6 +301,65 @@ function Training() {
     }
   }
 
+  async function uploadLessonVideo(lessonId, file) {
+    if (!file) return;
+    const allowedTypes = ["video/mp4", "video/webm", "video/ogg"];
+    if (!allowedTypes.includes(file.type)) {
+      setError("Formato no soportado. Usa MP4, WebM u OGG.");
+      return;
+    }
+    if (file.size <= 0 || file.size > 1024 * 1024 * 1024) {
+      setError("El video debe pesar como máximo 1 GB.");
+      return;
+    }
+
+    setUploadingLessonId(lessonId);
+    setError("");
+    try {
+      const manifest = {
+        filename: file.name,
+        content_type: file.type,
+        size_bytes: file.size,
+      };
+      const { data } = await api.post(
+        `/training/lessons/${lessonId}/video/upload`,
+        manifest,
+      );
+
+      const formData = new FormData();
+      Object.entries(data.upload.fields || {}).forEach(([key, value]) => {
+        formData.append(key, value);
+      });
+      formData.append("file", file);
+
+      const uploadResponse = await fetch(data.upload.url, {
+        method: "POST",
+        body: formData,
+      });
+      if (!uploadResponse.ok) {
+        throw new Error("S3 upload failed");
+      }
+
+      const finalized = await api.post(
+        `/training/lessons/${lessonId}/video/complete`,
+        {
+          key: data.key,
+          content_type: file.type,
+          size_bytes: file.size,
+        },
+      );
+      setSelectedCourse(finalized.data);
+      await loadHome();
+    } catch (err) {
+      setError(
+        err.response?.data?.detail
+          || "No fue posible subir el video. Intenta nuevamente.",
+      );
+    } finally {
+      setUploadingLessonId("");
+    }
+  }
+
   async function assignCourse(event) {
     event.preventDefault();
     if (!selectedCourseId || !assignEmployeeId) return;
@@ -530,15 +590,43 @@ function Training() {
 
                         <div className="training-lesson-list">
                           {module.lessons?.map((lesson) => (
-                            <div className="training-lesson-row" key={lesson.id}>
+                            <div className="training-lesson-row training-lesson-admin-row" key={lesson.id}>
                               <span className="training-play" aria-hidden="true">▶</span>
-                              <div>
+                              <div className="training-lesson-admin-copy">
                                 <strong>{lesson.title}</strong>
                                 <small>
-                                  {lesson.video_url ? "Video configurado" : "Sin video"}
+                                  {lesson.video_url
+                                    ? lesson.video_source === "managed"
+                                      ? "Video privado en S3"
+                                      : "Video por URL externa"
+                                    : "Sin video"}
                                   {lesson.duration_seconds ? ` · ${Math.ceil(lesson.duration_seconds / 60)} min` : ""}
                                 </small>
+                                {lesson.video_size_bytes ? (
+                                  <small>{Math.max(1, Math.round(lesson.video_size_bytes / (1024 * 1024)))} MB</small>
+                                ) : null}
                               </div>
+                              {selectedCourse.status === "DRAFT" && (
+                                <label className={`training-video-upload-button ${uploadingLessonId === lesson.id ? "is-uploading" : ""}`}>
+                                  <span>
+                                    {uploadingLessonId === lesson.id
+                                      ? "Subiendo…"
+                                      : lesson.video_url
+                                        ? "Reemplazar video"
+                                        : "Subir video"}
+                                  </span>
+                                  <input
+                                    type="file"
+                                    accept="video/mp4,video/webm,video/ogg"
+                                    disabled={Boolean(uploadingLessonId)}
+                                    onChange={(event) => {
+                                      const file = event.target.files?.[0];
+                                      event.target.value = "";
+                                      void uploadLessonVideo(lesson.id, file);
+                                    }}
+                                  />
+                                </label>
+                              )}
                             </div>
                           ))}
                         </div>
