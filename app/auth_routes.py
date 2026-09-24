@@ -10,7 +10,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field, field_validator
 
 from app.deps import get_current_principal
-from app.infrastructure.bedrock.session import get_cached_session
+from app.infrastructure.auth.cognito import get_admin_cognito_client
 
 logger = logging.getLogger(__name__)
 
@@ -24,11 +24,6 @@ cognito_client = boto3.client(
     "cognito-idp",
     region_name=AWS_REGION,
 )
-
-
-def get_admin_cognito_client():
-    """Return a signed Cognito client using the runtime Roles Anywhere session."""
-    return get_cached_session().client("cognito-idp", region_name=AWS_REGION)
 
 
 class CredentialsRequest(BaseModel):
