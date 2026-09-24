@@ -21,6 +21,10 @@ def test_create_app_exposes_critical_routes():
     assert "/api/jobs/{job_id}/integrations/indeed/expire" in paths
     assert "/api/jobs/{job_id}/candidates/{candidate_id}/status" in paths
     assert "/api/jobs/{job_id}/candidates/{candidate_id}/integrations/indeed" in paths
+    assert "/api/employees" in paths
+    assert "/api/employees/{employee_id}" in paths
+    assert "/api/employees/{employee_id}/status" in paths
+    assert "/api/employees/{employee_id}/role" in paths
 
 
 def test_main_app_uses_same_public_contract():
