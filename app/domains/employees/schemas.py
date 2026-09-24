@@ -1,5 +1,6 @@
 """Schemas for employee administration."""
 
+from datetime import date
 from typing import Literal
 
 from pydantic import BaseModel, Field, field_validator
@@ -15,6 +16,7 @@ class CreateEmployeeRequest(BaseModel):
     last_name: str = Field(min_length=1, max_length=100)
     job_title: str | None = Field(default=None, max_length=160)
     department: str | None = Field(default=None, max_length=160)
+    hire_date: date | None = None
     role: RoleCode = "EMPLOYEE"
 
     @field_validator("email")
@@ -47,6 +49,7 @@ class UpdateEmployeeRequest(BaseModel):
     last_name: str | None = Field(default=None, max_length=100)
     job_title: str | None = Field(default=None, max_length=160)
     department: str | None = Field(default=None, max_length=160)
+    hire_date: date | None = None
 
     @field_validator("first_name", "last_name", "job_title", "department")
     @classmethod
