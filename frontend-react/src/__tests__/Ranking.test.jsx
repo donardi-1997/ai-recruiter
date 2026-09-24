@@ -417,7 +417,7 @@ describe("Ranking page", () => {
     renderRanking();
     const recalcBtn = await screen.findByRole("button", { name: "Recalcular ranking" });
     expect(recalcBtn).not.toBeDisabled();
-    fireEvent.click(recalcBtn);
+    await confirmRecalculation();
     await waitFor(() => {
       expect(screen.getByRole("button", { name: "Recalculando ranking..." })).toBeDisabled();
     });
