@@ -137,6 +137,10 @@ function Training() {
   const [creatingPreset, setCreatingPreset] = useState(false);
   const [checklistSavingLessonId, setChecklistSavingLessonId] = useState("");
   const [expandedModuleIds, setExpandedModuleIds] = useState([]);
+  const [previewOpen, setPreviewOpen] = useState(false);
+  const [previewEmployeeId, setPreviewEmployeeId] = useState("");
+  const [previewData, setPreviewData] = useState(null);
+  const [previewLoading, setPreviewLoading] = useState(false);
 
   const loadHome = useCallback(async () => {
     setLoading(true);
@@ -333,6 +337,45 @@ function Training() {
     }, 0);
     return () => window.clearTimeout(timeoutId);
   }, [loadEmployeeCourse, selectedAssignment]);
+
+  async function loadCoursePreview(employeeId = "") {
+    if (!selectedCourseId) return;
+    setPreviewLoading(true);
+    setError("");
+    try {
+      const config = employeeId
+        ? { params: { employee_id: employeeId } }
+        : undefined;
+      const { data } = await api.get(
+        `/training/courses/${selectedCourseId}/preview`,
+        config,
+      );
+      setPreviewData(data);
+    } catch (err) {
+      setError(err.response?.data?.detail || "No fue posible generar la vista previa.");
+    } finally {
+      setPreviewLoading(false);
+    }
+  }
+
+  async function openCoursePreview() {
+    setPreviewOpen(true);
+    setPreviewEmployeeId("");
+    setPreviewData(null);
+    await loadCoursePreview("");
+  }
+
+  async function changePreviewEmployee(employeeId) {
+    setPreviewEmployeeId(employeeId);
+    await loadCoursePreview(employeeId);
+  }
+
+  function closeCoursePreview() {
+    if (previewLoading) return;
+    setPreviewOpen(false);
+    setPreviewEmployeeId("");
+    setPreviewData(null);
+  }
 
   async function createCourse(event) {
     event.preventDefault();
@@ -802,6 +845,13 @@ function Training() {
                     )}
                   </div>
                   <div className="training-course-overview-actions">
+                    <button
+                      className="btn btn-secondary"
+                      type="button"
+                      onClick={openCoursePreview}
+                    >
+                      Vista previa
+                    </button>
                     <span className={`training-status training-status-${String(selectedCourse.status || "DRAFT").toLowerCase()}`}>
                       {selectedCourse.status === "PUBLISHED" ? "Publicado" : selectedCourse.status === "ARCHIVED" ? "Archivado" : "Borrador"}
                     </span>
@@ -817,6 +867,60 @@ function Training() {
                     )}
                   </div>
                 </section>
+
+                {selectedCourse.quality && (
+                  <section className="panel training-quality-panel">
+                    <div className="panel-heading">
+                      <div>
+                        <span className="eyebrow">Control de calidad</span>
+                        <h2>Experiencia de onboarding</h2>
+                      </div>
+                      <span className={`training-quality-status ${selectedCourse.quality.warning_count ? "has-warnings" : "is-ready"}`}>
+                        {selectedCourse.quality.warning_count
+                          ? `${selectedCourse.quality.warning_count} por revisar`
+                          : "Sin alertas"}
+                      </span>
+                    </div>
+
+                    <div className="training-quality-summary">
+                      <div>
+                        <span>Actividades obligatorias</span>
+                        <strong>{selectedCourse.quality.required_activity_count}</strong>
+                      </div>
+                      <div>
+                        <span>Tiempo conocido</span>
+                        <strong>~{selectedCourse.quality.known_minutes} min</strong>
+                      </div>
+                      <div>
+                        <span>Preguntas de quiz</span>
+                        <strong>{selectedCourse.quality.quiz_question_count}</strong>
+                      </div>
+                    </div>
+
+                    {selectedCourse.quality.issues?.length > 0 ? (
+                      <div className="training-quality-issues">
+                        {selectedCourse.quality.issues.map((issue, index) => (
+                          <div
+                            className={`training-quality-issue is-${issue.severity}`}
+                            key={`${issue.code}-${issue.lesson_id || issue.module_id || index}`}
+                          >
+                            <span aria-hidden="true">
+                              {issue.severity === "warning" ? "!" : "i"}
+                            </span>
+                            <div>
+                              <strong>{issue.code === "LONG_ACTIVITY" ? "Actividad extensa" : issue.code === "UNKNOWN_DURATION" ? "Duración pendiente" : issue.code === "MISSING_VIDEO" ? "Video pendiente" : issue.code === "LONG_JOURNEY" ? "Ruta extensa" : issue.code === "MISSING_QUIZ" ? "Evaluación pendiente" : "Sugerencia"}</strong>
+                              <p>{issue.message}</p>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <div className="training-quality-ready">
+                        La ruta mantiene una estructura ligera con los datos configurados actualmente.
+                      </div>
+                    )}
+                  </section>
+                )}
 
                 <section className="panel">
                   <div className="panel-heading">
@@ -1698,6 +1802,131 @@ function Training() {
           </div>
         )}
       </section>
+
+      {previewOpen && (
+        <div className="modal-overlay" role="presentation" onMouseDown={closeCoursePreview}>
+          <section
+            className="modal training-preview-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="training-preview-title"
+            onMouseDown={(event) => event.stopPropagation()}
+          >
+            <div className="modal-header">
+              <div>
+                <span className="eyebrow">Vista previa</span>
+                <h2 id="training-preview-title">Así verá la ruta el empleado</h2>
+                <p>La vista respeta los módulos configurados por cargo y área.</p>
+              </div>
+              <button
+                className="btn-close"
+                type="button"
+                aria-label="Cerrar vista previa"
+                onClick={closeCoursePreview}
+                disabled={previewLoading}
+              >
+                ×
+              </button>
+            </div>
+
+            {employees.length > 0 && (
+              <div className="form-group">
+                <label htmlFor="training-preview-employee">Previsualizar como</label>
+                <select
+                  id="training-preview-employee"
+                  value={previewEmployeeId}
+                  onChange={(event) => void changePreviewEmployee(event.target.value)}
+                  disabled={previewLoading}
+                >
+                  <option value="">Vista general</option>
+                  {employees.map((employee) => (
+                    <option key={employee.id} value={employee.id}>
+                      {[employee.first_name, employee.last_name].filter(Boolean).join(" ") || employee.email}
+                      {employee.job_title ? ` · ${employee.job_title}` : ""}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
+
+            {previewLoading ? (
+              <div className="page-loading compact-loading"><span /> Preparando vista previa…</div>
+            ) : previewData ? (
+              <div className="training-preview-body">
+                {previewData.preview_employee && (
+                  <div className="training-preview-person">
+                    <strong>
+                      {[previewData.preview_employee.first_name, previewData.preview_employee.last_name].filter(Boolean).join(" ")
+                        || previewData.preview_employee.email}
+                    </strong>
+                    <span>
+                      {[previewData.preview_employee.job_title, previewData.preview_employee.department].filter(Boolean).join(" · ")}
+                    </span>
+                  </div>
+                )}
+
+                <div className="training-preview-summary">
+                  <div>
+                    <span>Etapas visibles</span>
+                    <strong>{previewData.module_count}</strong>
+                  </div>
+                  <div>
+                    <span>Actividades</span>
+                    <strong>{previewData.lesson_count}</strong>
+                  </div>
+                  <div>
+                    <span>Tiempo conocido</span>
+                    <strong>~{previewData.quality?.known_minutes ?? previewData.estimated_minutes ?? 0} min</strong>
+                  </div>
+                </div>
+
+                <div className="training-preview-route">
+                  {previewData.modules?.map((module) => (
+                    <article key={module.id}>
+                      <div>
+                        <span>{module.position}</span>
+                        <div>
+                          <strong>{module.title}</strong>
+                          <small>
+                            {module.lesson_count} obligatorias
+                            {module.audience_job_title ? ` · ${module.audience_job_title}` : ""}
+                            {module.audience_department ? ` · ${module.audience_department}` : ""}
+                          </small>
+                        </div>
+                      </div>
+                      <ul>
+                        {module.lessons?.map((lesson) => (
+                          <li key={lesson.id}>
+                            <span>{lessonTypeIcon(lesson.content_type)}</span>
+                            <div>
+                              <strong>{lesson.title}</strong>
+                              <small>
+                                {lessonTypeLabel(lesson.content_type)}
+                                {lesson.estimated_minutes ? ` · ~${lesson.estimated_minutes} min` : " · duración por confirmar"}
+                                {lesson.is_optional ? " · opcional" : ""}
+                              </small>
+                            </div>
+                          </li>
+                        ))}
+                      </ul>
+                    </article>
+                  ))}
+                </div>
+
+                {previewData.has_quiz && (
+                  <div className="training-preview-quiz">
+                    <span>?</span>
+                    <div>
+                      <strong>Evaluación final</strong>
+                      <small>{previewData.quality?.quiz_question_count || 0} preguntas</small>
+                    </div>
+                  </div>
+                )}
+              </div>
+            ) : null}
+          </section>
+        </div>
+      )}
 
       {creatingCourse && (
         <div className="modal-overlay" role="presentation" onMouseDown={() => setCreatingCourse(false)}>
