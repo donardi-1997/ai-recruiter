@@ -2902,3 +2902,25 @@ select { appearance: none; padding-right: 42px; background-image: linear-gradien
   font-weight: 700;
 }
 
+.training-drive-player {
+  display: block;
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  border: 0;
+  border-radius: 13px;
+  background: #000;
+}
+
+.training-drive-fallback {
+  display: inline-block;
+  margin-top: 8px;
+  color: var(--blue);
+  font-size: .68rem;
+  font-weight: 700;
+  text-decoration: none;
+}
+
+.training-drive-fallback:hover {
+  text-decoration: underline;
+}
+
