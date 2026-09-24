@@ -242,9 +242,10 @@ def test_admin_can_assign_only_employee_role():
     assert super_error.value.status_code == 403
 
 
-def test_super_admin_can_assign_administrative_roles():
+def test_super_admin_can_assign_all_supported_roles():
     principal = {"roles": [SUPER_ADMIN], "profile": {"id": "director-id"}}
 
+    _enforce_assignable_role(principal, EMPLOYEE)
     _enforce_assignable_role(principal, ADMIN)
     _enforce_assignable_role(principal, SUPER_ADMIN)
 
